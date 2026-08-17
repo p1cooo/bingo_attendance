@@ -218,8 +218,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const absentCount = rollList.filter((item) => item.record?.status === 'ABSENT').length;
   const unmarkedCount = rollList.filter((item) => !item.record).length;
 
-  const isReplacementCoach = session.scheduled_coach_id !== session.actual_coach_id;
-  const coachColor = session.actual_coach?.color || '#3b82f6';
+  const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
+  const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
+  const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
+  const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (session.actual_coach?.color || '#3b82f6');
 
   // Filter candidate students for replacement modal
   const existingStudentIds = new Set(rollList.map((r) => r.student.id));
@@ -248,7 +250,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           <button
             id="back-to-classes-btn"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-black text-slate-900 dark:text-white bg-slate-100 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 hover:bg-slate-200 transition-colors"
+            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-black text-slate-900 dark:text-white bg-slate-100 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 hover:bg-slate-200 transition-colors cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Back to Sessions</span>
@@ -260,7 +262,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               style={{ backgroundColor: coachColor }}
             />
             <span className="text-[11px] font-black text-slate-700 dark:text-slate-300">
-              Coach {session.actual_coach?.name || user?.name}
+              {isCancelled ? 'Cancelled Class' : `Coach ${session.actual_coach?.name || user?.name}`}
             </span>
           </div>
         </div>
@@ -271,6 +273,16 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                 {session.class_item?.name || 'Group Training'}
               </h2>
+              {isCancelled && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 dark:bg-rose-950/70 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200">
+                  Coach Cancelled
+                </span>
+              )}
+              {isOffDay && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-200 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 text-slate-800 dark:text-slate-200">
+                  5th-Week Off Day
+                </span>
+              )}
               {isReplacementCoach && (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200">
                   Replacement Coach
@@ -316,6 +328,33 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Cancellation Banner */}
+      {isCancelled && (
+        <div className="p-4 rounded-3xl bg-rose-100/90 dark:bg-rose-950/60 border-2 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-200 flex items-start gap-3 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]">
+          <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="text-sm font-black">This Class Has Been Cancelled by Coach</h4>
+            <p className="text-xs font-medium">
+              Reason: <span className="font-bold">{session.cancellation_reason || 'Coach is unavailable / on leave.'}</span>
+            </p>
+            <p className="text-[11px] opacity-80">
+              Roll call is disabled for this session. To restore or assign a replacement coach, change the session type in Admin Sessions Management.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Off-Day Banner */}
+      {isOffDay && (
+        <div className="p-4 rounded-3xl bg-slate-100 dark:bg-neutral-800 border-2 border-slate-300 dark:border-neutral-700 text-slate-800 dark:text-slate-200 flex items-start gap-3 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]">
+          <HelpCircle className="w-5 h-5 text-slate-500 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="text-sm font-black">Scheduled Academy Off-Day</h4>
+            <p className="text-xs font-medium">{session.cancellation_reason || '5th week monthly break or public holiday.'}</p>
+          </div>
+        </div>
+      )}
 
       {/* Action Bar: Search & Add Replacement Student */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -433,7 +472,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* PRESENT */}
                     <button
                       type="button"
-                      disabled={isSaving}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -445,7 +484,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       className={`h-9 px-3.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
                         status === 'PRESENT'
                           ? 'bg-emerald-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-emerald-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700'
+                          : 'bg-white hover:bg-emerald-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed'
                       }`}
                     >
                       <Check className="w-3.5 h-3.5 stroke-[3]" />
@@ -455,7 +494,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* ABSENT */}
                     <button
                       type="button"
-                      disabled={isSaving}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -467,7 +506,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       className={`h-9 px-3 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
                         status === 'ABSENT'
                           ? 'bg-rose-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-rose-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700'
+                          : 'bg-white hover:bg-rose-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed'
                       }`}
                     >
                       <X className="w-3.5 h-3.5 stroke-[3]" />
@@ -477,7 +516,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* LATE */}
                     <button
                       type="button"
-                      disabled={isSaving}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -489,7 +528,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       className={`h-9 px-2.5 rounded-xl text-xs font-black transition-all border-2 border-slate-900 ${
                         status === 'LATE'
                           ? 'bg-amber-500 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-amber-50 text-slate-900 dark:bg-neutral-800 dark:text-white'
+                          : 'bg-white hover:bg-amber-50 text-slate-900 dark:bg-neutral-800 dark:text-white disabled:opacity-40 disabled:cursor-not-allowed'
                       }`}
                     >
                       <span>Late</span>
@@ -498,7 +537,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* EXCUSED */}
                     <button
                       type="button"
-                      disabled={isSaving}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -510,7 +549,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       className={`h-9 px-2.5 rounded-xl text-xs font-black transition-all border-2 border-slate-900 ${
                         status === 'EXCUSED'
                           ? 'bg-purple-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-purple-50 text-slate-900 dark:bg-neutral-800 dark:text-white'
+                          : 'bg-white hover:bg-purple-50 text-slate-900 dark:bg-neutral-800 dark:text-white disabled:opacity-40 disabled:cursor-not-allowed'
                       }`}
                     >
                       <span>Excused</span>

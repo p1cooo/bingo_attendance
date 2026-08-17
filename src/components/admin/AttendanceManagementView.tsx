@@ -29,6 +29,7 @@ import {
   ChevronRight,
   Sparkles,
   RotateCcw,
+  Info,
 } from 'lucide-react';
 
 interface AttendanceManagementViewProps {
@@ -369,8 +370,10 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredSessions.map((sess) => {
-                const coachColor = sess.actual_coach?.color || '#3b82f6';
-                const isReplacement = sess.scheduled_coach_id !== sess.actual_coach_id;
+                const isCancelled = sess.status === 'COACH_CANCELLED' || sess.status === 'CANCELLED' || sess.session_type === 'COACH_CANCELLED';
+                const isOffDay = sess.status === 'PLANNED_OFF_DAY' || sess.status === 'OFF_DAY' || sess.session_type === 'PLANNED_OFF_DAY';
+                const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (sess.actual_coach?.color || '#3b82f6');
+                const isReplacement = !isCancelled && !isOffDay && sess.scheduled_coach_id !== sess.actual_coach_id;
                 const markedCount = sess.marked_attendance_count || 0;
                 const presentCount = sess.present_count || 0;
                 const expectedCount = sess.expected_students_count || 0;
@@ -379,7 +382,17 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
                   text: 'Not Marked',
                   bgClass: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-neutral-800 dark:text-slate-300',
                 };
-                if (markedCount > 0 && markedCount < expectedCount) {
+                if (isCancelled) {
+                  statusBadge = {
+                    text: 'Coach Cancelled',
+                    bgClass: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/70 dark:text-rose-200',
+                  };
+                } else if (isOffDay) {
+                  statusBadge = {
+                    text: 'Planned Off-Day',
+                    bgClass: 'bg-slate-200 text-slate-800 border-slate-300 dark:bg-neutral-800 dark:text-slate-300',
+                  };
+                } else if (markedCount > 0 && markedCount < expectedCount) {
                   statusBadge = {
                     text: `In Progress (${markedCount}/${expectedCount})`,
                     bgClass: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200',
@@ -394,7 +407,13 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
                 return (
                   <div
                     key={sess.id}
-                    className="bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] flex flex-col justify-between relative overflow-hidden"
+                    className={`border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] flex flex-col justify-between relative overflow-hidden transition-all ${
+                      isCancelled
+                        ? 'bg-rose-50/40 dark:bg-rose-950/10'
+                        : isOffDay
+                        ? 'bg-slate-50/50 dark:bg-neutral-900/60 opacity-80'
+                        : 'bg-white dark:bg-neutral-900'
+                    }`}
                   >
                     <div
                       className="absolute top-0 left-0 right-0 h-2"
@@ -415,7 +434,7 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
                       </div>
 
                       {/* Class Title */}
-                      <h3 className="text-base font-black text-slate-900 dark:text-white tracking-tight">
+                      <h3 className={`text-base font-black tracking-tight ${isCancelled ? 'text-rose-950 dark:text-rose-200' : 'text-slate-900 dark:text-white'}`}>
                         {sess.class_item?.name || 'Chess Class'}
                       </h3>
 
@@ -428,30 +447,61 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
                         {sess.room_location && <span>• {sess.room_location}</span>}
                       </div>
 
-                      {/* Coach Info */}
-                      <div className="mt-3 p-2 rounded-xl bg-slate-50 dark:bg-neutral-800/60 border border-slate-200 dark:border-neutral-700 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <span
-                            className="w-2.5 h-2.5 rounded-full border border-slate-900"
-                            style={{ backgroundColor: coachColor }}
-                          />
-                          <span className="font-black text-slate-800 dark:text-slate-200">
-                            Coach {sess.actual_coach?.name || 'Assigned'}
-                          </span>
+                      {/* Cancellation Notice Banner */}
+                      {isCancelled && (
+                        <div className="mt-3 p-2.5 rounded-xl bg-rose-100/70 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-800 text-xs font-bold text-rose-800 dark:text-rose-300 flex items-start gap-2">
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-black block">Class Cancelled by Coach</span>
+                            <span className="text-[11px] font-medium opacity-90">{sess.cancellation_reason || 'Coach is unavailable for this session.'}</span>
+                          </div>
                         </div>
-                        {isReplacement && (
-                          <span className="text-[9px] font-black uppercase text-amber-700 dark:text-amber-300">
-                            Replacement
-                          </span>
-                        )}
-                      </div>
+                      )}
+
+                      {/* Off-day Notice Banner */}
+                      {isOffDay && (
+                        <div className="mt-3 p-2.5 rounded-xl bg-slate-100 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                          <Info className="w-4 h-4 text-slate-500 shrink-0" />
+                          <span className="text-[11px]">{sess.cancellation_reason || 'Scheduled Academy off-day'}</span>
+                        </div>
+                      )}
+
+                      {/* Coach Info */}
+                      {!isCancelled && !isOffDay && (
+                        <div className="mt-3 p-2 rounded-xl bg-slate-50 dark:bg-neutral-800/60 border border-slate-200 dark:border-neutral-700 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full border border-slate-900"
+                              style={{ backgroundColor: coachColor }}
+                            />
+                            <span className="font-black text-slate-800 dark:text-slate-200">
+                              Coach {sess.actual_coach?.name || 'Assigned'}
+                            </span>
+                          </div>
+                          {isReplacement && (
+                            <span className="text-[9px] font-black uppercase text-amber-700 dark:text-amber-300">
+                              Replacement
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {/* Students Stats */}
                       <div className="mt-3 flex items-center justify-between text-xs font-bold text-slate-600 dark:text-slate-400">
                         <span>Expected: {expectedCount} students</span>
-                        <span className="font-black text-emerald-600 dark:text-emerald-400">
-                          {presentCount} Present
-                        </span>
+                        {isCancelled ? (
+                          <span className="font-black text-rose-600 dark:text-rose-400">
+                            No Roll Call
+                          </span>
+                        ) : isOffDay ? (
+                          <span className="text-slate-400">
+                            Off-Day
+                          </span>
+                        ) : (
+                          <span className="font-black text-emerald-600 dark:text-emerald-400">
+                            {presentCount} Present
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -459,9 +509,15 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
                       <button
                         type="button"
                         onClick={() => handleSelectSession(sess.id)}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 text-xs font-black transition-colors flex items-center justify-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] cursor-pointer"
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-black transition-colors flex items-center justify-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] cursor-pointer ${
+                          isCancelled
+                            ? 'bg-rose-900 hover:bg-rose-800 text-white'
+                            : isOffDay
+                            ? 'bg-slate-700 hover:bg-slate-600 text-white'
+                            : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900'
+                        }`}
                       >
-                        <span>Inspect Student Records</span>
+                        <span>{isCancelled ? 'Inspect Cancelled Session' : isOffDay ? 'Inspect Off-Day Session' : 'Inspect Student Records'}</span>
                         <ChevronRight className="w-3.5 h-3.5" />
                       </button>
                     </div>

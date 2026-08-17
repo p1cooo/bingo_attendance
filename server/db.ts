@@ -1278,11 +1278,14 @@ class DatabaseStore {
     const defaultCoachId = session.default_coach_id || session.scheduled_coach_id || sched?.coach_id || classItem?.default_coach_id || 'coach-1';
     const defaultCoach = this.coaches.get(defaultCoachId);
 
+    const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
+    const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
+
     // Replacement Coach / Actual Teaching Coach
-    const actualCoachId = session.actual_coach_id || defaultCoachId;
-    const isReplacement = actualCoachId !== defaultCoachId;
+    const actualCoachId = (isCancelled || isOffDay) ? defaultCoachId : (session.actual_coach_id || defaultCoachId);
+    const isReplacement = !isCancelled && !isOffDay && actualCoachId !== defaultCoachId;
     const replacementCoach = isReplacement ? this.coaches.get(actualCoachId) : null;
-    const teachingCoach = replacementCoach || defaultCoach;
+    const teachingCoach = isReplacement ? replacementCoach : defaultCoach;
 
     // Expected regular students enrolled in class/schedule
     const enrolledMemberships = Array.from(this.memberships.values()).filter(
@@ -1311,9 +1314,9 @@ class DatabaseStore {
     const presentCount = records.filter((r) => r.status === 'PRESENT' || r.status === 'LATE').length;
 
     let sessionType: SessionType = 'NORMAL';
-    if (session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED') {
+    if (isCancelled) {
       sessionType = 'COACH_CANCELLED';
-    } else if (session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY') {
+    } else if (isOffDay) {
       sessionType = 'PLANNED_OFF_DAY';
     } else if (isReplacement) {
       sessionType = 'REPLACEMENT_COACH';
@@ -1321,6 +1324,7 @@ class DatabaseStore {
 
     return {
       ...session,
+      status: isCancelled ? 'COACH_CANCELLED' : isOffDay ? 'PLANNED_OFF_DAY' : session.status,
       default_coach_id: defaultCoachId,
       replacement_coach_id: isReplacement ? actualCoachId : null,
       scheduled_coach_id: defaultCoachId,

@@ -250,11 +250,11 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-neutral-800">
                 {sessions.map((sess) => {
+                  const isCancelled = sess.status === 'COACH_CANCELLED' || sess.status === 'CANCELLED' || sess.session_type === 'COACH_CANCELLED';
+                  const isOffDay = sess.status === 'PLANNED_OFF_DAY' || sess.status === 'OFF_DAY' || sess.session_type === 'PLANNED_OFF_DAY';
                   const defaultCoach = sess.default_coach || sess.scheduled_coach;
                   const actualCoach = sess.teaching_coach || sess.actual_coach || defaultCoach;
-                  const isReplacement = sess.session_type === 'REPLACEMENT_COACH' || (sess.replacement_coach_id && sess.replacement_coach_id !== defaultCoach?.id);
-                  const isCancelled = sess.status === 'COACH_CANCELLED' || sess.status === 'CANCELLED';
-                  const isOffDay = sess.status === 'PLANNED_OFF_DAY' || sess.status === 'OFF_DAY';
+                  const isReplacement = !isCancelled && !isOffDay && (sess.session_type === 'REPLACEMENT_COACH' || (sess.replacement_coach_id && sess.replacement_coach_id !== defaultCoach?.id));
 
                   const presentCount = sess.present_count || 0;
                   const expectedCount = sess.expected_students_count || 0;
@@ -262,7 +262,13 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                   return (
                     <tr
                       key={sess.id}
-                      className="hover:bg-slate-50/70 dark:hover:bg-neutral-800/40 transition-colors"
+                      className={`transition-colors ${
+                        isCancelled
+                          ? 'bg-rose-50/40 dark:bg-rose-950/15 hover:bg-rose-50/70 dark:hover:bg-rose-950/30'
+                          : isOffDay
+                          ? 'bg-slate-50/50 dark:bg-neutral-900/40 hover:bg-slate-50 dark:hover:bg-neutral-800/50 opacity-85'
+                          : 'hover:bg-slate-50/70 dark:hover:bg-neutral-800/40'
+                      }`}
                     >
                       {/* Date & Time */}
                       <td className="py-3.5 px-4">

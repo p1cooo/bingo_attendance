@@ -188,8 +188,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           ) : (
             stats.today_sessions.map((sess) => {
-              const isReplacement = sess.scheduled_coach_id !== sess.actual_coach_id;
-              const coachColor = sess.actual_coach?.color || '#3b82f6';
+              const isCancelled = sess.status === 'COACH_CANCELLED' || sess.status === 'CANCELLED' || sess.session_type === 'COACH_CANCELLED';
+              const isOffDay = sess.status === 'PLANNED_OFF_DAY' || sess.status === 'OFF_DAY' || sess.session_type === 'PLANNED_OFF_DAY';
+              const isReplacement = !isCancelled && !isOffDay && sess.scheduled_coach_id !== sess.actual_coach_id;
+              const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (sess.actual_coach?.color || '#3b82f6');
               const markedCount = sess.marked_attendance_count || 0;
               const presentCount = sess.present_count || 0;
               const expectedCount = sess.expected_students_count || 0;
@@ -197,7 +199,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               return (
                 <div
                   key={sess.id}
-                  className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-neutral-50/60 dark:hover:bg-neutral-800/40 transition-colors"
+                  className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors ${
+                    isCancelled
+                      ? 'bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-50/60'
+                      : isOffDay
+                      ? 'bg-neutral-50/40 dark:bg-neutral-900/40 opacity-80'
+                      : 'hover:bg-neutral-50/60 dark:hover:bg-neutral-800/40'
+                  }`}
                 >
                   <div className="flex items-start sm:items-center gap-3">
                     {/* Pastel Coach Indicator Line */}
@@ -214,6 +222,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="text-xs font-medium text-neutral-800 dark:text-neutral-200">
                           {sess.class_item?.name}
                         </span>
+                        {isCancelled && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                            Coach Cancelled
+                          </span>
+                        )}
+                        {isOffDay && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-slate-200 dark:bg-neutral-800 text-slate-800 dark:text-slate-300 border border-slate-300">
+                            Planned Off-Day
+                          </span>
+                        )}
                         {isReplacement && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                             Replacement Coach
@@ -222,11 +240,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </div>
 
                       <div className="mt-1 flex items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
-                        <CoachBadge coach={sess.actual_coach} size="sm" variant="dot" />
-                        {isReplacement && (
-                          <span className="text-[11px] text-neutral-400">
-                            (Sched: Coach {sess.scheduled_coach?.name})
+                        {isCancelled ? (
+                          <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                            Reason: {sess.cancellation_reason || 'Coach Unavailable'}
                           </span>
+                        ) : isOffDay ? (
+                          <span className="text-[11px] text-slate-500">
+                            {sess.cancellation_reason || 'Academy Off-Day'}
+                          </span>
+                        ) : (
+                          <>
+                            <CoachBadge coach={sess.actual_coach} size="sm" variant="dot" />
+                            {isReplacement && (
+                              <span className="text-[11px] text-neutral-400">
+                                (Sched: Coach {sess.scheduled_coach?.name})
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -235,17 +265,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {/* Right side: Attendance status and action */}
                   <div className="flex items-center justify-between sm:justify-end gap-4">
                     <div className="text-left sm:text-right">
-                      <span className="text-xs font-semibold text-neutral-900 dark:text-white block">
-                        {presentCount} / {expectedCount} present
-                      </span>
-                      <span className="text-[11px] text-neutral-400">
-                        {markedCount > 0 ? `${markedCount} marked` : 'Not started'}
-                      </span>
+                      {isCancelled ? (
+                        <>
+                          <span className="text-xs font-bold text-rose-700 dark:text-rose-300 block">
+                            Cancelled Class
+                          </span>
+                          <span className="text-[11px] text-neutral-400">
+                            No Roll Call
+                          </span>
+                        </>
+                      ) : isOffDay ? (
+                        <>
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 block">
+                            Off-Day
+                          </span>
+                          <span className="text-[11px] text-neutral-400">
+                            No Attendance
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-xs font-semibold text-neutral-900 dark:text-white block">
+                            {presentCount} / {expectedCount} present
+                          </span>
+                          <span className="text-[11px] text-neutral-400">
+                            {markedCount > 0 ? `${markedCount} marked` : 'Not started'}
+                          </span>
+                        </>
+                      )}
                     </div>
 
                     <button
                       onClick={() => onSelectSession(sess.id)}
-                      className="py-1.5 px-3 rounded-lg text-xs font-semibold bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors flex items-center gap-1"
+                      className="py-1.5 px-3 rounded-lg text-xs font-semibold bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors flex items-center gap-1 cursor-pointer"
                     >
                       <span>Inspect</span>
                       <ArrowRight className="w-3 h-3" />

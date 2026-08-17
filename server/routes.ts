@@ -1046,29 +1046,33 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, (req: AuthenticatedR
   const defaultCoachId = session.default_coach_id || session.scheduled_coach_id;
 
   // Handle Session Type transitions
-  if (session_type === 'REPLACEMENT_COACH' || replacement_coach_id) {
-    const replCoach = replacement_coach_id || actual_coach_id;
-    session.actual_coach_id = replCoach;
-    session.replacement_coach_id = replCoach;
-    session.session_type = 'REPLACEMENT_COACH';
-    if (status) session.status = status;
-    else if (session.status === 'COACH_CANCELLED' || session.status === 'PLANNED_OFF_DAY') {
-      session.status = 'SCHEDULED';
-    }
-  } else if (session_type === 'COACH_CANCELLED' || status === 'COACH_CANCELLED' || status === 'CANCELLED') {
+  if (session_type === 'COACH_CANCELLED' || status === 'COACH_CANCELLED' || status === 'CANCELLED') {
     session.status = 'COACH_CANCELLED';
     session.session_type = 'COACH_CANCELLED';
     session.cancellation_reason = cancellation_reason || 'Coach cancelled';
+    session.replacement_coach_id = null;
+    session.actual_coach_id = defaultCoachId;
   } else if (session_type === 'PLANNED_OFF_DAY' || status === 'PLANNED_OFF_DAY' || status === 'OFF_DAY') {
     session.status = 'PLANNED_OFF_DAY';
     session.session_type = 'PLANNED_OFF_DAY';
     session.cancellation_reason = cancellation_reason || 'Academy planned off-day';
+    session.replacement_coach_id = null;
+    session.actual_coach_id = defaultCoachId;
+  } else if (session_type === 'REPLACEMENT_COACH' || (replacement_coach_id && session_type !== 'NORMAL')) {
+    const replCoach = replacement_coach_id || actual_coach_id;
+    session.actual_coach_id = replCoach;
+    session.replacement_coach_id = replCoach;
+    session.session_type = 'REPLACEMENT_COACH';
+    session.status = status && status !== 'COACH_CANCELLED' && status !== 'PLANNED_OFF_DAY' ? status : 'SCHEDULED';
+    session.cancellation_reason = undefined;
   } else if (session_type === 'NORMAL') {
     session.actual_coach_id = defaultCoachId;
     session.replacement_coach_id = null;
     session.session_type = 'NORMAL';
     if (session.status === 'COACH_CANCELLED' || session.status === 'PLANNED_OFF_DAY') {
       session.status = 'SCHEDULED';
+    } else if (status && status !== 'COACH_CANCELLED' && status !== 'PLANNED_OFF_DAY') {
+      session.status = status;
     }
     session.cancellation_reason = undefined;
   } else {

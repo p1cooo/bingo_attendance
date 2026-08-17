@@ -192,8 +192,10 @@ export const CoachWorkspace: React.FC = () => {
         ) : (
           <div className="space-y-4">
             {sessions.map((sess) => {
-              const sessionCoachColor = sess.actual_coach?.color || '#3b82f6';
-              const isReplacement = sess.scheduled_coach_id !== sess.actual_coach_id;
+              const isCancelled = sess.status === 'COACH_CANCELLED' || sess.status === 'CANCELLED' || sess.session_type === 'COACH_CANCELLED';
+              const isOffDay = sess.status === 'PLANNED_OFF_DAY' || sess.status === 'OFF_DAY' || sess.session_type === 'PLANNED_OFF_DAY';
+              const sessionCoachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (sess.actual_coach?.color || '#3b82f6');
+              const isReplacement = !isCancelled && !isOffDay && sess.scheduled_coach_id !== sess.actual_coach_id;
 
               const markedCount = sess.marked_attendance_count || 0;
               const presentCount = sess.present_count || 0;
@@ -205,7 +207,17 @@ export const CoachWorkspace: React.FC = () => {
                 bgClass: 'bg-slate-100 dark:bg-neutral-800 text-slate-600 dark:text-slate-400 border-slate-300',
               };
 
-              if (markedCount > 0 && markedCount < expectedCount) {
+              if (isCancelled) {
+                statusBadge = {
+                  text: 'Cancelled by Coach',
+                  bgClass: 'bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-200 border-rose-300',
+                };
+              } else if (isOffDay) {
+                statusBadge = {
+                  text: 'Planned Off-Day',
+                  bgClass: 'bg-slate-200 dark:bg-neutral-800 text-slate-800 dark:text-slate-300 border-slate-300',
+                };
+              } else if (markedCount > 0 && markedCount < expectedCount) {
                 statusBadge = {
                   text: `In Progress (${markedCount}/${expectedCount})`,
                   bgClass: 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300',
@@ -221,7 +233,13 @@ export const CoachWorkspace: React.FC = () => {
                 <div
                   key={sess.id}
                   id={`session-card-${sess.id}`}
-                  className="bg-white dark:bg-neutral-900 rounded-3xl border-2 border-slate-900 dark:border-neutral-700 p-5 sm:p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden transition-all"
+                  className={`rounded-3xl border-2 border-slate-900 dark:border-neutral-700 p-5 sm:p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden transition-all ${
+                    isCancelled
+                      ? 'bg-rose-50/40 dark:bg-rose-950/20'
+                      : isOffDay
+                      ? 'bg-slate-50/50 dark:bg-neutral-900/50 opacity-80'
+                      : 'bg-white dark:bg-neutral-900'
+                  }`}
                 >
                   {/* Coach Color Left Edge Stripe */}
                   <div
@@ -254,8 +272,14 @@ export const CoachWorkspace: React.FC = () => {
                           </span>
                         )}
 
-                        {sess.status === 'OFF_DAY' && (
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 dark:bg-purple-950/60 border border-purple-300 dark:border-purple-700 text-purple-800 dark:text-purple-200">
+                        {isCancelled && (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200">
+                            Cancelled by Coach
+                          </span>
+                        )}
+
+                        {isOffDay && (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-200 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 text-slate-800 dark:text-slate-200">
                             5th-Week Off Day
                           </span>
                         )}
@@ -266,20 +290,30 @@ export const CoachWorkspace: React.FC = () => {
                         {sess.class_item?.name || 'Chess Training Class'}
                       </h3>
 
+                      {isCancelled && (
+                        <div className="p-2.5 rounded-xl bg-rose-100/70 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-xs font-bold text-rose-900 dark:text-rose-200">
+                          ℹ️ Cancellation Reason: {sess.cancellation_reason || 'Coach sick / unavailable. Class cancelled.'}
+                        </div>
+                      )}
+
                       {/* Coach & Enrolled Student Count */}
                       <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-400 font-medium">
                         <span className="flex items-center gap-1 font-bold">
                           <Users className="w-3.5 h-3.5 text-slate-400" />
                           <span>{expectedCount} chess students rostered</span>
                         </span>
-                        <span>•</span>
-                        <span className="inline-flex items-center gap-1 font-bold">
-                          <span
-                            className="w-2.5 h-2.5 rounded-full border border-slate-900"
-                            style={{ backgroundColor: sessionCoachColor }}
-                          />
-                          Coach {sess.actual_coach?.name || 'Assigned'}
-                        </span>
+                        {!isCancelled && !isOffDay && (
+                          <>
+                            <span>•</span>
+                            <span className="inline-flex items-center gap-1 font-bold">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full border border-slate-900"
+                                style={{ backgroundColor: sessionCoachColor }}
+                              />
+                              Coach {sess.actual_coach?.name || 'Assigned'}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -294,11 +328,19 @@ export const CoachWorkspace: React.FC = () => {
                       <button
                         id={`take-attendance-btn-${sess.id}`}
                         onClick={() => setActiveSessionId(sess.id)}
-                        disabled={sess.status === 'OFF_DAY' || sess.status === 'CANCELLED'}
-                        className="py-2.5 px-5 rounded-2xl text-xs font-black bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex items-center gap-2 disabled:opacity-40 cursor-pointer"
+                        disabled={isOffDay || isCancelled}
+                        className="py-2.5 px-5 rounded-2xl text-xs font-black bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex items-center gap-2 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
                       >
-                        <span>{markedCount > 0 ? 'Open Attendance Sheet' : 'Take Roll Call'}</span>
-                        <ChevronRight className="w-4 h-4" />
+                        <span>
+                          {isCancelled
+                            ? 'Cancelled (No Roll Call)'
+                            : isOffDay
+                            ? 'Off-Day (No Roll Call)'
+                            : markedCount > 0
+                            ? 'Open Attendance Sheet'
+                            : 'Take Roll Call'}
+                        </span>
+                        {!isCancelled && !isOffDay && <ChevronRight className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
