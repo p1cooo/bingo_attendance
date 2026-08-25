@@ -14,14 +14,12 @@ if (fs.existsSync(configPath)) {
   }
 }
 
-const projectId = process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId || 'gen-lang-client-0937442942';
+const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || firebaseConfig.projectId || '';
 const databaseId = process.env.FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId || '(default)';
 
 let adminApp: App;
 if (getApps().length === 0) {
-  adminApp = initializeApp({
-    projectId: projectId,
-  });
+  adminApp = initializeApp(projectId ? { projectId } : {});
 } else {
   adminApp = getApps()[0];
 }
