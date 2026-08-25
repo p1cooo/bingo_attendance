@@ -60,6 +60,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     parent_name: '',
     parent_phone: '',
     parent_email: '',
+    parent_telegram: '',
     parent_relation: 'Parent',
     status: 'ACTIVE' as 'ACTIVE' | 'INACTIVE',
     schedule_ids: [] as string[],
@@ -109,6 +110,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       parent_name: '',
       parent_phone: '',
       parent_email: '',
+      parent_telegram: '',
       parent_relation: 'Parent',
       status: 'ACTIVE',
       schedule_ids: [],
@@ -127,6 +129,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       parent_name: student.parent?.name || '',
       parent_phone: student.parent?.phone || '',
       parent_email: student.parent?.email || '',
+      parent_telegram: student.parent?.telegram_username || '',
       parent_relation: student.parent_relation || 'Parent',
       status: student.status,
       schedule_ids: student.enrolled_schedules?.map((s) => s.schedule_id) || [],
@@ -300,7 +303,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                 <tr>
                   <th className="py-3 px-4">Student</th>
                   <th className="py-3 px-4">ID / School</th>
-                  <th className="py-3 px-4">Parent / Contact</th>
+                  <th className="py-3 px-4">Parent / Telegram</th>
                   <th className="py-3 px-4">Enrolled Classes</th>
                   <th className="py-3 px-4 text-center">Attendance Rate</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -344,7 +347,12 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                               {stu.parent.name}
                             </span>
                             <div className="text-[11px] text-neutral-500 flex items-center gap-1.5 mt-0.5">
-                              <span>{stu.parent.phone || 'No phone'}</span>
+                              <span>{stu.parent.phone}</span>
+                              {stu.parent.telegram_username && (
+                                <span className="text-[10px] text-blue-600 dark:text-blue-400">
+                                  {stu.parent.telegram_username}
+                                </span>
+                              )}
                             </div>
                           </div>
                         ) : (
@@ -510,7 +518,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
               <div>
                 <label className="block text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-                  Parent Phone (WhatsApp Notifications)
+                  Phone Number
                 </label>
                 <input
                   type="text"
@@ -523,13 +531,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
               <div>
                 <label className="block text-xs text-neutral-600 dark:text-neutral-400 mb-1">
-                  Parent Email (Optional)
+                  Telegram Username (For Attendance Alerts)
                 </label>
                 <input
-                  type="email"
-                  value={formData.parent_email}
-                  onChange={(e) => setFormData({ ...formData, parent_email: e.target.value })}
-                  placeholder="parent@example.com"
+                  type="text"
+                  value={formData.parent_telegram}
+                  onChange={(e) => setFormData({ ...formData, parent_telegram: e.target.value })}
+                  placeholder="@telegram_handle"
                   className="w-full px-3 py-1.5 text-xs rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none"
                 />
               </div>
@@ -676,14 +684,12 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                 <span className="font-semibold text-neutral-900 dark:text-white">
                   {profileStudent.parent?.name || '—'} ({profileStudent.parent_relation || 'Parent'})
                 </span>
-                {profileStudent.parent?.email && (
-                  <div className="text-[11px] text-neutral-400">{profileStudent.parent.email}</div>
-                )}
+                <div className="text-[11px] text-neutral-500">{profileStudent.parent?.phone}</div>
               </div>
               <div>
-                <span className="text-neutral-400 block text-[10px]">WhatsApp Phone Contact</span>
-                <span className="font-semibold text-emerald-700 dark:text-emerald-400 font-mono">
-                  {profileStudent.parent?.phone || 'Not configured'}
+                <span className="text-neutral-400 block text-[10px]">Telegram Alerts</span>
+                <span className="font-semibold text-blue-600 dark:text-blue-400">
+                  {profileStudent.parent?.telegram_username || 'Not configured'}
                 </span>
               </div>
             </div>

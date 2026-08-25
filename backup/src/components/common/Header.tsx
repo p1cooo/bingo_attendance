@@ -8,11 +8,63 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ workspaceTitle }) => {
-  const { user, coachProfile, logout, isAdmin } = useAuth();
+  const { user, coachProfile, logout, isAdmin, switchUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const [showSwitchMenu, setShowSwitchMenu] = useState(false);
+
+  const personas = [
+    { username: 'admin123', email: 'admin@academy.com', name: 'Admin (admin123)', role: 'Admin', color: '#0f172a', colorName: 'Master Portal' },
+    { username: 'coachchuah', email: 'chuah@academy.com', name: 'Coach Chuah (coachchuah)', role: 'Coach', color: '#8b5cf6', colorName: 'Pastel Purple' },
+    { username: 'coachtan', email: 'tan@academy.com', name: 'Coach Tan (coachtan)', role: 'Coach', color: '#10b981', colorName: 'Pastel Green' },
+    { username: 'coachweiyuan', email: 'weiyuan@academy.com', name: 'FM Wei Yuan (coachweiyuan)', role: 'Coach', color: '#3b82f6', colorName: 'Pastel Blue' },
+    { username: 'coachjason', email: 'jason@academy.com', name: 'Jason (coachjason)', role: 'Coach', color: '#f59e0b', colorName: 'Pastel Amber' },
+    { username: 'coachsarah', email: 'sarah@academy.com', name: 'Sarah (coachsarah)', role: 'Coach', color: '#ec4899', colorName: 'Pastel Pink' },
+  ];
+
+  const isDev = Boolean((import.meta as any).env?.DEV || (import.meta as any).env?.MODE === 'development');
+  const showDevSwitcher = isDev || isAdmin;
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 dark:bg-neutral-900/95 backdrop-blur border-b-2 border-slate-900 dark:border-neutral-800 transition-colors">
+      {/* Top Fast Switcher Bar (Available in Development / Admin environments) */}
+      {showDevSwitcher && (
+        <div className="bg-slate-100 dark:bg-neutral-950 border-b border-slate-200 dark:border-neutral-800 px-4 py-1.5 overflow-x-auto scrollbar-none">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-[11px]">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="font-black uppercase tracking-wider text-slate-500 text-[10px] flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                {isDev ? 'Dev Account Switcher:' : 'Admin Impersonation Switcher:'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">
+              {personas.map((p) => {
+                const isCurrent = user?.email === p.email;
+                return (
+                  <button
+                    key={p.username}
+                    type="button"
+                    onClick={() => switchUser(p.username)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl font-bold transition-all text-[11px] flex-shrink-0 cursor-pointer ${
+                      isCurrent
+                        ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,0.8)]'
+                        : 'bg-white dark:bg-neutral-900 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-neutral-800 border border-slate-300 dark:border-neutral-700'
+                    }`}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full border border-slate-900 dark:border-white"
+                      style={{ backgroundColor: p.color }}
+                    />
+                    <span>{p.name}</span>
+                    {isCurrent && <Check className="w-3 h-3 text-emerald-400 dark:text-emerald-600" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand & Workspace Title */}
         <div className="flex items-center gap-3">

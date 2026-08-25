@@ -2,10 +2,14 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { router as apiRouter } from './server/routes.js';
+import { initializeFirestoreSync } from './server/firestoreSync.js';
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Initialize Firestore synchronization
+  await initializeFirestoreSync();
 
   // JSON Body parsing
   app.use(express.json());

@@ -22,11 +22,6 @@ import {
   User,
   Coach,
 } from '../src/types.js';
-import { dispatchTelegramNotification } from './telegram.js';
-import { notificationService } from './notifications/NotificationService.js';
-import { validateBulkImport, commitBulkImport } from './bulkImport.js';
-import { generateClassScheduleDocx } from './exportDocx.js';
-import { syncDocToFirestore, deleteDocFromFirestore } from './firestoreSync.js';
 
 export const router = Router();
 
@@ -913,24 +908,14 @@ router.get('/sessions', authenticateUser, (req: AuthenticatedRequest, res: Respo
 
   let list = Array.from(db.sessions.values()).map((s) => db.getPopulatedSession(s.id)!);
 
-  // Strictly enforce coach isolation: A coach only sees their own assigned sessions
-  if (user.role === 'COACH' && user.coach_id) {
+  // If coach requested "my_classes_only" or if coach role with no other filters
+  if (my_classes_only === 'true' && user.coach_id) {
     list = list.filter(
-      (s) =>
-        s.scheduled_coach_id === user.coach_id ||
-        s.actual_coach_id === user.coach_id ||
-        s.replacement_coach_id === user.coach_id
-    );
-  } else if (my_classes_only === 'true' && user.coach_id) {
-    list = list.filter(
-      (s) =>
-        s.scheduled_coach_id === user.coach_id ||
-        s.actual_coach_id === user.coach_id ||
-        s.replacement_coach_id === user.coach_id
+      (s) => s.scheduled_coach_id === user.coach_id || s.actual_coach_id === user.coach_id
     );
   }
 
-  if (coach_id && user.role === 'ADMIN') {
+  if (coach_id) {
     list = list.filter(
       (s) => s.scheduled_coach_id === coach_id || s.actual_coach_id === coach_id
     );
@@ -1110,7 +1095,7 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, (req: AuthenticatedR
 // 7. ATTENDANCE & REPLACEMENT ATTENDANCE
 // ============================================================
 
-router.post('/sessions/:id/attendance', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/sessions/:id/attendance', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
   const { student_id, status, attendance_type, replacement_note } = req.body;
@@ -1128,14 +1113,6 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
   if (!verifySessionAttendanceAccess(id, user)) {
     return res.status(403).json({
       error: 'Forbidden: You are not authorized to mark attendance for this session',
-    });
-  }
-
-  // Future session attendance restriction (attendance only opens on or after session date)
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (session.session_date > todayStr && user.role !== 'ADMIN') {
-    return res.status(400).json({
-      error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
     });
   }
 
@@ -1158,7 +1135,6 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
     existingRecord.marked_by_user_id = user.id;
     existingRecord.notification_status = 'SENT';
     db.attendance.set(recordId, existingRecord);
-    syncDocToFirestore('attendance', recordId, existingRecord).catch(console.error);
   } else {
     recordId = `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newRecord: AttendanceRecord = {
@@ -1173,7 +1149,6 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
       notification_status: 'SENT',
     };
     db.attendance.set(recordId, newRecord);
-    syncDocToFirestore('attendance', recordId, newRecord).catch(console.error);
   }
 
   // Create Audit Log if status changed
@@ -1194,35 +1169,30 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
       timestamp: new Date().toISOString(),
     };
     db.auditLogs.unshift(auditEntry);
-    syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
   }
 
-  // Parent Attendance Notification Trigger (via NotificationService)
+  // Parent Telegram Notification Trigger
   const student = db.students.get(student_id);
   const parent = student?.parent_id ? db.parents.get(student.parent_id) : undefined;
   const classItem = db.classes.get(session.class_id);
-  const coach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
 
-  if (student) {
-    notificationService.sendAttendanceAlert({
-      attendanceId: recordId,
-      sessionId: id,
-      studentId: student_id,
-      studentName: student.full_name,
-      parentId: parent?.id,
-      parentName: parent?.name,
-      parentPhone: parent?.phone,
-      parentTelegramChatId: parent?.telegram_chat_id,
-      parentTelegramUsername: parent?.telegram_username,
-      attendanceStatus: newStatus,
-      attendanceType: attType,
-      className: classItem?.name || 'Class',
-      sessionDate: session.session_date,
-      startTime: session.start_time,
-      endTime: session.end_time,
-      coachName: coach?.name || 'Coach',
-      replacementNote: req.body.replacement_note,
-    }).catch((err) => console.error('[Routes] Attendance notification alert error:', err));
+  if (parent && parent.telegram_chat_id) {
+    const typeLabel = attType === 'REPLACEMENT' ? ' as a REPLACEMENT lesson' : '';
+    const notifLog: NotificationLog = {
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      attendance_id: recordId,
+      session_id: id,
+      student_id,
+      student_name: student.full_name,
+      parent_id: parent.id,
+      parent_name: parent.name,
+      channel: 'TELEGRAM',
+      recipient_identifier: `${parent.telegram_username || parent.name} (${parent.telegram_chat_id})`,
+      message: `Dear ${parent.name}, your child ${student.full_name} has been marked ${newStatus}${typeLabel} for ${classItem?.name || 'Class'} on ${session.session_date} at ${session.start_time}.`,
+      status: 'SENT',
+      sent_at: new Date().toISOString(),
+    };
+    db.notificationLogs.unshift(notifLog);
   }
 
   return res.json({
@@ -1233,7 +1203,7 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
 });
 
 // Coach adds a replacement student to session
-router.post('/sessions/:id/replacement-student', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/sessions/:id/replacement-student', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
   const { student_id, replacement_note } = req.body;
@@ -1250,13 +1220,6 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
   if (!verifySessionAttendanceAccess(id, user)) {
     return res.status(403).json({
       error: 'Forbidden: You are not authorized to manage attendance for this session',
-    });
-  }
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (session.session_date > todayStr && user.role !== 'ADMIN') {
-    return res.status(400).json({
-      error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
     });
   }
 
@@ -1280,10 +1243,9 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
   };
 
   db.attendance.set(recordId, newRecord);
-  syncDocToFirestore('attendance', recordId, newRecord).catch(console.error);
 
   // Audit log
-  const auditEntry = {
+  db.auditLogs.unshift({
     id: `audit-${Date.now()}`,
     attendance_id: recordId,
     session_id: id,
@@ -1292,234 +1254,37 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
     changed_by_user_id: user.id,
     changed_by_user_name: user.name,
     changed_by_user_role: user.role,
-    previous_status: 'NOT_MARKED' as const,
-    new_status: 'PRESENT' as const,
+    previous_status: 'NOT_MARKED',
+    new_status: 'PRESENT',
     reason: `Added as replacement student (${replacement_note || 'Flexible replacement'})`,
     timestamp: new Date().toISOString(),
-  };
-  db.auditLogs.unshift(auditEntry);
-  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
+  });
 
-  // Parent Attendance Notification Trigger (via NotificationService)
+  // Notification log
   const parent = student.parent_id ? db.parents.get(student.parent_id) : undefined;
   const classItem = db.classes.get(session.class_id);
-  const coach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
-
-  notificationService.sendAttendanceAlert({
-    attendanceId: recordId,
-    sessionId: id,
-    studentId: student_id,
-    studentName: student.full_name,
-    parentId: parent?.id,
-    parentName: parent?.name,
-    parentPhone: parent?.phone,
-    parentTelegramChatId: parent?.telegram_chat_id,
-    parentTelegramUsername: parent?.telegram_username,
-    attendanceStatus: 'PRESENT',
-    attendanceType: 'REPLACEMENT',
-    className: classItem?.name || 'Class',
-    sessionDate: session.session_date,
-    startTime: session.start_time,
-    endTime: session.end_time,
-    coachName: coach?.name || 'Coach',
-    replacementNote: replacement_note || 'Attending replacement lesson',
-  }).catch((err) => console.error('[Routes] Replacement notification alert error:', err));
+  if (parent && parent.telegram_chat_id) {
+    db.notificationLogs.unshift({
+      id: `notif-${Date.now()}`,
+      attendance_id: recordId,
+      session_id: id,
+      student_id,
+      student_name: student.full_name,
+      parent_id: parent.id,
+      parent_name: parent.name,
+      channel: 'TELEGRAM',
+      recipient_identifier: `${parent.telegram_username || parent.name} (${parent.telegram_chat_id})`,
+      message: `Dear ${parent.name}, your child ${student.full_name} attended ${classItem?.name || 'Class'} as a REPLACEMENT lesson on ${session.session_date}.`,
+      status: 'SENT',
+      sent_at: new Date().toISOString(),
+    });
+  }
 
   return res.json({
     success: true,
     attendance_record: newRecord,
     session: db.getPopulatedSession(id),
   });
-});
-
-// Record an Unregistered Student on the fly during Roll Call
-router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const user = req.user!;
-  const { full_name, nick_name, parent_phone, status, replacement_note } = req.body;
-
-  if (!full_name || !String(full_name).trim()) {
-    return res.status(400).json({ error: 'Student full name is required' });
-  }
-
-  const session = db.sessions.get(id);
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-
-  if (!verifySessionAttendanceAccess(id, user)) {
-    return res.status(403).json({ error: 'Forbidden: Unauthorized to mark attendance for this session' });
-  }
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (session.session_date > todayStr && user.role !== 'ADMIN') {
-    return res.status(400).json({
-      error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
-    });
-  }
-
-  // Create temporary/unregistered parent if phone provided
-  let parentId: string | undefined;
-  if (parent_phone) {
-    parentId = `parent-unreg-${Date.now()}`;
-    const newParent = {
-      id: parentId,
-      name: `${String(full_name).trim()}'s Parent`,
-      phone: String(parent_phone).trim(),
-      created_at: new Date().toISOString(),
-    };
-    db.parents.set(parentId, newParent);
-    syncDocToFirestore('parents', parentId, newParent).catch(console.error);
-  }
-
-  const studentId = `student-unreg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-  const unregCode = `UNREG-${Math.floor(1000 + Math.random() * 9000)}`;
-  const newStudent: Student = {
-    id: studentId,
-    student_id: unregCode,
-    full_name: String(full_name).trim(),
-    nick_name: nick_name ? String(nick_name).trim() : undefined,
-    parent_id: parentId,
-    status: 'ACTIVE',
-    is_unregistered: true,
-    created_at: new Date().toISOString(),
-  };
-
-  db.students.set(studentId, newStudent);
-  syncDocToFirestore('students', studentId, newStudent).catch(console.error);
-
-  const attStatus: AttendanceStatus = (status as AttendanceStatus) || 'PRESENT';
-  const recordId = `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-  const newRecord: AttendanceRecord = {
-    id: recordId,
-    session_id: id,
-    student_id: studentId,
-    status: attStatus,
-    attendance_type: 'REGULAR',
-    replacement_note: replacement_note || 'Unregistered student walk-in/trial',
-    marked_at: new Date().toISOString(),
-    marked_by_user_id: user.id,
-    notification_status: 'QUEUED',
-  };
-
-  db.attendance.set(recordId, newRecord);
-  syncDocToFirestore('attendance', recordId, newRecord).catch(console.error);
-
-  // Audit log
-  const auditEntry = {
-    id: `audit-${Date.now()}`,
-    attendance_id: recordId,
-    session_id: id,
-    student_id: studentId,
-    student_name: newStudent.full_name,
-    changed_by_user_id: user.id,
-    changed_by_user_name: user.name,
-    changed_by_user_role: user.role,
-    previous_status: 'NOT_MARKED' as const,
-    new_status: attStatus,
-    reason: `Unregistered student recorded (${unregCode})`,
-    timestamp: new Date().toISOString(),
-  };
-  db.auditLogs.unshift(auditEntry);
-  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
-
-  db.saveToDisk();
-
-  return res.status(201).json({
-    success: true,
-    student: newStudent,
-    attendance_record: newRecord,
-    session: db.getPopulatedSession(id),
-  });
-});
-
-// Admin converts an Unregistered Student to a Formal Registered Student profile
-router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
-  const { id } = req.params;
-  const student = db.students.get(id);
-  if (!student) {
-    return res.status(404).json({ error: 'Student not found' });
-  }
-
-  const {
-    student_id,
-    full_name,
-    nick_name,
-    school,
-    parent_name,
-    parent_phone,
-    parent_email,
-    parent_telegram,
-    parent_relation,
-    schedule_ids,
-  } = req.body;
-
-  if (!student_id || !full_name) {
-    return res.status(400).json({ error: 'Formal Student ID and Full Name are required' });
-  }
-
-  // Update parent
-  let parentId = student.parent_id;
-  if (!parentId) {
-    parentId = `parent-${Date.now()}`;
-    const newParent = {
-      id: parentId,
-      name: parent_name || `${full_name}'s Parent`,
-      phone: parent_phone || '',
-      email: parent_email || '',
-      telegram_username: parent_telegram || '',
-      created_at: new Date().toISOString(),
-    };
-    db.parents.set(parentId, newParent);
-    syncDocToFirestore('parents', parentId, newParent).catch(console.error);
-  } else {
-    const p = db.parents.get(parentId);
-    if (p) {
-      if (parent_name) p.name = parent_name;
-      if (parent_phone) p.phone = parent_phone;
-      if (parent_email) p.email = parent_email;
-      if (parent_telegram) p.telegram_username = parent_telegram;
-      db.parents.set(parentId, p);
-      syncDocToFirestore('parents', parentId, p).catch(console.error);
-    }
-  }
-
-  // Update student in place to maintain all existing attendance records and audit logs
-  student.student_id = String(student_id).trim();
-  student.full_name = String(full_name).trim();
-  student.nick_name = nick_name ? String(nick_name).trim() : undefined;
-  student.school = school ? String(school).trim() : undefined;
-  student.parent_id = parentId;
-  student.parent_relation = parent_relation || 'Parent';
-  student.is_unregistered = false; // Officially registered
-
-  db.students.set(id, student);
-  syncDocToFirestore('students', id, student).catch(console.error);
-
-  // Enroll in schedules if provided
-  if (Array.isArray(schedule_ids)) {
-    for (const [memId, mem] of db.memberships.entries()) {
-      if (mem.student_id === id) {
-        db.memberships.delete(memId);
-        deleteDocFromFirestore('memberships', memId).catch(console.error);
-      }
-    }
-    for (const schedId of schedule_ids) {
-      const memId = `mem-${id}-${schedId}`;
-      const newMem = {
-        id: memId,
-        student_id: id,
-        schedule_id: schedId,
-        joined_date: new Date().toISOString().split('T')[0],
-        status: 'ACTIVE' as const,
-      };
-      db.memberships.set(memId, newMem);
-      syncDocToFirestore('memberships', memId, newMem).catch(console.error);
-    }
-  }
-
-  db.saveToDisk();
-  return res.json(db.getPopulatedStudent(id));
 });
 
 // List all attendance records with rich filtering (Admin & Session view)
@@ -1591,11 +1356,10 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, (req: Authenticate
   record.marked_at = new Date().toISOString();
   record.marked_by_user_id = user.id;
   db.attendance.set(id, record);
-  syncDocToFirestore('attendance', id, record).catch(console.error);
 
   // Audit log entry
   const student = db.students.get(record.student_id);
-  const auditEntry = {
+  db.auditLogs.unshift({
     id: `audit-${Date.now()}`,
     attendance_id: id,
     session_id: record.session_id,
@@ -1603,232 +1367,18 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, (req: Authenticate
     student_name: student?.full_name || 'Student',
     changed_by_user_id: user.id,
     changed_by_user_name: user.name,
-    changed_by_user_role: 'ADMIN' as const,
+    changed_by_user_role: 'ADMIN',
     previous_status: prevStatus,
     new_status: record.status,
     reason: String(reason).trim(),
     timestamp: new Date().toISOString(),
-  };
-  db.auditLogs.unshift(auditEntry);
-  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
+  });
 
   return res.json({
     success: true,
     attendance_record: record,
   });
 });
-
-// ============================================================
-// 8. BULK IMPORT ENDPOINTS
-// ============================================================
-
-router.post('/admin/bulk-import/validate', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
-  const { type, records } = req.body;
-  if (!type || !Array.isArray(records)) {
-    return res.status(400).json({ error: 'Valid import type and records array are required' });
-  }
-
-  const validationResult = validateBulkImport(type, records);
-  return res.json(validationResult);
-});
-
-router.post('/admin/bulk-import/commit', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  const { type, validatedItems } = req.body;
-  if (!type || !Array.isArray(validatedItems)) {
-    return res.status(400).json({ error: 'Valid import type and validated items array are required' });
-  }
-
-  const result = await commitBulkImport(type, validatedItems);
-  return res.json(result);
-});
-
-// ============================================================
-// 9. EXPORT ENDPOINTS (WORD DOCX & HUMAN-READABLE CSV)
-// ============================================================
-
-router.get('/export/class-schedules-docx', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const docBuffer = await generateClassScheduleDocx();
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    res.setHeader('Content-Disposition', 'attachment; filename="Chess_Academy_Class_Schedules.docx"');
-    return res.send(docBuffer);
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'Failed to generate Word document' });
-  }
-});
-
-router.get('/export/attendance-csv', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
-  const { month, coach_id, class_id } = req.query;
-  const targetMonth = month ? String(month) : '2026-08';
-
-  const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-  let records = Array.from(db.attendance.values()).filter((r) => {
-    const sess = db.sessions.get(r.session_id);
-    if (!sess) return false;
-    if (!sess.session_date.startsWith(targetMonth)) return false;
-    if (coach_id && sess.actual_coach_id !== coach_id && sess.scheduled_coach_id !== coach_id) return false;
-    if (class_id && sess.class_id !== class_id) return false;
-    return true;
-  });
-
-  // Human-readable CSV column order:
-  // Date, Day, Start Time, End Time, Class, Class Type, Coach, Student, Attendance Status, Attendance Type, Replacement, Notes
-  const headers = [
-    'Date',
-    'Day',
-    'Start Time',
-    'End Time',
-    'Class',
-    'Class Type',
-    'Coach',
-    'Student',
-    'Attendance Status',
-    'Attendance Type',
-    'Replacement',
-    'Notes',
-  ];
-
-  const rows = records.map((r) => {
-    const sess = db.sessions.get(r.session_id)!;
-    const cls = db.classes.get(sess.class_id);
-    const coach = db.coaches.get(sess.actual_coach_id);
-    const student = db.students.get(r.student_id);
-    const dateObj = new Date(sess.session_date);
-    const dayName = isNaN(dateObj.getTime()) ? '' : daysOfWeek[dateObj.getDay()];
-
-    const isReplacement = r.attendance_type === 'REPLACEMENT' ? 'YES' : 'NO';
-    const notes = r.replacement_note ? `"${r.replacement_note.replace(/"/g, '""')}"` : '""';
-    const className = cls?.name ? `"${cls.name.replace(/"/g, '""')}"` : '""';
-    const studentName = student?.full_name ? `"${student.full_name.replace(/"/g, '""')}"` : '""';
-    const coachName = coach?.name ? `"${coach.name.replace(/"/g, '""')}"` : '""';
-
-    return [
-      sess.session_date,
-      dayName,
-      sess.start_time,
-      sess.end_time,
-      className,
-      cls?.class_type || 'GROUP',
-      coachName,
-      studentName,
-      r.status,
-      r.attendance_type,
-      isReplacement,
-      notes,
-    ].join(',');
-  });
-
-  const csvContent = [headers.join(','), ...rows].join('\n');
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="Chess_Academy_Attendance_${targetMonth}.csv"`);
-  return res.send(csvContent);
-});
-
-// Dedicated Coach Breakdown
-router.get('/coach/breakdown', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res: Response) => {
-  const user = req.user!;
-  const { month } = req.query;
-  const targetMonth = month ? String(month) : '2026-08';
-
-  // Determine which coach to inspect
-  let coachId = user.coach_id;
-  if (user.role === 'ADMIN' && req.query.coach_id) {
-    coachId = String(req.query.coach_id);
-  }
-
-  if (!coachId) {
-    return res.status(400).json({ error: 'No associated coach profile found for this account' });
-  }
-
-  const coach = db.coaches.get(coachId);
-  if (!coach) {
-    return res.status(404).json({ error: 'Coach not found' });
-  }
-
-  // Get all sessions taught or scheduled for this coach in this month
-  const sessions = Array.from(db.sessions.values()).filter((s) => {
-    if (!s.session_date.startsWith(targetMonth)) return false;
-    return s.actual_coach_id === coachId || s.scheduled_coach_id === coachId || s.default_coach_id === coachId;
-  });
-
-  let totalSessions = 0;
-  let normalSessions = 0;
-  let replacementSessions = 0;
-  let cancelledSessions = 0;
-  let plannedOffDays = 0;
-  let totalPresentStudents = 0;
-  let totalAbsentStudents = 0;
-  let totalLateStudents = 0;
-  let totalReplacementStudents = 0;
-
-  const sessionDetails = sessions.map((s) => {
-    const cls = db.classes.get(s.class_id);
-    const isReplacementCoach = s.session_type === 'REPLACEMENT_COACH' || (s.replacement_coach_id && s.replacement_coach_id === coachId);
-    
-    if (s.status === 'COACH_CANCELLED' || s.status === 'CANCELLED') {
-      cancelledSessions++;
-    } else if (s.status === 'PLANNED_OFF_DAY' || s.status === 'OFF_DAY') {
-      plannedOffDays++;
-    } else {
-      totalSessions++;
-      if (isReplacementCoach) replacementSessions++;
-      else normalSessions++;
-    }
-
-    const attendances = Array.from(db.attendance.values()).filter((a) => a.session_id === s.id);
-    const present = attendances.filter((a) => a.status === 'PRESENT').length;
-    const absent = attendances.filter((a) => a.status === 'ABSENT').length;
-    const late = attendances.filter((a) => a.status === 'LATE').length;
-    const repCount = attendances.filter((a) => a.attendance_type === 'REPLACEMENT' && (a.status === 'PRESENT' || a.status === 'LATE')).length;
-
-    totalPresentStudents += present;
-    totalAbsentStudents += absent;
-    totalLateStudents += late;
-    totalReplacementStudents += repCount;
-
-    return {
-      session_id: s.id,
-      date: s.session_date,
-      start_time: s.start_time,
-      end_time: s.end_time,
-      class_name: cls?.name || 'Class',
-      class_type: cls?.class_type || 'GROUP',
-      status: s.status,
-      session_type: s.session_type,
-      is_replacement_coach: isReplacementCoach,
-      marked_count: attendances.length,
-      present_count: present,
-      absent_count: absent,
-      late_count: late,
-      replacement_students_count: repCount,
-    };
-  });
-
-  return res.json({
-    month: targetMonth,
-    coach: {
-      id: coach.id,
-      name: coach.name,
-      email: coach.email,
-      color: coach.color,
-      color_name: coach.color_name,
-    },
-    metrics: {
-      total_sessions: totalSessions,
-      normal_sessions: normalSessions,
-      replacement_sessions: replacementSessions,
-      cancelled_sessions: cancelledSessions,
-      planned_off_days: plannedOffDays,
-      total_present_students: totalPresentStudents,
-      total_absent_students: totalAbsentStudents,
-      total_late_students: totalLateStudents,
-      total_replacement_students: totalReplacementStudents,
-    },
-    sessions: sessionDetails,
-  });
-});
-
 
 // ============================================================
 // 8. MONTHLY REPORTS & AGGREGATION
@@ -2061,9 +1611,5 @@ router.get('/audit-logs', authenticateUser, requireAdmin, (req: AuthenticatedReq
 });
 
 router.get('/notifications', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
-  return res.json(db.notificationLogs);
-});
-
-router.get('/notifications/logs', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
   return res.json(db.notificationLogs);
 });

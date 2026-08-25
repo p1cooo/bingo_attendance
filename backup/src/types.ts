@@ -12,7 +12,7 @@ export type AttendanceStatus = 'PRESENT' | 'ABSENT' | 'EXCUSED' | 'LATE';
 
 export type AttendanceType = 'REGULAR' | 'REPLACEMENT';
 
-export type NotificationStatus = 'QUEUED' | 'SENT' | 'FAILED' | 'DISABLED';
+export type NotificationStatus = 'QUEUED' | 'SENT' | 'FAILED';
 
 export interface User {
   id: string;
@@ -49,14 +49,13 @@ export interface Parent {
 
 export interface Student {
   id: string;
-  student_id: string; // e.g. STU-0101 or UNREG-XXXX
+  student_id: string; // e.g. STU-0101
   full_name: string;
   nick_name?: string;
   school?: string;
   parent_id?: string;
   parent_relation?: string;
   status: 'ACTIVE' | 'INACTIVE';
-  is_unregistered?: boolean; // True if student was entered on-the-fly without a registered profile
   parent?: Parent;
   enrolled_schedules?: ClassScheduleSummary[];
   attendance_summary?: {
@@ -194,17 +193,12 @@ export interface NotificationLog {
   student_name?: string;
   parent_id?: string;
   parent_name?: string;
-  channel: 'TELEGRAM' | 'WHATSAPP' | 'SMS' | 'EMAIL';
+  channel: 'TELEGRAM';
   recipient_identifier: string;
-  recipient_name?: string;
-  recipient_phone?: string;
-  recipient_telegram?: string;
   message: string;
   status: NotificationStatus;
   error_message?: string;
-  external_message_id?: string;
-  created_at?: string;
-  sent_at?: string;
+  sent_at: string;
 }
 
 export interface MonthlyReportItem {

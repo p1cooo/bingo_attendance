@@ -1,0 +1,1710 @@
+{
+  "users": [
+    [
+      "user-admin",
+      {
+        "id": "user-admin",
+        "email": "admin@academy.com",
+        "name": "Academy Administrator",
+        "role": "ADMIN",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "user-coach-1",
+      {
+        "id": "user-coach-1",
+        "email": "weiyuan@academy.com",
+        "name": "Wei Yuan",
+        "role": "COACH",
+        "coach_id": "coach-1",
+        "is_active": true,
+        "created_at": "2026-01-10T08:00:00Z"
+      }
+    ],
+    [
+      "user-coach-2",
+      {
+        "id": "user-coach-2",
+        "email": "chuah@academy.com",
+        "name": "Chuah",
+        "role": "COACH",
+        "coach_id": "coach-2",
+        "is_active": true,
+        "created_at": "2026-01-12T08:00:00Z"
+      }
+    ],
+    [
+      "user-coach-3",
+      {
+        "id": "user-coach-3",
+        "email": "tan@academy.com",
+        "name": "Tan",
+        "role": "COACH",
+        "coach_id": "coach-3",
+        "is_active": true,
+        "created_at": "2026-01-15T08:00:00Z"
+      }
+    ],
+    [
+      "user-coach-4",
+      {
+        "id": "user-coach-4",
+        "email": "jason@academy.com",
+        "name": "Jason",
+        "role": "COACH",
+        "coach_id": "coach-4",
+        "is_active": true,
+        "created_at": "2026-02-01T08:00:00Z"
+      }
+    ],
+    [
+      "user-coach-5",
+      {
+        "id": "user-coach-5",
+        "email": "sarah@academy.com",
+        "name": "Sarah",
+        "role": "COACH",
+        "coach_id": "coach-5",
+        "is_active": true,
+        "created_at": "2026-02-10T08:00:00Z"
+      }
+    ],
+    [
+      "user-student-1",
+      {
+        "id": "user-student-1",
+        "email": "johntan@student.academy.com",
+        "name": "John Tan",
+        "role": "STUDENT",
+        "student_id": "stu-1",
+        "is_active": true,
+        "created_at": "2026-01-10T08:00:00Z"
+      }
+    ],
+    [
+      "user-student-2",
+      {
+        "id": "user-student-2",
+        "email": "amylim@student.academy.com",
+        "name": "Amy Lim",
+        "role": "STUDENT",
+        "student_id": "stu-2",
+        "is_active": true,
+        "created_at": "2026-01-11T08:00:00Z"
+      }
+    ]
+  ],
+  "coaches": [
+    [
+      "coach-1",
+      {
+        "id": "coach-1",
+        "name": "Wei Yuan",
+        "email": "weiyuan@academy.com",
+        "phone": "+60 12-345 6789",
+        "color": "#3b82f6",
+        "color_name": "Pastel Blue",
+        "is_active": true,
+        "bio": "Head Junior Coach & FIDE Master Candidate",
+        "created_at": "2026-01-10T08:00:00Z"
+      }
+    ],
+    [
+      "coach-2",
+      {
+        "id": "coach-2",
+        "name": "Chuah",
+        "email": "chuah@academy.com",
+        "phone": "+60 16-888 9922",
+        "color": "#8b5cf6",
+        "color_name": "Pastel Purple",
+        "is_active": true,
+        "bio": "Tactics Specialist & National Master",
+        "created_at": "2026-01-12T08:00:00Z"
+      }
+    ],
+    [
+      "coach-3",
+      {
+        "id": "coach-3",
+        "name": "Tan",
+        "email": "tan@academy.com",
+        "phone": "+60 17-555 1234",
+        "color": "#10b981",
+        "color_name": "Pastel Green",
+        "is_active": true,
+        "bio": "Senior Tournament & Competition Squad Coach",
+        "created_at": "2026-01-15T08:00:00Z"
+      }
+    ],
+    [
+      "coach-4",
+      {
+        "id": "coach-4",
+        "name": "Jason",
+        "email": "jason@academy.com",
+        "phone": "+60 13-999 0011",
+        "color": "#f59e0b",
+        "color_name": "Pastel Amber",
+        "is_active": true,
+        "bio": "Private 1-on-1 Specialist & Replacement Coach",
+        "created_at": "2026-02-01T08:00:00Z"
+      }
+    ],
+    [
+      "coach-5",
+      {
+        "id": "coach-5",
+        "name": "Sarah",
+        "email": "sarah@academy.com",
+        "phone": "+60 18-222 7788",
+        "color": "#ec4899",
+        "color_name": "Pastel Pink",
+        "is_active": true,
+        "bio": "Beginner Foundations & Junior Development",
+        "created_at": "2026-02-10T08:00:00Z"
+      }
+    ],
+    [
+      "coach-6",
+      {
+        "id": "coach-6",
+        "name": "Michael",
+        "email": "michael@academy.com",
+        "phone": "+60 19-333 4444",
+        "color": "#06b6d4",
+        "color_name": "Pastel Cyan",
+        "is_active": true,
+        "bio": "Senior Tactics & Tournament Preparation Coach",
+        "created_at": "2026-03-01T08:00:00Z"
+      }
+    ]
+  ],
+  "parents": [
+    [
+      "parent-1",
+      {
+        "id": "parent-1",
+        "name": "David Tan",
+        "phone": "+60 12-234 8899",
+        "email": "david.tan@example.com",
+        "telegram_chat_id": "98723412",
+        "telegram_username": "@davidtan88",
+        "created_at": "2026-01-10T00:00:00Z"
+      }
+    ],
+    [
+      "parent-2",
+      {
+        "id": "parent-2",
+        "name": "Grace Lim",
+        "phone": "+60 17-665 4321",
+        "email": "grace.lim@example.com",
+        "telegram_chat_id": "45612378",
+        "telegram_username": "@gracelim_my",
+        "created_at": "2026-01-11T00:00:00Z"
+      }
+    ],
+    [
+      "parent-3",
+      {
+        "id": "parent-3",
+        "name": "Robert Lee",
+        "phone": "+60 19-876 1122",
+        "email": "robert.lee@example.com",
+        "telegram_chat_id": "88776655",
+        "telegram_username": "@robertlee_kl",
+        "created_at": "2026-01-12T00:00:00Z"
+      }
+    ],
+    [
+      "parent-4",
+      {
+        "id": "parent-4",
+        "name": "Mei Ling Wong",
+        "phone": "+60 13-445 6677",
+        "email": "meiling.wong@example.com",
+        "telegram_chat_id": "22334455",
+        "telegram_username": "@meiling_wong",
+        "created_at": "2026-01-15T00:00:00Z"
+      }
+    ],
+    [
+      "parent-5",
+      {
+        "id": "parent-5",
+        "name": "Kelvin Ng",
+        "phone": "+60 16-778 9900",
+        "email": "kelvin.ng@example.com",
+        "telegram_chat_id": "66554433",
+        "telegram_username": "@kelvin_ng",
+        "created_at": "2026-01-18T00:00:00Z"
+      }
+    ],
+    [
+      "parent-6",
+      {
+        "id": "parent-6",
+        "name": "Serena Chong",
+        "phone": "+60 12-998 1234",
+        "email": "serena.chong@example.com",
+        "telegram_chat_id": "77889911",
+        "telegram_username": "@serena_chong",
+        "created_at": "2026-01-20T00:00:00Z"
+      }
+    ]
+  ],
+  "students": [
+    [
+      "stu-1",
+      {
+        "id": "stu-1",
+        "student_id": "STU-0101",
+        "full_name": "John Tan",
+        "nick_name": "Johnny",
+        "school": "St Joseph Academy",
+        "parent_id": "parent-1",
+        "parent_relation": "Father",
+        "status": "ACTIVE",
+        "created_at": "2026-01-10T00:00:00Z"
+      }
+    ],
+    [
+      "stu-2",
+      {
+        "id": "stu-2",
+        "student_id": "STU-0102",
+        "full_name": "Amy Lim",
+        "nick_name": "Amy",
+        "school": "Greenwood High",
+        "parent_id": "parent-2",
+        "parent_relation": "Mother",
+        "status": "ACTIVE",
+        "created_at": "2026-01-11T00:00:00Z"
+      }
+    ],
+    [
+      "stu-3",
+      {
+        "id": "stu-3",
+        "student_id": "STU-0103",
+        "full_name": "Kevin Lee",
+        "nick_name": "Kev",
+        "school": "Beacon Hill International",
+        "parent_id": "parent-3",
+        "parent_relation": "Father",
+        "status": "ACTIVE",
+        "created_at": "2026-01-12T00:00:00Z"
+      }
+    ],
+    [
+      "stu-4",
+      {
+        "id": "stu-4",
+        "student_id": "STU-0104",
+        "full_name": "Lucas Wong",
+        "nick_name": "Luke",
+        "school": "St Joseph Academy",
+        "parent_id": "parent-4",
+        "parent_relation": "Mother",
+        "status": "ACTIVE",
+        "created_at": "2026-01-15T00:00:00Z"
+      }
+    ],
+    [
+      "stu-5",
+      {
+        "id": "stu-5",
+        "student_id": "STU-0105",
+        "full_name": "Chloe Ng",
+        "nick_name": "Chloe",
+        "school": "Sunway International School",
+        "parent_id": "parent-5",
+        "parent_relation": "Father",
+        "status": "ACTIVE",
+        "created_at": "2026-01-18T00:00:00Z"
+      }
+    ],
+    [
+      "stu-6",
+      {
+        "id": "stu-6",
+        "student_id": "STU-0106",
+        "full_name": "Ryan Chong",
+        "nick_name": "Ryan",
+        "school": "Sri Kuala Lumpur",
+        "parent_id": "parent-6",
+        "parent_relation": "Mother",
+        "status": "ACTIVE",
+        "created_at": "2026-01-20T00:00:00Z"
+      }
+    ],
+    [
+      "stu-7",
+      {
+        "id": "stu-7",
+        "student_id": "STU-0107",
+        "full_name": "Marcus Tan",
+        "nick_name": "Marc",
+        "school": "St Joseph Academy",
+        "parent_id": "parent-1",
+        "parent_relation": "Father",
+        "status": "ACTIVE",
+        "created_at": "2026-01-22T00:00:00Z"
+      }
+    ],
+    [
+      "stu-8",
+      {
+        "id": "stu-8",
+        "student_id": "STU-0108",
+        "full_name": "Ethan Yap",
+        "nick_name": "Ethan",
+        "school": "Fairview International",
+        "parent_id": "parent-2",
+        "parent_relation": "Guardian",
+        "status": "ACTIVE",
+        "created_at": "2026-01-25T00:00:00Z"
+      }
+    ],
+    [
+      "stu-9",
+      {
+        "id": "stu-9",
+        "student_id": "STU-0109",
+        "full_name": "Hannah Chen",
+        "nick_name": "Hannah",
+        "school": "Greenwood High",
+        "parent_id": "parent-3",
+        "parent_relation": "Mother",
+        "status": "ACTIVE",
+        "created_at": "2026-02-01T00:00:00Z"
+      }
+    ],
+    [
+      "stu-10",
+      {
+        "id": "stu-10",
+        "student_id": "STU-0110",
+        "full_name": "Bryan Fong",
+        "nick_name": "Bryan",
+        "school": "Cempaka International",
+        "parent_id": "parent-4",
+        "parent_relation": "Father",
+        "status": "ACTIVE",
+        "created_at": "2026-02-05T00:00:00Z"
+      }
+    ],
+    [
+      "stu-11",
+      {
+        "id": "stu-11",
+        "student_id": "STU-0111",
+        "full_name": "Sophia Liew",
+        "nick_name": "Sophie",
+        "school": "Wesley Methodist School",
+        "parent_id": "parent-5",
+        "parent_relation": "Mother",
+        "status": "ACTIVE",
+        "created_at": "2026-02-08T00:00:00Z"
+      }
+    ],
+    [
+      "stu-12",
+      {
+        "id": "stu-12",
+        "student_id": "STU-0112",
+        "full_name": "Daniel Goh",
+        "nick_name": "Dan",
+        "school": "St Joseph Academy",
+        "parent_id": "parent-6",
+        "parent_relation": "Father",
+        "status": "ACTIVE",
+        "created_at": "2026-02-12T00:00:00Z"
+      }
+    ]
+  ],
+  "classes": [
+    [
+      "class-sat-0930-wy",
+      {
+        "id": "class-sat-0930-wy",
+        "name": "Saturday 9:30–11:00",
+        "class_type": "GROUP",
+        "day_of_week": 6,
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "room_location": "Chess Hall A - Board 1-4",
+        "description": "Permanent recurring Saturday morning foundation group.",
+        "default_duration_mins": 90,
+        "default_capacity": 8,
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sat-1100-wy",
+      {
+        "id": "class-sat-1100-wy",
+        "name": "Saturday 11:00–12:30",
+        "class_type": "GROUP",
+        "day_of_week": 6,
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "room_location": "Chess Hall A - Board 1-4",
+        "description": "Permanent recurring Saturday late-morning group.",
+        "default_duration_mins": 90,
+        "default_capacity": 8,
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sat-1330-tan",
+      {
+        "id": "class-sat-1330-tan",
+        "name": "Saturday 1:30–3:00",
+        "class_type": "GROUP",
+        "day_of_week": 6,
+        "start_time": "13:30",
+        "end_time": "15:00",
+        "default_coach_id": "coach-3",
+        "room_location": "Grandmaster Arena - Board 1-4",
+        "description": "Advanced tactics and master endgame principles.",
+        "default_duration_mins": 90,
+        "default_capacity": 8,
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sat-1400-sarah",
+      {
+        "id": "class-sat-1400-sarah",
+        "name": "Saturday 2:00–3:30 (Junior)",
+        "class_type": "GROUP",
+        "day_of_week": 6,
+        "start_time": "14:00",
+        "end_time": "15:30",
+        "default_coach_id": "coach-5",
+        "room_location": "Junior Knights Room 2",
+        "description": "Junior developmental sparring and beginner tactics.",
+        "default_duration_mins": 90,
+        "default_capacity": 8,
+        "is_active": true,
+        "created_at": "2026-02-10T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-0930-wy",
+      {
+        "id": "class-sun-0930-wy",
+        "name": "Sunday 9:30–11:00",
+        "class_type": "GROUP",
+        "day_of_week": 0,
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "room_location": "Chess Hall A - Board 1-4",
+        "description": "Sunday morning foundation tactics group.",
+        "default_duration_mins": 90,
+        "default_capacity": 8,
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-1100-wy",
+      {
+        "id": "class-sun-1100-wy",
+        "name": "Sunday 11:00–12:30",
+        "class_type": "GROUP",
+        "day_of_week": 0,
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "room_location": "Chess Hall A - Board 5-8",
+        "description": "Sunday middle-game and pawn structure group.",
+        "default_duration_mins": 90,
+        "default_capacity": 8,
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-1400-ch",
+      {
+        "id": "class-sun-1400-ch",
+        "name": "Sunday 2:00–3:30",
+        "class_type": "GROUP",
+        "day_of_week": 0,
+        "start_time": "14:00",
+        "end_time": "15:30",
+        "default_coach_id": "coach-2",
+        "room_location": "Chess Hall B - Board 1-4",
+        "description": "Tactical calculation and blitz calculation speed.",
+        "default_duration_mins": 90,
+        "default_capacity": 8,
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-1600-tan",
+      {
+        "id": "class-sun-1600-tan",
+        "name": "Sunday 4:00–6:00 (Elite)",
+        "class_type": "GROUP",
+        "day_of_week": 0,
+        "start_time": "16:00",
+        "end_time": "18:00",
+        "default_coach_id": "coach-3",
+        "room_location": "Grandmaster Arena - Board 1-4",
+        "description": "FIDE rated tournament players and master study.",
+        "default_duration_mins": 120,
+        "default_capacity": 6,
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-joshua-indiv",
+      {
+        "id": "class-joshua-indiv",
+        "name": "Joshua – Individual",
+        "class_type": "INDIVIDUAL",
+        "day_of_week": 2,
+        "start_time": "16:00",
+        "end_time": "17:00",
+        "default_coach_id": "coach-4",
+        "room_location": "Private Analysis Room 1",
+        "description": "Personalized 1-on-1 sparring and opening tailoring.",
+        "default_duration_mins": 60,
+        "default_capacity": 1,
+        "is_active": true,
+        "created_at": "2026-02-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-ivria-indiv",
+      {
+        "id": "class-ivria-indiv",
+        "name": "Ivria – Individual",
+        "class_type": "INDIVIDUAL",
+        "day_of_week": 0,
+        "start_time": "10:00",
+        "end_time": "11:00",
+        "default_coach_id": "coach-4",
+        "room_location": "Private Analysis Room 2",
+        "description": "Personalized 1-on-1 tactical mastery.",
+        "default_duration_mins": 60,
+        "default_capacity": 1,
+        "is_active": true,
+        "created_at": "2026-02-01T00:00:00Z"
+      }
+    ]
+  ],
+  "schedules": [
+    [
+      "class-sat-0930-wy",
+      {
+        "id": "class-sat-0930-wy",
+        "class_id": "class-sat-0930-wy",
+        "coach_id": "coach-1",
+        "default_coach_id": "coach-1",
+        "day_of_week": 6,
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "room_location": "Chess Hall A - Board 1-4",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sat-1100-wy",
+      {
+        "id": "class-sat-1100-wy",
+        "class_id": "class-sat-1100-wy",
+        "coach_id": "coach-1",
+        "default_coach_id": "coach-1",
+        "day_of_week": 6,
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "room_location": "Chess Hall A - Board 1-4",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sat-1330-tan",
+      {
+        "id": "class-sat-1330-tan",
+        "class_id": "class-sat-1330-tan",
+        "coach_id": "coach-3",
+        "default_coach_id": "coach-3",
+        "day_of_week": 6,
+        "start_time": "13:30",
+        "end_time": "15:00",
+        "room_location": "Grandmaster Arena - Board 1-4",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sat-1400-sarah",
+      {
+        "id": "class-sat-1400-sarah",
+        "class_id": "class-sat-1400-sarah",
+        "coach_id": "coach-5",
+        "default_coach_id": "coach-5",
+        "day_of_week": 6,
+        "start_time": "14:00",
+        "end_time": "15:30",
+        "room_location": "Junior Knights Room 2",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-02-10T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-0930-wy",
+      {
+        "id": "class-sun-0930-wy",
+        "class_id": "class-sun-0930-wy",
+        "coach_id": "coach-1",
+        "default_coach_id": "coach-1",
+        "day_of_week": 0,
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "room_location": "Chess Hall A - Board 1-4",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-1100-wy",
+      {
+        "id": "class-sun-1100-wy",
+        "class_id": "class-sun-1100-wy",
+        "coach_id": "coach-1",
+        "default_coach_id": "coach-1",
+        "day_of_week": 0,
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "room_location": "Chess Hall A - Board 5-8",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-1400-ch",
+      {
+        "id": "class-sun-1400-ch",
+        "class_id": "class-sun-1400-ch",
+        "coach_id": "coach-2",
+        "default_coach_id": "coach-2",
+        "day_of_week": 0,
+        "start_time": "14:00",
+        "end_time": "15:30",
+        "room_location": "Chess Hall B - Board 1-4",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-sun-1600-tan",
+      {
+        "id": "class-sun-1600-tan",
+        "class_id": "class-sun-1600-tan",
+        "coach_id": "coach-3",
+        "default_coach_id": "coach-3",
+        "day_of_week": 0,
+        "start_time": "16:00",
+        "end_time": "18:00",
+        "room_location": "Grandmaster Arena - Board 1-4",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-joshua-indiv",
+      {
+        "id": "class-joshua-indiv",
+        "class_id": "class-joshua-indiv",
+        "coach_id": "coach-4",
+        "default_coach_id": "coach-4",
+        "day_of_week": 2,
+        "start_time": "16:00",
+        "end_time": "17:00",
+        "room_location": "Private Analysis Room 1",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-02-01T00:00:00Z"
+      }
+    ],
+    [
+      "class-ivria-indiv",
+      {
+        "id": "class-ivria-indiv",
+        "class_id": "class-ivria-indiv",
+        "coach_id": "coach-4",
+        "default_coach_id": "coach-4",
+        "day_of_week": 0,
+        "start_time": "10:00",
+        "end_time": "11:00",
+        "room_location": "Private Analysis Room 2",
+        "status": "ACTIVE",
+        "is_active": true,
+        "created_at": "2026-02-01T00:00:00Z"
+      }
+    ]
+  ],
+  "memberships": [
+    [
+      "m-1",
+      {
+        "id": "m-1",
+        "student_id": "stu-1",
+        "schedule_id": "class-sat-0930-wy",
+        "joined_date": "2026-01-10",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-2",
+      {
+        "id": "m-2",
+        "student_id": "stu-2",
+        "schedule_id": "class-sat-0930-wy",
+        "joined_date": "2026-01-11",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-3",
+      {
+        "id": "m-3",
+        "student_id": "stu-3",
+        "schedule_id": "class-sat-0930-wy",
+        "joined_date": "2026-01-12",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-4",
+      {
+        "id": "m-4",
+        "student_id": "stu-4",
+        "schedule_id": "class-sat-0930-wy",
+        "joined_date": "2026-01-15",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-5",
+      {
+        "id": "m-5",
+        "student_id": "stu-5",
+        "schedule_id": "class-sat-0930-wy",
+        "joined_date": "2026-01-18",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-6",
+      {
+        "id": "m-6",
+        "student_id": "stu-6",
+        "schedule_id": "class-sat-1100-wy",
+        "joined_date": "2026-01-20",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-7",
+      {
+        "id": "m-7",
+        "student_id": "stu-7",
+        "schedule_id": "class-sat-1100-wy",
+        "joined_date": "2026-01-22",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-8",
+      {
+        "id": "m-8",
+        "student_id": "stu-8",
+        "schedule_id": "class-sat-1100-wy",
+        "joined_date": "2026-01-25",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-9",
+      {
+        "id": "m-9",
+        "student_id": "stu-9",
+        "schedule_id": "class-sat-1100-wy",
+        "joined_date": "2026-02-01",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-10",
+      {
+        "id": "m-10",
+        "student_id": "stu-3",
+        "schedule_id": "class-sat-1330-tan",
+        "joined_date": "2026-01-12",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-11",
+      {
+        "id": "m-11",
+        "student_id": "stu-6",
+        "schedule_id": "class-sat-1330-tan",
+        "joined_date": "2026-01-20",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-12",
+      {
+        "id": "m-12",
+        "student_id": "stu-7",
+        "schedule_id": "class-sat-1330-tan",
+        "joined_date": "2026-01-22",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-13",
+      {
+        "id": "m-13",
+        "student_id": "stu-10",
+        "schedule_id": "class-sat-1400-sarah",
+        "joined_date": "2026-02-10",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-14",
+      {
+        "id": "m-14",
+        "student_id": "stu-11",
+        "schedule_id": "class-sat-1400-sarah",
+        "joined_date": "2026-02-10",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-15",
+      {
+        "id": "m-15",
+        "student_id": "stu-1",
+        "schedule_id": "class-sun-0930-wy",
+        "joined_date": "2026-01-10",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-16",
+      {
+        "id": "m-16",
+        "student_id": "stu-2",
+        "schedule_id": "class-sun-0930-wy",
+        "joined_date": "2026-01-11",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-17",
+      {
+        "id": "m-17",
+        "student_id": "stu-3",
+        "schedule_id": "class-sun-0930-wy",
+        "joined_date": "2026-01-12",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-18",
+      {
+        "id": "m-18",
+        "student_id": "stu-10",
+        "schedule_id": "class-sun-0930-wy",
+        "joined_date": "2026-02-05",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-19",
+      {
+        "id": "m-19",
+        "student_id": "stu-11",
+        "schedule_id": "class-sun-0930-wy",
+        "joined_date": "2026-02-08",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-20",
+      {
+        "id": "m-20",
+        "student_id": "stu-4",
+        "schedule_id": "class-sun-1100-wy",
+        "joined_date": "2026-01-15",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-21",
+      {
+        "id": "m-21",
+        "student_id": "stu-5",
+        "schedule_id": "class-sun-1100-wy",
+        "joined_date": "2026-01-18",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-22",
+      {
+        "id": "m-22",
+        "student_id": "stu-6",
+        "schedule_id": "class-sun-1100-wy",
+        "joined_date": "2026-01-20",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-23",
+      {
+        "id": "m-23",
+        "student_id": "stu-12",
+        "schedule_id": "class-sun-1100-wy",
+        "joined_date": "2026-02-12",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-24",
+      {
+        "id": "m-24",
+        "student_id": "stu-7",
+        "schedule_id": "class-sun-1400-ch",
+        "joined_date": "2026-01-22",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-25",
+      {
+        "id": "m-25",
+        "student_id": "stu-8",
+        "schedule_id": "class-sun-1400-ch",
+        "joined_date": "2026-01-25",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-26",
+      {
+        "id": "m-26",
+        "student_id": "stu-9",
+        "schedule_id": "class-sun-1400-ch",
+        "joined_date": "2026-02-01",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-27",
+      {
+        "id": "m-27",
+        "student_id": "stu-10",
+        "schedule_id": "class-sun-1400-ch",
+        "joined_date": "2026-02-05",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-28",
+      {
+        "id": "m-28",
+        "student_id": "stu-3",
+        "schedule_id": "class-sun-1600-tan",
+        "joined_date": "2026-01-12",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-29",
+      {
+        "id": "m-29",
+        "student_id": "stu-6",
+        "schedule_id": "class-sun-1600-tan",
+        "joined_date": "2026-01-20",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-30",
+      {
+        "id": "m-30",
+        "student_id": "stu-7",
+        "schedule_id": "class-sun-1600-tan",
+        "joined_date": "2026-01-22",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-31",
+      {
+        "id": "m-31",
+        "student_id": "stu-12",
+        "schedule_id": "class-sun-1600-tan",
+        "joined_date": "2026-02-12",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-32",
+      {
+        "id": "m-32",
+        "student_id": "stu-1",
+        "schedule_id": "class-joshua-indiv",
+        "joined_date": "2026-02-01",
+        "status": "ACTIVE"
+      }
+    ],
+    [
+      "m-33",
+      {
+        "id": "m-33",
+        "student_id": "stu-2",
+        "schedule_id": "class-ivria-indiv",
+        "joined_date": "2026-02-01",
+        "status": "ACTIVE"
+      }
+    ]
+  ],
+  "sessions": [
+    [
+      "sess-2026-08-01-sat-0930-wy",
+      {
+        "id": "sess-2026-08-01-sat-0930-wy",
+        "schedule_id": "class-sat-0930-wy",
+        "class_id": "class-sat-0930-wy",
+        "session_date": "2026-08-01",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED",
+        "notes": "Great opening principles and checkmate patterns."
+      }
+    ],
+    [
+      "sess-2026-08-01-sat-1100-wy",
+      {
+        "id": "sess-2026-08-01-sat-1100-wy",
+        "schedule_id": "class-sat-1100-wy",
+        "class_id": "class-sat-1100-wy",
+        "session_date": "2026-08-01",
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-01-sat-1330-tan",
+      {
+        "id": "sess-2026-08-01-sat-1330-tan",
+        "schedule_id": "class-sat-1330-tan",
+        "class_id": "class-sat-1330-tan",
+        "session_date": "2026-08-01",
+        "start_time": "13:30",
+        "end_time": "15:00",
+        "default_coach_id": "coach-3",
+        "scheduled_coach_id": "coach-3",
+        "actual_coach_id": "coach-3",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-02-sun-0930-wy",
+      {
+        "id": "sess-2026-08-02-sun-0930-wy",
+        "schedule_id": "class-sun-0930-wy",
+        "class_id": "class-sun-0930-wy",
+        "session_date": "2026-08-02",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-02-sun-1100-wy",
+      {
+        "id": "sess-2026-08-02-sun-1100-wy",
+        "schedule_id": "class-sun-1100-wy",
+        "class_id": "class-sun-1100-wy",
+        "session_date": "2026-08-02",
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-02-sun-1400-ch",
+      {
+        "id": "sess-2026-08-02-sun-1400-ch",
+        "schedule_id": "class-sun-1400-ch",
+        "class_id": "class-sun-1400-ch",
+        "session_date": "2026-08-02",
+        "start_time": "14:00",
+        "end_time": "15:30",
+        "default_coach_id": "coach-2",
+        "scheduled_coach_id": "coach-2",
+        "actual_coach_id": "coach-2",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-08-sat-0930-wy",
+      {
+        "id": "sess-2026-08-08-sat-0930-wy",
+        "schedule_id": "class-sat-0930-wy",
+        "class_id": "class-sat-0930-wy",
+        "session_date": "2026-08-08",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-08-sat-1100-wy",
+      {
+        "id": "sess-2026-08-08-sat-1100-wy",
+        "schedule_id": "class-sat-1100-wy",
+        "class_id": "class-sat-1100-wy",
+        "session_date": "2026-08-08",
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-09-sun-0930-wy",
+      {
+        "id": "sess-2026-08-09-sun-0930-wy",
+        "schedule_id": "class-sun-0930-wy",
+        "class_id": "class-sun-0930-wy",
+        "session_date": "2026-08-09",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-09-sun-1600-tan",
+      {
+        "id": "sess-2026-08-09-sun-1600-tan",
+        "schedule_id": "class-sun-1600-tan",
+        "class_id": "class-sun-1600-tan",
+        "session_date": "2026-08-09",
+        "start_time": "16:00",
+        "end_time": "18:00",
+        "default_coach_id": "coach-3",
+        "scheduled_coach_id": "coach-3",
+        "actual_coach_id": "coach-4",
+        "session_type": "REPLACEMENT_COACH",
+        "status": "COMPLETED",
+        "notes": "Coach Tan on medical leave; Coach Jason taught replacement session."
+      }
+    ],
+    [
+      "sess-2026-08-15-sat-0930-wy",
+      {
+        "id": "sess-2026-08-15-sat-0930-wy",
+        "schedule_id": "class-sat-0930-wy",
+        "class_id": "class-sat-0930-wy",
+        "session_date": "2026-08-15",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-2",
+        "replacement_coach_id": "coach-2",
+        "session_type": "REPLACEMENT_COACH",
+        "status": "COMPLETED",
+        "notes": "Coach Chuah took replacement coverage for Coach Wei Yuan for this session."
+      }
+    ],
+    [
+      "sess-2026-08-15-sat-1100-wy",
+      {
+        "id": "sess-2026-08-15-sat-1100-wy",
+        "schedule_id": "class-sat-1100-wy",
+        "class_id": "class-sat-1100-wy",
+        "session_date": "2026-08-15",
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED"
+      }
+    ],
+    [
+      "sess-2026-08-16-sun-0930-wy",
+      {
+        "id": "sess-2026-08-16-sun-0930-wy",
+        "schedule_id": "class-sun-0930-wy",
+        "class_id": "class-sun-0930-wy",
+        "session_date": "2026-08-16",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "COMPLETED",
+        "notes": "Morning Sunday foundation class."
+      }
+    ],
+    [
+      "sess-2026-08-16-sun-1100-wy",
+      {
+        "id": "sess-2026-08-16-sun-1100-wy",
+        "schedule_id": "class-sun-1100-wy",
+        "class_id": "class-sun-1100-wy",
+        "session_date": "2026-08-16",
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "SCHEDULED"
+      }
+    ],
+    [
+      "sess-2026-08-16-ivria-indiv",
+      {
+        "id": "sess-2026-08-16-ivria-indiv",
+        "schedule_id": "class-ivria-indiv",
+        "class_id": "class-ivria-indiv",
+        "session_date": "2026-08-16",
+        "start_time": "10:00",
+        "end_time": "11:00",
+        "default_coach_id": "coach-4",
+        "scheduled_coach_id": "coach-4",
+        "actual_coach_id": "coach-4",
+        "session_type": "NORMAL",
+        "status": "SCHEDULED"
+      }
+    ],
+    [
+      "sess-2026-08-16-sun-1400-ch",
+      {
+        "id": "sess-2026-08-16-sun-1400-ch",
+        "schedule_id": "class-sun-1400-ch",
+        "class_id": "class-sun-1400-ch",
+        "session_date": "2026-08-16",
+        "start_time": "14:00",
+        "end_time": "15:30",
+        "default_coach_id": "coach-2",
+        "scheduled_coach_id": "coach-2",
+        "actual_coach_id": "coach-2",
+        "session_type": "NORMAL",
+        "status": "SCHEDULED"
+      }
+    ],
+    [
+      "sess-2026-08-16-sun-1600-tan",
+      {
+        "id": "sess-2026-08-16-sun-1600-tan",
+        "schedule_id": "class-sun-1600-tan",
+        "class_id": "class-sun-1600-tan",
+        "session_date": "2026-08-16",
+        "start_time": "16:00",
+        "end_time": "18:00",
+        "default_coach_id": "coach-3",
+        "scheduled_coach_id": "coach-3",
+        "actual_coach_id": "coach-4",
+        "replacement_coach_id": "coach-4",
+        "session_type": "REPLACEMENT_COACH",
+        "status": "SCHEDULED",
+        "notes": "Coach Tan requested replacement coverage; assigned to Coach Jason."
+      }
+    ],
+    [
+      "sess-2026-08-22-sat-0930-wy",
+      {
+        "id": "sess-2026-08-22-sat-0930-wy",
+        "schedule_id": "class-sat-0930-wy",
+        "class_id": "class-sat-0930-wy",
+        "session_date": "2026-08-22",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "COACH_CANCELLED",
+        "status": "COACH_CANCELLED",
+        "cancellation_reason": "Coach Wei Yuan unwell with fever; no replacement coach available."
+      }
+    ],
+    [
+      "sess-2026-08-22-sat-1100-wy",
+      {
+        "id": "sess-2026-08-22-sat-1100-wy",
+        "schedule_id": "class-sat-1100-wy",
+        "class_id": "class-sat-1100-wy",
+        "session_date": "2026-08-22",
+        "start_time": "11:00",
+        "end_time": "12:30",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "SCHEDULED"
+      }
+    ],
+    [
+      "sess-2026-08-23-sun-0930-wy",
+      {
+        "id": "sess-2026-08-23-sun-0930-wy",
+        "schedule_id": "class-sun-0930-wy",
+        "class_id": "class-sun-0930-wy",
+        "session_date": "2026-08-23",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "SCHEDULED"
+      }
+    ],
+    [
+      "sess-2026-08-29-sat-0930-wy",
+      {
+        "id": "sess-2026-08-29-sat-0930-wy",
+        "schedule_id": "class-sat-0930-wy",
+        "class_id": "class-sat-0930-wy",
+        "session_date": "2026-08-29",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "NORMAL",
+        "status": "SCHEDULED"
+      }
+    ],
+    [
+      "sess-2026-08-30-sun-0930-wy",
+      {
+        "id": "sess-2026-08-30-sun-0930-wy",
+        "schedule_id": "class-sun-0930-wy",
+        "class_id": "class-sun-0930-wy",
+        "session_date": "2026-08-30",
+        "start_time": "09:30",
+        "end_time": "11:00",
+        "default_coach_id": "coach-1",
+        "scheduled_coach_id": "coach-1",
+        "actual_coach_id": "coach-1",
+        "session_type": "PLANNED_OFF_DAY",
+        "status": "PLANNED_OFF_DAY",
+        "cancellation_reason": "5th Sunday of August — Academy scheduled monthly off-day."
+      }
+    ]
+  ],
+  "attendance": [
+    [
+      "att-101",
+      {
+        "id": "att-101",
+        "session_id": "sess-2026-08-01-sat-0930-wy",
+        "student_id": "stu-1",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-01T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-102",
+      {
+        "id": "att-102",
+        "session_id": "sess-2026-08-01-sat-0930-wy",
+        "student_id": "stu-2",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-01T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-103",
+      {
+        "id": "att-103",
+        "session_id": "sess-2026-08-01-sat-0930-wy",
+        "student_id": "stu-3",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-01T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-104",
+      {
+        "id": "att-104",
+        "session_id": "sess-2026-08-01-sat-0930-wy",
+        "student_id": "stu-4",
+        "status": "ABSENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-01T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-105",
+      {
+        "id": "att-105",
+        "session_id": "sess-2026-08-01-sat-0930-wy",
+        "student_id": "stu-5",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-01T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-201",
+      {
+        "id": "att-201",
+        "session_id": "sess-2026-08-08-sat-0930-wy",
+        "student_id": "stu-1",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-08T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-202",
+      {
+        "id": "att-202",
+        "session_id": "sess-2026-08-08-sat-0930-wy",
+        "student_id": "stu-2",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-08T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-203",
+      {
+        "id": "att-203",
+        "session_id": "sess-2026-08-08-sat-0930-wy",
+        "student_id": "stu-3",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-08T09:40:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-301",
+      {
+        "id": "att-301",
+        "session_id": "sess-2026-08-15-sat-0930-wy",
+        "student_id": "stu-1",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-15T09:38:00Z",
+        "marked_by_user_id": "user-coach-2",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-302",
+      {
+        "id": "att-302",
+        "session_id": "sess-2026-08-15-sat-0930-wy",
+        "student_id": "stu-2",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-15T09:38:00Z",
+        "marked_by_user_id": "user-coach-2",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-303",
+      {
+        "id": "att-303",
+        "session_id": "sess-2026-08-15-sat-0930-wy",
+        "student_id": "stu-3",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-15T09:38:00Z",
+        "marked_by_user_id": "user-coach-2",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-304",
+      {
+        "id": "att-304",
+        "session_id": "sess-2026-08-15-sat-0930-wy",
+        "student_id": "stu-4",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-15T09:38:00Z",
+        "marked_by_user_id": "user-coach-2",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-305",
+      {
+        "id": "att-305",
+        "session_id": "sess-2026-08-15-sat-0930-wy",
+        "student_id": "stu-5",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-15T09:38:00Z",
+        "marked_by_user_id": "user-coach-2",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-401",
+      {
+        "id": "att-401",
+        "session_id": "sess-2026-08-16-sun-0930-wy",
+        "student_id": "stu-1",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-16T09:38:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-402",
+      {
+        "id": "att-402",
+        "session_id": "sess-2026-08-16-sun-0930-wy",
+        "student_id": "stu-2",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-16T09:38:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-403",
+      {
+        "id": "att-403",
+        "session_id": "sess-2026-08-16-sun-0930-wy",
+        "student_id": "stu-3",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-16T09:38:00Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ]
+  ],
+  "auditLogs": [
+    {
+      "id": "audit-1",
+      "attendance_id": "att-104",
+      "session_id": "sess-2026-08-01-sat-0930-wy",
+      "student_id": "stu-4",
+      "student_name": "Lucas Wong",
+      "changed_by_user_id": "user-coach-1",
+      "changed_by_user_name": "Wei Yuan",
+      "changed_by_user_role": "COACH",
+      "previous_status": "NOT_MARKED",
+      "new_status": "ABSENT",
+      "reason": "Student did not arrive by roll-call time.",
+      "timestamp": "2026-08-01T09:40:00Z"
+    }
+  ],
+  "notificationLogs": [
+    {
+      "id": "notif-1",
+      "attendance_id": "att-301",
+      "session_id": "sess-2026-08-15-sat-0930-wy",
+      "student_id": "stu-1",
+      "student_name": "John Tan",
+      "parent_id": "parent-1",
+      "parent_name": "David Tan",
+      "channel": "TELEGRAM",
+      "recipient_identifier": "@davidtan88 (98723412)",
+      "message": "Dear David Tan, your child John Tan has been marked PRESENT for Saturday 9:30–11:00 on Saturday, 15 August 2026 (Taught by Replacement Coach Chuah).",
+      "status": "SENT",
+      "sent_at": "2026-08-15T09:38:05Z"
+    }
+  ]
+}

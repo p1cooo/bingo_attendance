@@ -182,7 +182,7 @@ export const LoginView: React.FC = () => {
                     required
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Enter email or username (e.g. admin@academy.com, weiyuan@academy.com)"
+                    placeholder="e.g. coachchuah, coachtan, or admin123"
                     className="w-full pl-9 pr-3 py-2.5 text-xs font-bold rounded-2xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:bg-white transition-all shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
                   />
                 </div>
@@ -193,6 +193,9 @@ export const LoginView: React.FC = () => {
                   <label className="block text-[10px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
                     Password
                   </label>
+                  <span className="text-[10px] font-bold text-slate-400">
+                    Default: <code className="text-slate-700 dark:text-slate-300 font-mono">password123</code>
+                  </span>
                 </div>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -204,7 +207,7 @@ export const LoginView: React.FC = () => {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter your account password"
+                    placeholder="password123"
                     className="w-full pl-9 pr-3 py-2.5 text-xs font-bold rounded-2xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:bg-white transition-all shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
                   />
                 </div>
@@ -226,6 +229,41 @@ export const LoginView: React.FC = () => {
                 )}
               </button>
             </form>
+
+            {/* Quick Demo Access Bar */}
+            <div className="mt-6 pt-5 border-t-2 border-slate-900 dark:border-neutral-800">
+              <div className="flex items-center justify-between text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>One-Click Quick Logins (Password: password123)</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {presetAccounts.map((acc) => (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => handleQuickFill(acc.username, 'password123')}
+                    className={`p-2.5 rounded-2xl border-2 border-slate-900 dark:border-neutral-700 text-left transition-all shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] active:translate-x-0.5 active:translate-y-0.5 flex flex-col gap-1 cursor-pointer ${acc.bgClass}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full border border-slate-900 flex-shrink-0"
+                          style={{ backgroundColor: acc.color }}
+                        />
+                        <span className="text-[11px] font-black text-slate-900 dark:text-white leading-none">
+                          {acc.displayName}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-mono font-bold text-slate-500 dark:text-slate-400 truncate">
+                      {acc.username}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

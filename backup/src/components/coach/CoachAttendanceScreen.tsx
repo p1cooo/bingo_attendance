@@ -19,8 +19,6 @@ import {
   MessageCircle,
   Phone,
   School,
-  UserCheck,
-  Lock,
 } from 'lucide-react';
 import { Modal } from '../common/Modal.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
@@ -49,15 +47,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [replacementNote, setReplacementNote] = useState('');
   const [isAddingReplacement, setIsAddingReplacement] = useState(false);
-
-  // Unregistered student modal
-  const [isUnregModalOpen, setIsUnregModalOpen] = useState(false);
-  const [unregFullName, setUnregFullName] = useState('');
-  const [unregNickName, setUnregNickName] = useState('');
-  const [unregParentPhone, setUnregParentPhone] = useState('');
-  const [unregStatus, setUnregStatus] = useState<AttendanceStatus>('PRESENT');
-  const [unregNote, setUnregNote] = useState('');
-  const [isAddingUnreg, setIsAddingUnreg] = useState(false);
 
   const fetchSession = async () => {
     try {
@@ -99,9 +88,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       });
 
       if (status === 'PRESENT') {
-        showToast(`✓ ${studentName}: PRESENT (Attendance recorded)`, 'success', 2000);
+        showToast(`✓ ${studentName}: PRESENT (Parent Telegram alert dispatched)`, 'success', 2500);
       } else if (status === 'ABSENT') {
-        showToast(`⚠ ${studentName}: ABSENT (Attendance recorded)`, 'info', 2000);
+        showToast(`⚠ ${studentName}: ABSENT (Parent notification logged)`, 'info', 2500);
       } else {
         showToast(`✓ ${studentName}: marked ${status}`, 'success', 2000);
       }
@@ -145,40 +134,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     }
   };
 
-  const handleAddUnregisteredStudent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!unregFullName.trim()) {
-      showToast('Student full name is required', 'error');
-      return;
-    }
-
-    setIsAddingUnreg(true);
-    try {
-      await api.recordUnregisteredStudent(sessionId, {
-        full_name: unregFullName.trim(),
-        nick_name: unregNickName.trim() || undefined,
-        parent_phone: unregParentPhone.trim() || undefined,
-        status: unregStatus,
-        replacement_note: unregNote.trim() || 'Unregistered walk-in / trial student',
-      });
-
-      showToast(`✓ Recorded unregistered student ${unregFullName} as ${unregStatus}`, 'success');
-      setIsUnregModalOpen(false);
-      setUnregFullName('');
-      setUnregNickName('');
-      setUnregParentPhone('');
-      setUnregNote('');
-      setUnregStatus('PRESENT');
-
-      const updated = await api.getSession(sessionId);
-      setSession(updated);
-    } catch (err: any) {
-      showToast(err.message || 'Failed to record unregistered student', 'error');
-    } finally {
-      setIsAddingUnreg(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -217,7 +172,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     student: Student;
     record?: AttendanceRecord;
     isReplacement: boolean;
-    isUnregistered: boolean;
   }
 
   const rollList: StudentRollItem[] = [];
@@ -229,19 +183,17 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       student: stu,
       record,
       isReplacement: record?.attendance_type === 'REPLACEMENT',
-      isUnregistered: !!stu.is_unregistered || stu.student_id?.startsWith('UNREG-'),
     });
   });
 
-  // Add replacement or unregistered students who are in attendance_records but not in enrolled_students
+  // Add replacement students who are in attendance_records but not in enrolled_students
   session.attendance_records?.forEach((rec) => {
-    if (!rollList.some((r) => r.student.id === rec.student_id)) {
+    if (rec.attendance_type === 'REPLACEMENT' && !rollList.some((r) => r.student.id === rec.student_id)) {
       if (rec.student) {
         rollList.push({
           student: rec.student,
           record: rec,
-          isReplacement: rec.attendance_type === 'REPLACEMENT',
-          isUnregistered: !!rec.student.is_unregistered || rec.student.student_id?.startsWith('UNREG-'),
+          isReplacement: true,
         });
       }
     }
@@ -270,9 +222,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
   const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
   const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (session.actual_coach?.color || '#3b82f6');
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  const isFutureSession = session.session_date > todayStr && user?.role !== 'ADMIN';
 
   // Filter candidate students for replacement modal
   const existingStudentIds = new Set(rollList.map((r) => r.student.id));
@@ -339,12 +288,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   Replacement Coach
                 </span>
               )}
-              {isFutureSession && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-sky-100 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-700 text-sky-800 dark:text-sky-200">
-                  <Lock className="w-3 h-3" />
-                  Future Session
-                </span>
-              )}
             </div>
 
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500 dark:text-slate-400">
@@ -386,19 +329,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         </div>
       </div>
 
-      {/* Future Session Notification Banner */}
-      {isFutureSession && (
-        <div className="p-4 rounded-3xl bg-sky-50 dark:bg-sky-950/40 border-2 border-sky-300 dark:border-sky-800 text-sky-950 dark:text-sky-200 flex items-start gap-3 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]">
-          <Lock className="w-5 h-5 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <h4 className="text-sm font-black">Future Session — Attendance Locked</h4>
-            <p className="text-xs font-medium">
-              Attendance recording opens on the scheduled date: <b>{session.session_date}</b>. You can preview roster and student contacts ahead of time.
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Cancellation Banner */}
       {isCancelled && (
         <div className="p-4 rounded-3xl bg-rose-100/90 dark:bg-rose-950/60 border-2 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-200 flex items-start gap-3 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)]">
@@ -426,7 +356,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         </div>
       )}
 
-      {/* Action Bar: Search, Add Replacement, & Record Unregistered Student */}
+      {/* Action Bar: Search & Add Replacement Student */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -443,24 +373,24 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         </div>
 
         <button
-          id="record-unregistered-student-btn"
-          onClick={() => setIsUnregModalOpen(true)}
-          disabled={isCancelled || isOffDay || isFutureSession}
-          className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl text-xs font-black bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border-2 border-slate-900 dark:border-amber-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-        >
-          <UserCheck className="w-4 h-4 text-amber-700" />
-          <span>+ Record Unregistered Student</span>
-        </button>
-
-        <button
           id="add-replacement-student-btn"
           onClick={() => setIsReplacementModalOpen(true)}
-          disabled={isCancelled || isOffDay || isFutureSession}
-          className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl text-xs font-black bg-white dark:bg-neutral-900 hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-900 dark:text-white border-2 border-slate-900 dark:border-neutral-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.06)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl text-xs font-black bg-white dark:bg-neutral-900 hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-900 dark:text-white border-2 border-slate-900 dark:border-neutral-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.06)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex-shrink-0"
         >
           <UserPlus className="w-4 h-4" />
           <span>+ Add Replacement Student</span>
         </button>
+      </div>
+
+      {/* Telegram Live Gateway Indicator Banner */}
+      <div className="bg-[#f0fdf4] dark:bg-emerald-950/20 border-2 border-slate-900 dark:border-emerald-800 rounded-2xl p-3 flex items-center justify-between gap-3 text-xs shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.04)]">
+        <div className="flex items-center gap-2 font-bold text-emerald-900 dark:text-emerald-300">
+          <MessageCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+          <span>Automated Telegram Parent Gateway: Connected & Active</span>
+        </div>
+        <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-300">
+          Live Dispatch
+        </span>
       </div>
 
       {/* Student List */}
@@ -472,14 +402,13 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             </p>
           </div>
         ) : (
-          filteredRoll.map(({ student, record, isReplacement, isUnregistered }) => {
+          filteredRoll.map(({ student, record, isReplacement }) => {
             const status = record?.status;
             const isSaving = savingStudentId === student.id;
 
             return (
               <div
                 key={student.id}
-                id={`roll-student-${student.id}`}
                 className={`p-4 sm:p-5 rounded-3xl border-2 border-slate-900 dark:border-neutral-700 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] transition-all ${
                   status === 'PRESENT'
                     ? 'bg-[#ecfdf5] dark:bg-emerald-950/20'
@@ -513,11 +442,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                             ({student.nick_name})
                           </span>
                         )}
-                        {isUnregistered && (
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-200 text-amber-950 border-2 border-amber-500 uppercase tracking-wider animate-pulse">
-                            UNREGISTERED
-                          </span>
-                        )}
                         {isReplacement && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 border border-blue-300">
                             Replacement
@@ -528,11 +452,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       <div className="flex items-center gap-2.5 text-xs text-slate-500 font-bold flex-wrap">
                         <span className="font-mono">{student.student_id}</span>
                         {student.school && <span>• {student.school}</span>}
-                        {student.parent?.name && (
-                          <span>• Parent: {student.parent.name}</span>
-                        )}
-                        {student.parent?.phone && (
-                          <span>• Tel: {student.parent.phone}</span>
+                        {student.parent?.telegram_username && (
+                          <span className="text-sky-600 dark:text-sky-400 font-semibold">
+                            Telegram: {student.parent.telegram_username}
+                          </span>
                         )}
                       </div>
 
@@ -549,7 +472,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* PRESENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -571,7 +494,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* ABSENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -593,7 +516,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* LATE */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -614,7 +537,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* EXCUSED */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
+                      disabled={isSaving || isCancelled || isOffDay}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -638,112 +561,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           })
         )}
       </div>
-
-      {/* Unregistered Student Modal */}
-      <Modal
-        isOpen={isUnregModalOpen}
-        onClose={() => setIsUnregModalOpen(false)}
-        title="Record Unregistered Student (Trial / Walk-in)"
-      >
-        <form onSubmit={handleAddUnregisteredStudent} className="space-y-4">
-          <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-900 dark:text-amber-200">
-            💡 <b>Quick Roll-call Inclusion:</b> Creates a temporary <b>UNREGISTERED</b> record with a temporary ID. This student can immediately participate in roll call. Admin will be notified and can formally convert to an enrolled student with classes later.
-          </div>
-
-          <div>
-            <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
-              Student Full Name *
-            </label>
-            <input
-              type="text"
-              required
-              value={unregFullName}
-              onChange={(e) => setUnregFullName(e.target.value)}
-              placeholder="e.g. Benjamin Hayes"
-              className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
-                Nickname
-              </label>
-              <input
-                type="text"
-                value={unregNickName}
-                onChange={(e) => setUnregNickName(e.target.value)}
-                placeholder="e.g. Ben"
-                className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
-                Parent Phone
-              </label>
-              <input
-                type="text"
-                value={unregParentPhone}
-                onChange={(e) => setUnregParentPhone(e.target.value)}
-                placeholder="e.g. +65 9123 4567"
-                className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
-              Initial Roll Call Status
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['PRESENT', 'LATE', 'ABSENT'] as AttendanceStatus[]).map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => setUnregStatus(st)}
-                  className={`py-2 px-3 rounded-xl text-xs font-black border-2 border-slate-900 transition-all ${
-                    unregStatus === st
-                      ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]'
-                      : 'bg-white text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
-              Trial / Walk-in Notes
-            </label>
-            <textarea
-              rows={2}
-              value={unregNote}
-              onChange={(e) => setUnregNote(e.target.value)}
-              placeholder="e.g. First trial lesson walk-in, accompanied by parent..."
-              className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setIsUnregModalOpen(false)}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!unregFullName.trim() || isAddingUnreg}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-amber-400 hover:bg-amber-500 text-slate-900 border-2 border-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] disabled:opacity-40 cursor-pointer"
-            >
-              {isAddingUnreg ? 'Recording...' : 'Record & Add to Roll'}
-            </button>
-          </div>
-        </form>
-      </Modal>
 
       {/* Replacement Student Modal */}
       <Modal
@@ -773,7 +590,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     key={stu.id}
                     type="button"
                     onClick={() => setSelectedStudentId(stu.id)}
-                    className={`w-full text-left p-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-between cursor-pointer ${
+                    className={`w-full text-left p-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-between ${
                       selectedStudentId === stu.id
                         ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
                         : 'hover:bg-slate-200 dark:hover:bg-neutral-700 text-slate-800 dark:text-slate-200'
@@ -806,14 +623,14 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             <button
               type="button"
               onClick={() => setIsReplacementModalOpen(false)}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-700"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!selectedStudentId || isAddingReplacement}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white disabled:opacity-40 cursor-pointer"
+              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white disabled:opacity-40"
             >
               {isAddingReplacement ? 'Adding...' : 'Confirm & Mark Present'}
             </button>
@@ -823,4 +640,3 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     </div>
   );
 };
-

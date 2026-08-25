@@ -115,7 +115,7 @@ export const CoachWorkspace: React.FC = () => {
                 Welcome, Coach {coachDisplayName}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                Live Attendance Roll Call & Session Management
+                Live Attendance Roll Call & Instant Telegram Broadcast Gateway
               </p>
             </div>
 

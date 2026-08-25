@@ -1,19 +1,27 @@
 import { Request, Response, NextFunction } from 'express';
 import { db } from './db.js';
 import { User, Coach } from '../src/types.js';
+import { adminAuth } from './firebaseAdmin.js';
 
-// In-memory token-to-user map
+/**
+ * ============================================================================
+ * AUTHENTICATION ARCHITECTURE NOTE & PRODUCTION ROADMAP
+ * ============================================================================
+ * CURRENT STATE (Phase 1):
+ * - Authenticates coaches and administrators using server-issued session bearer
+ *   tokens stored in activeTokens Map with 30-day sliding expiration.
+ * - Firebase Admin ID token verification is wired and ready as fallback.
+ *
+ * TODO (Production Pilot Requirement):
+ * - Production authentication still needs to migrate from the current
+ *   server-issued demo/session-token mechanism to Firebase Authentication
+ *   with verified Firebase ID tokens (e.g. client-side Firebase Auth SDK
+ *   signInWithEmailAndPassword / Google popup passing ID tokens to server).
+ * ============================================================================
+ */
+
+// In-memory token-to-user map with expiry timestamp
 const activeTokens = new Map<string, { userId: string; expiresAt: number }>();
-
-// Seed default persistent tokens for convenience / testing
-activeTokens.set('token-admin', { userId: 'user-admin', expiresAt: Date.now() + 86400000 * 30 });
-activeTokens.set('token-coach-1', { userId: 'user-coach-1', expiresAt: Date.now() + 86400000 * 30 });
-activeTokens.set('token-coach-2', { userId: 'user-coach-2', expiresAt: Date.now() + 86400000 * 30 });
-activeTokens.set('token-coach-3', { userId: 'user-coach-3', expiresAt: Date.now() + 86400000 * 30 });
-activeTokens.set('token-coach-4', { userId: 'user-coach-4', expiresAt: Date.now() + 86400000 * 30 });
-activeTokens.set('token-coach-5', { userId: 'user-coach-5', expiresAt: Date.now() + 86400000 * 30 });
-activeTokens.set('token-student-1', { userId: 'user-student-1', expiresAt: Date.now() + 86400000 * 30 });
-activeTokens.set('token-student-2', { userId: 'user-student-2', expiresAt: Date.now() + 86400000 * 30 });
 
 export interface AuthenticatedRequest extends Request {
   user?: User;
@@ -24,50 +32,50 @@ export function createTokenForUser(userId: string): string {
   const token = `token-${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   activeTokens.set(token, {
     userId,
-    expiresAt: Date.now() + 86400000 * 7, // 7 days
+    expiresAt: Date.now() + 86400000 * 30, // 30 days
   });
   return token;
 }
 
-export function authenticateUser(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+export function revokeToken(token: string) {
+  activeTokens.delete(token);
+}
+
+export async function authenticateUser(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    // Fallback default admin user if no token provided in development/preview
-    const defaultAdmin = db.users.get('user-admin');
-    if (defaultAdmin) {
-      req.user = defaultAdmin;
-      return next();
-    }
     return res.status(401).json({ error: 'Unauthorized: Missing authentication token' });
   }
 
   const token = authHeader.substring(7).trim();
-  const session = activeTokens.get(token);
-
-  let userId: string | undefined = session?.userId;
-
-  // Resilient fallback: parse token if format is token-{userId}-...
-  if (!userId) {
-    if (token.startsWith('token-user-')) {
-      const match = token.match(/token-(user-[a-zA-Z0-9-]+?)(-\d+|$)/);
-      if (match && match[1] && db.users.has(match[1])) {
-        userId = match[1];
-      }
-    } else if (token.startsWith('token-coach-')) {
-      const coachUser = Array.from(db.users.values()).find(
-        (u) => u.coach_id === token.replace('token-', '')
-      );
-      if (coachUser) userId = coachUser.id;
-    } else if (token === 'token-admin') {
-      userId = 'user-admin';
-    }
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: Empty token provided' });
   }
 
+  let userId: string | undefined;
+
+  // 1. Check in-memory authenticated session tokens
+  const session = activeTokens.get(token);
+  if (session && session.expiresAt > Date.now()) {
+    userId = session.userId;
+  }
+
+  // 2. Try Firebase ID Token verification
   if (!userId) {
-    // Fallback: pick first active user or admin so calls do not fail
-    const fallbackUser = db.users.get('user-admin') || Array.from(db.users.values())[0];
-    if (fallbackUser) {
-      userId = fallbackUser.id;
+    try {
+      const decoded = await adminAuth.verifyIdToken(token);
+      if (decoded && decoded.uid) {
+        // Find matching user by UID or email
+        const matched = Array.from(db.users.values()).find(
+          (u) => u.id === decoded.uid || (decoded.email && u.email.toLowerCase() === decoded.email.toLowerCase())
+        );
+        if (matched) {
+          userId = matched.id;
+          activeTokens.set(token, { userId: matched.id, expiresAt: Date.now() + 86400000 * 7 });
+        }
+      }
+    } catch {
+      // Not a valid Firebase ID token
     }
   }
 
@@ -77,14 +85,8 @@ export function authenticateUser(req: AuthenticatedRequest, res: Response, next:
 
   const user = db.users.get(userId);
   if (!user || !user.is_active) {
-    return res.status(403).json({ error: 'Forbidden: User account is inactive or deleted' });
+    return res.status(403).json({ error: 'Forbidden: User account is inactive or disabled' });
   }
-
-  // Register in activeTokens for fast future lookups
-  activeTokens.set(token, {
-    userId: user.id,
-    expiresAt: Date.now() + 86400000 * 30,
-  });
 
   req.user = user;
   if (user.coach_id) {
@@ -95,29 +97,16 @@ export function authenticateUser(req: AuthenticatedRequest, res: Response, next:
 }
 
 export function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  if (!req.user) {
-    const defaultAdmin = db.users.get('user-admin');
-    if (defaultAdmin) {
-      req.user = defaultAdmin;
-      return next();
-    }
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user || req.user.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'Forbidden: Administrator privileges required' });
   }
-
-  // Allow authenticated system users in admin management operations
   next();
 }
 
 export function requireCoachOrAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  if (!req.user) {
-    const defaultUser = db.users.get('user-admin');
-    if (defaultUser) {
-      req.user = defaultUser;
-      return next();
-    }
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'COACH')) {
+    return res.status(403).json({ error: 'Forbidden: Coach or Administrator privileges required' });
   }
-
   next();
 }
 
@@ -130,7 +119,6 @@ export function requireCoachOrAdmin(req: AuthenticatedRequest, res: Response, ne
  */
 export function verifySessionAttendanceAccess(sessionId: string, user: User): boolean {
   if (user.role === 'ADMIN') return true;
-
   if (!user.coach_id) return false;
 
   const session = db.sessions.get(sessionId);
@@ -138,6 +126,7 @@ export function verifySessionAttendanceAccess(sessionId: string, user: User): bo
 
   return (
     session.scheduled_coach_id === user.coach_id ||
-    session.actual_coach_id === user.coach_id
+    session.actual_coach_id === user.coach_id ||
+    session.replacement_coach_id === user.coach_id
   );
 }
