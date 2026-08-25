@@ -55,9 +55,19 @@ class ApiClient {
         const errorData = await response.json();
         if (errorData.error) {
           errorMessage = errorData.error;
+        } else if (errorData.message) {
+          errorMessage = errorData.message;
         }
       } catch (e) {
-        // use fallback error message
+        if (response.status === 404) {
+          errorMessage = `API endpoint '${endpoint}' not found (404). Please verify backend server deployment routing.`;
+        } else if (response.status === 401) {
+          errorMessage = `Invalid credentials or unauthorized access.`;
+        } else if (response.status === 403) {
+          errorMessage = `Access forbidden. You do not have permission for this action.`;
+        } else if (response.status >= 500) {
+          errorMessage = `Internal server error (${response.status}). Please check backend service logs.`;
+        }
       }
       throw new Error(errorMessage);
     }

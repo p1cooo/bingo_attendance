@@ -2131,9 +2131,131 @@
         "marked_by_user_id": "user-coach-1",
         "notification_status": "SENT"
       }
+    ],
+    [
+      "att-1787669048605-p2ab",
+      {
+        "id": "att-1787669048605-p2ab",
+        "session_id": "sess-2026-08-16-sun-1100-wy",
+        "student_id": "stu-4",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-25T14:44:08.605Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-1787669049421-ale6",
+      {
+        "id": "att-1787669049421-ale6",
+        "session_id": "sess-2026-08-16-sun-1100-wy",
+        "student_id": "stu-5",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-25T14:44:09.421Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-1787669049750-atw9",
+      {
+        "id": "att-1787669049750-atw9",
+        "session_id": "sess-2026-08-16-sun-1100-wy",
+        "student_id": "stu-6",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-25T14:44:10.064Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
+    ],
+    [
+      "att-1787669053161-fs9x",
+      {
+        "id": "att-1787669053161-fs9x",
+        "session_id": "sess-2026-08-16-sun-1100-wy",
+        "student_id": "stu-12",
+        "status": "PRESENT",
+        "attendance_type": "REGULAR",
+        "marked_at": "2026-08-25T14:44:13.162Z",
+        "marked_by_user_id": "user-coach-1",
+        "notification_status": "SENT"
+      }
     ]
   ],
   "auditLogs": [
+    {
+      "id": "audit-1787669053162-21lp",
+      "attendance_id": "att-1787669053161-fs9x",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-12",
+      "student_name": "Daniel Goh",
+      "changed_by_user_id": "user-coach-1",
+      "changed_by_user_name": "Wei Yuan",
+      "changed_by_user_role": "COACH",
+      "previous_status": "NOT_MARKED",
+      "new_status": "PRESENT",
+      "reason": "Roll-call marked by coach",
+      "timestamp": "2026-08-25T14:44:13.162Z"
+    },
+    {
+      "id": "audit-1787669050064-4p03",
+      "attendance_id": "att-1787669049750-atw9",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-6",
+      "student_name": "Ryan Chong",
+      "changed_by_user_id": "user-coach-1",
+      "changed_by_user_name": "Wei Yuan",
+      "changed_by_user_role": "COACH",
+      "previous_status": "EXCUSED",
+      "new_status": "PRESENT",
+      "reason": "Roll-call marked by coach",
+      "timestamp": "2026-08-25T14:44:10.064Z"
+    },
+    {
+      "id": "audit-1787669049751-jmdm",
+      "attendance_id": "att-1787669049750-atw9",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-6",
+      "student_name": "Ryan Chong",
+      "changed_by_user_id": "user-coach-1",
+      "changed_by_user_name": "Wei Yuan",
+      "changed_by_user_role": "COACH",
+      "previous_status": "NOT_MARKED",
+      "new_status": "EXCUSED",
+      "reason": "Roll-call marked by coach",
+      "timestamp": "2026-08-25T14:44:09.751Z"
+    },
+    {
+      "id": "audit-1787669049422-rf12",
+      "attendance_id": "att-1787669049421-ale6",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-5",
+      "student_name": "Chloe Ng",
+      "changed_by_user_id": "user-coach-1",
+      "changed_by_user_name": "Wei Yuan",
+      "changed_by_user_role": "COACH",
+      "previous_status": "NOT_MARKED",
+      "new_status": "PRESENT",
+      "reason": "Roll-call marked by coach",
+      "timestamp": "2026-08-25T14:44:09.422Z"
+    },
+    {
+      "id": "audit-1787669048607-xyr9",
+      "attendance_id": "att-1787669048605-p2ab",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-4",
+      "student_name": "Lucas Wong",
+      "changed_by_user_id": "user-coach-1",
+      "changed_by_user_name": "Wei Yuan",
+      "changed_by_user_role": "COACH",
+      "previous_status": "NOT_MARKED",
+      "new_status": "PRESENT",
+      "reason": "Roll-call marked by coach",
+      "timestamp": "2026-08-25T14:44:08.607Z"
+    },
     {
       "id": "audit-1787647927482-nout",
       "attendance_id": "att-101",
@@ -2192,6 +2314,91 @@
     }
   ],
   "notificationLogs": [
+    {
+      "id": "notif-1787669053163-zgkco",
+      "attendance_id": "att-1787669053161-fs9x",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-12",
+      "student_name": "Daniel Goh",
+      "parent_id": "parent-6",
+      "parent_name": "Serena Chong",
+      "channel": "WHATSAPP",
+      "recipient_identifier": "+60129981234",
+      "recipient_name": "Serena Chong",
+      "recipient_phone": "+60129981234",
+      "message": "Hi Serena Chong,\n\nThis is an attendance notification from Bingo Chess Academy.\n\n• Student: Daniel Goh\n• Class: Sunday 11:00–12:30\n• Date: 2026-08-16\n• Time: 11:00 - 12:30\n• Coach: Wei Yuan\n• Attendance Status: Present\n\nThank you.",
+      "status": "DISABLED",
+      "error_message": "WhatsApp Cloud API is in TEST MODE (WHATSAPP_ENABLED=false). No live message was dispatched.",
+      "created_at": "2026-08-25T14:44:13.166Z"
+    },
+    {
+      "id": "notif-1787669050065-5h800",
+      "attendance_id": "att-1787669049750-atw9",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-6",
+      "student_name": "Ryan Chong",
+      "parent_id": "parent-6",
+      "parent_name": "Serena Chong",
+      "channel": "WHATSAPP",
+      "recipient_identifier": "+60129981234",
+      "recipient_name": "Serena Chong",
+      "recipient_phone": "+60129981234",
+      "message": "Hi Serena Chong,\n\nThis is an attendance notification from Bingo Chess Academy.\n\n• Student: Ryan Chong\n• Class: Sunday 11:00–12:30\n• Date: 2026-08-16\n• Time: 11:00 - 12:30\n• Coach: Wei Yuan\n• Attendance Status: Present\n\nThank you.",
+      "status": "DISABLED",
+      "error_message": "WhatsApp Cloud API is in TEST MODE (WHATSAPP_ENABLED=false). No live message was dispatched.",
+      "created_at": "2026-08-25T14:44:10.067Z"
+    },
+    {
+      "id": "notif-1787669049751-md7uh",
+      "attendance_id": "att-1787669049750-atw9",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-6",
+      "student_name": "Ryan Chong",
+      "parent_id": "parent-6",
+      "parent_name": "Serena Chong",
+      "channel": "WHATSAPP",
+      "recipient_identifier": "+60129981234",
+      "recipient_name": "Serena Chong",
+      "recipient_phone": "+60129981234",
+      "message": "Hi Serena Chong,\n\nThis is an attendance notification from Bingo Chess Academy.\n\n• Student: Ryan Chong\n• Class: Sunday 11:00–12:30\n• Date: 2026-08-16\n• Time: 11:00 - 12:30\n• Coach: Wei Yuan\n• Attendance Status: Excused\n\nThank you.",
+      "status": "DISABLED",
+      "error_message": "WhatsApp Cloud API is in TEST MODE (WHATSAPP_ENABLED=false). No live message was dispatched.",
+      "created_at": "2026-08-25T14:44:09.754Z"
+    },
+    {
+      "id": "notif-1787669049423-0hohc",
+      "attendance_id": "att-1787669049421-ale6",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-5",
+      "student_name": "Chloe Ng",
+      "parent_id": "parent-5",
+      "parent_name": "Kelvin Ng",
+      "channel": "WHATSAPP",
+      "recipient_identifier": "+60167789900",
+      "recipient_name": "Kelvin Ng",
+      "recipient_phone": "+60167789900",
+      "message": "Hi Kelvin Ng,\n\nThis is an attendance notification from Bingo Chess Academy.\n\n• Student: Chloe Ng\n• Class: Sunday 11:00–12:30\n• Date: 2026-08-16\n• Time: 11:00 - 12:30\n• Coach: Wei Yuan\n• Attendance Status: Present\n\nThank you.",
+      "status": "DISABLED",
+      "error_message": "WhatsApp Cloud API is in TEST MODE (WHATSAPP_ENABLED=false). No live message was dispatched.",
+      "created_at": "2026-08-25T14:44:09.425Z"
+    },
+    {
+      "id": "notif-1787669048609-wkyso",
+      "attendance_id": "att-1787669048605-p2ab",
+      "session_id": "sess-2026-08-16-sun-1100-wy",
+      "student_id": "stu-4",
+      "student_name": "Lucas Wong",
+      "parent_id": "parent-4",
+      "parent_name": "Mei Ling Wong",
+      "channel": "WHATSAPP",
+      "recipient_identifier": "+60134456677",
+      "recipient_name": "Mei Ling Wong",
+      "recipient_phone": "+60134456677",
+      "message": "Hi Mei Ling Wong,\n\nThis is an attendance notification from Bingo Chess Academy.\n\n• Student: Lucas Wong\n• Class: Sunday 11:00–12:30\n• Date: 2026-08-16\n• Time: 11:00 - 12:30\n• Coach: Wei Yuan\n• Attendance Status: Present\n\nThank you.",
+      "status": "DISABLED",
+      "error_message": "WhatsApp Cloud API is in TEST MODE (WHATSAPP_ENABLED=false). No live message was dispatched.",
+      "created_at": "2026-08-25T14:44:08.614Z"
+    },
     {
       "id": "notif-1787647927472-mfa52",
       "attendance_id": "att-101",
