@@ -18,7 +18,10 @@ import {
   SessionType,
 } from '../src/types.js';
 
-const DB_FILE_PATH = path.join(process.cwd(), 'database_state.json');
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+const DB_FILE_PATH = isServerless
+  ? path.join('/tmp', 'database_state.json')
+  : path.join(process.cwd(), 'database_state.json');
 
 // In-Memory relational database store with ACID safety, disk persistence, and relational querying
 class DatabaseStore {

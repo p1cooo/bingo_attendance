@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useTheme } from '../../context/ThemeContext.js';
 import { api } from '../../lib/api.js';
+import { clientAuth, clientDb, isFirebaseAuthAvailable } from '../../lib/firebase.js';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import {
   Shield,
   UserCheck,
@@ -85,24 +88,82 @@ export const LoginView: React.FC = () => {
     setProvisionError(null);
     setIsProvisioning(true);
 
+    const cleanUsername = provisionUsername.trim() || 'weihaosuper';
+    const cleanEmail = provisionEmail.trim() || `${cleanUsername}@academy.com`;
+    const cleanDisplayName = provisionDisplayName.trim() || 'Super Admin';
+
+    let provisionSuccess = false;
+
+    // 1. First attempt backend API provisioning
     try {
       await api.provisionSuperAdmin({
-        username: provisionUsername.trim() || 'weihaosuper',
-        email: provisionEmail.trim() || `${provisionUsername.trim()}@academy.com`,
-        displayName: provisionDisplayName.trim() || 'Super Admin',
+        username: cleanUsername,
+        email: cleanEmail,
+        displayName: cleanDisplayName,
         password: provisionPassword,
       });
+      provisionSuccess = true;
+    } catch (backendErr: any) {
+      console.warn('[LoginView] Backend provisioning encountered note, attempting client Firebase fallback:', backendErr?.message);
 
+      // 2. Client-side Firebase Auth fallback if backend endpoint returned an error
+      if (isFirebaseAuthAvailable) {
+        try {
+          const userCred = await createUserWithEmailAndPassword(clientAuth, cleanEmail, provisionPassword);
+          if (userCred && userCred.user) {
+            const superAdminDoc = {
+              id: userCred.user.uid,
+              username: cleanUsername,
+              email: cleanEmail,
+              name: cleanDisplayName,
+              role: 'SUPER_ADMIN',
+              is_active: true,
+              created_at: new Date().toISOString(),
+            };
+            await setDoc(doc(clientDb, 'users', userCred.user.uid), superAdminDoc, { merge: true });
+            provisionSuccess = true;
+          }
+        } catch (fbErr: any) {
+          if (fbErr.code === 'auth/operation-not-allowed') {
+            setProvisionError(
+              'Email/Password sign-in is not enabled in Firebase Console. Please go to Firebase Console > Authentication > Sign-in method, click Email/Password, and enable it.'
+            );
+            setIsProvisioning(false);
+            return;
+          } else if (fbErr.code === 'auth/email-already-in-use') {
+            // Already created in Firebase Auth, proceed to login
+            provisionSuccess = true;
+          } else {
+            console.error('[LoginView] Firebase Client Auth error:', fbErr);
+            setProvisionError(fbErr.message || backendErr.message || 'Failed to provision Super Admin account.');
+            setIsProvisioning(false);
+            return;
+          }
+        }
+      } else {
+        setProvisionError(backendErr.message || 'Failed to provision Super Admin account.');
+        setIsProvisioning(false);
+        return;
+      }
+    }
+
+    if (provisionSuccess) {
       setIsProvisioned(true);
       setIsProvisionModalOpen(false);
 
       // Immediately log in with the new credentials
-      await login(provisionUsername.trim() || 'weihaosuper', provisionPassword);
-    } catch (err: any) {
-      setProvisionError(err.message || 'Failed to provision Super Admin account.');
-    } finally {
-      setIsProvisioning(false);
+      try {
+        await login(cleanUsername, provisionPassword);
+      } catch (loginErr: any) {
+        // If username login needs email directly, try email
+        try {
+          await login(cleanEmail, provisionPassword);
+        } catch (emailLoginErr: any) {
+          setError('Account provisioned! Please enter your password to sign in.');
+        }
+      }
     }
+    setIsProvisioning(false);
   };
 
   return (

@@ -221,38 +221,50 @@ router.post('/admin/provision-superadmin', async (req, res) => {
   let fbUserUid = `user-superadmin-${Date.now()}`;
   let fbSuccess = false;
 
-  // Try creating in Firebase Authentication
+  // 1. Attempt Firebase Authentication synchronization
   try {
-    try {
-      const existingFbUser = await adminAuth.getUserByEmail(cleanEmail);
-      await adminAuth.updateUser(existingFbUser.uid, {
-        password,
-        displayName: displayName || 'Super Admin',
-        disabled: false,
-      });
-      fbUserUid = existingFbUser.uid;
-      fbSuccess = true;
-    } catch {
-      const newFbUser = await adminAuth.createUser({
-        email: cleanEmail,
-        password,
-        displayName: displayName || 'Super Admin',
-      });
-      fbUserUid = newFbUser.uid;
-      fbSuccess = true;
-    }
-
-    if (fbSuccess) {
+    if (adminAuth && typeof adminAuth.getUserByEmail === 'function') {
       try {
-        await adminAuth.setCustomUserClaims(fbUserUid, { role: 'SUPER_ADMIN' });
-      } catch (claimErr) {
-        console.warn('[Provision] Custom claims note:', claimErr);
+        const existingFbUser = await adminAuth.getUserByEmail(cleanEmail);
+        if (existingFbUser && existingFbUser.uid) {
+          fbUserUid = existingFbUser.uid;
+          await adminAuth.updateUser(existingFbUser.uid, {
+            password,
+            displayName: displayName || 'Super Admin',
+            disabled: false,
+          });
+          fbSuccess = true;
+        }
+      } catch (notFoundErr: any) {
+        // If user does not exist in Firebase Auth, create them
+        try {
+          const newFbUser = await adminAuth.createUser({
+            email: cleanEmail,
+            password,
+            displayName: displayName || 'Super Admin',
+          });
+          if (newFbUser && newFbUser.uid) {
+            fbUserUid = newFbUser.uid;
+            fbSuccess = true;
+          }
+        } catch (createErr: any) {
+          console.warn('[Provision] Firebase Admin createUser note:', createErr?.message);
+        }
+      }
+
+      if (fbSuccess) {
+        try {
+          await adminAuth.setCustomUserClaims(fbUserUid, { role: 'SUPER_ADMIN' });
+        } catch (claimErr: any) {
+          console.warn('[Provision] Custom claims note:', claimErr?.message);
+        }
       }
     }
   } catch (authErr: any) {
     console.warn('[Provision] Firebase Admin Auth sync warning (continuing with database provision):', authErr?.message);
   }
 
+  // 2. Save user to database and sync to Firestore
   try {
     const superAdminUser: User = {
       id: fbUserUid,
@@ -265,8 +277,19 @@ router.post('/admin/provision-superadmin', async (req, res) => {
     };
 
     db.users.set(superAdminUser.id, superAdminUser);
-    db.saveToDisk();
-    syncDocToFirestore('users', superAdminUser.id, superAdminUser).catch(console.error);
+    try {
+      db.saveToDisk();
+    } catch (diskErr) {
+      console.warn('[Provision] Save to disk note:', diskErr);
+    }
+
+    try {
+      syncDocToFirestore('users', superAdminUser.id, superAdminUser).catch((syncErr) => {
+        console.warn('[Provision] Firestore sync background note:', syncErr?.message);
+      });
+    } catch (syncCallErr) {
+      console.warn('[Provision] Firestore sync call note:', syncCallErr);
+    }
 
     return res.json({
       success: true,
