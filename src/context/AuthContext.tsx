@@ -189,7 +189,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setUser(userData);
                 firebaseSuccess = true;
               } else {
-                const isSuperAdmin = targetEmail.includes('weihao') || targetEmail === 'twyuan07@gmail.com';
+                const isSuperAdmin =
+                  targetEmail.includes('weihao') ||
+                  targetEmail === 'twyuan07@gmail.com' ||
+                  targetEmail === 'whcagallery@gmail.com' ||
+                  targetEmail === 'weihaosuper@academy.com' ||
+                  targetEmail.includes('super');
                 const directUser: User = {
                   id: userCredential.user.uid,
                   username: input.includes('@') ? input.split('@')[0] : input,

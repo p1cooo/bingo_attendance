@@ -87,7 +87,9 @@ export async function authenticateUser(req: AuthenticatedRequest, res: Response,
                 decoded.role === 'SUPER_ADMIN' ||
                 email.includes('weihao') ||
                 email === 'twyuan07@gmail.com' ||
-                email === 'weihaosuper@academy.com';
+                email === 'whcagallery@gmail.com' ||
+                email === 'weihaosuper@academy.com' ||
+                email.includes('super');
               const isAdminEmail = email.includes('admin') || email.includes('staff');
               user = {
                 id: decoded.uid,
@@ -128,7 +130,9 @@ export async function authenticateUser(req: AuthenticatedRequest, res: Response,
                   payload.role === 'SUPER_ADMIN' ||
                   email.includes('weihao') ||
                   email === 'twyuan07@gmail.com' ||
+                  email === 'whcagallery@gmail.com' ||
                   email === 'weihaosuper@academy.com' ||
+                  email.includes('super') ||
                   (payload.firebase?.sign_in_provider === 'password' && email);
                 const isAdminEmail = email.includes('admin') || email.includes('staff');
 
