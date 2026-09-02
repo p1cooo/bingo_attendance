@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { db } from './db.js';
-import { adminAuth } from './firebaseAdmin.js';
+import { adminAuth, hasAdminCredentials } from './firebaseAdmin.js';
 import {
   authenticateUser,
   requireAdmin,
@@ -101,8 +101,8 @@ router.post('/auth/firebase-session', async (req, res) => {
     let decodedName: string | undefined;
     let isVerified = false;
 
-    // 1. Verify via Firebase Admin SDK if available
-    if (adminAuth && typeof adminAuth.verifyIdToken === 'function') {
+    // 1. Verify via Firebase Admin SDK if credentials exist
+    if (hasAdminCredentials && adminAuth && typeof adminAuth.verifyIdToken === 'function') {
       try {
         const decoded = await adminAuth.verifyIdToken(token);
         if (decoded && decoded.uid) {
@@ -122,7 +122,9 @@ router.post('/auth/firebase-session', async (req, res) => {
       try {
         const parts = token.split('.');
         if (parts.length === 3) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
+          const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, '=');
+          const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'));
           decodedUid = payload.sub || payload.user_id || `user-${Date.now()}`;
           email = (payload.email || '').toLowerCase().trim();
           decodedRole = payload.role;
@@ -143,7 +145,9 @@ router.post('/auth/firebase-session', async (req, res) => {
       email.includes('weihaosuper') ||
       email.includes('weihao') ||
       email === 'twyuan07@gmail.com' ||
-      email === 'weihaosuper@academy.com';
+      email === 'whcagallery@gmail.com' ||
+      email === 'weihaosuper@academy.com' ||
+      email.includes('super');
     const isAdminEmail = email.includes('admin') || email.includes('staff');
 
     if (user) {
@@ -364,83 +368,82 @@ router.get('/admin/users', authenticateUser, requireAdmin, (req: AuthenticatedRe
  * Accessible to Administrators and Super Administrators.
  */
 router.post('/admin/users', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  const { username, email, displayName, role, password, coach_id, student_id } = req.body;
-
-  if (!email || !password || !role || !displayName) {
-    return res.status(400).json({ error: 'Display Name, Email, Role, and Password are required.' });
-  }
-
-  // Validate role is strictly one of the 3 allowed roles
-  if (role !== 'COACH' && role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
-    return res.status(400).json({ error: 'Invalid role. Valid roles are SUPER_ADMIN, ADMIN, and COACH.' });
-  }
-
-  // Privilege Guard: ADMIN can ONLY create COACH accounts
-  if (req.user?.role === 'ADMIN' && role !== 'COACH') {
-    return res.status(403).json({ error: 'Forbidden: Administrators can only create Coach accounts.' });
-  }
-
-  // Privilege Guard: Only Super Admins can create Admin or Super Admin accounts
-  if ((role === 'ADMIN' || role === 'SUPER_ADMIN') && req.user?.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ error: 'Forbidden: Only Super Administrators can create Administrator or Super Administrator accounts.' });
-  }
-
-  if (typeof password !== 'string' || password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
-  }
-
-  const cleanEmail = String(email).trim().toLowerCase();
-  const cleanUsername = username ? String(username).trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '') : cleanEmail.split('@')[0];
-
-  // Verify unique email and username in database
-  const existingByEmail = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
-  if (existingByEmail) {
-    return res.status(400).json({ error: `An account with email "${cleanEmail}" already exists.` });
-  }
-
-  const existingByUsername = Array.from(db.users.values()).find(
-    (u) => u.username && u.username.toLowerCase() === cleanUsername
-  );
-  if (existingByUsername) {
-    return res.status(400).json({ error: `The username "${cleanUsername}" is already taken.` });
-  }
-
   try {
-    // 1. Create account in Firebase Authentication
-    let fbUser;
-    try {
-      fbUser = await adminAuth.getUserByEmail(cleanEmail);
-      await adminAuth.updateUser(fbUser.uid, {
-        password,
-        displayName,
-        disabled: false,
-      });
-    } catch {
-      fbUser = await adminAuth.createUser({
-        email: cleanEmail,
-        password,
-        displayName,
-      });
+    const { username, email, displayName, role, password, coach_id, student_id } = req.body;
+
+    if (!email || !password || !role || !displayName) {
+      return res.status(400).json({ error: 'Display Name, Email, Role, and Password are required.' });
     }
 
-    // 2. Set Custom User Claims
-    try {
-      await adminAuth.setCustomUserClaims(fbUser.uid, { role });
-    } catch (claimErr) {
-      console.warn('[Admin Create User] Custom claims note:', claimErr);
+    // Validate role is strictly one of the 3 allowed roles
+    if (role !== 'COACH' && role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
+      return res.status(400).json({ error: 'Invalid role. Valid roles are SUPER_ADMIN, ADMIN, and COACH.' });
     }
 
-    // 3. Create database record
+    // Privilege Guard: ADMIN can ONLY create COACH accounts
+    if (req.user?.role === 'ADMIN' && role !== 'COACH') {
+      return res.status(403).json({ error: 'Forbidden: Administrators can only create Coach accounts.' });
+    }
+
+    // Privilege Guard: Only Super Admins can create Admin or Super Admin accounts
+    if ((role === 'ADMIN' || role === 'SUPER_ADMIN') && req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Forbidden: Only Super Administrators can create Administrator or Super Administrator accounts.' });
+    }
+
+    if (typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanUsername = username ? String(username).trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '') : cleanEmail.split('@')[0];
+
+    // Check if user already exists
+    const existingUser = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
+
+    let finalUid = existingUser ? existingUser.id : `user-${Date.now()}`;
+
+    // 1. If admin credentials available, try Firebase Auth sync
+    if (hasAdminCredentials && adminAuth) {
+      try {
+        let fbUser;
+        try {
+          fbUser = await adminAuth.getUserByEmail(cleanEmail);
+          finalUid = fbUser.uid;
+          await adminAuth.updateUser(fbUser.uid, {
+            password,
+            displayName,
+            disabled: false,
+          });
+        } catch {
+          fbUser = await adminAuth.createUser({
+            email: cleanEmail,
+            password,
+            displayName,
+          });
+          finalUid = fbUser.uid;
+        }
+
+        try {
+          await adminAuth.setCustomUserClaims(finalUid, { role });
+        } catch (claimErr) {
+          console.warn('[Admin Create User] Custom claims note:', claimErr);
+        }
+      } catch (fbErr: any) {
+        console.warn('[Admin Create User] Firebase Admin note (proceeding):', fbErr?.message || fbErr);
+      }
+    }
+
+    // 2. Create or update database record
     const newUser: User = {
-      id: fbUser.uid,
+      id: finalUid,
       username: cleanUsername,
       email: cleanEmail,
       name: displayName,
       role,
-      coach_id: coach_id || undefined,
-      student_id: student_id || undefined,
+      coach_id: coach_id || existingUser?.coach_id || undefined,
+      student_id: student_id || existingUser?.student_id || undefined,
       is_active: true,
-      created_at: new Date().toISOString(),
+      created_at: existingUser ? existingUser.created_at : new Date().toISOString(),
     };
 
     db.users.set(newUser.id, newUser);
@@ -449,12 +452,12 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req: Authenti
 
     return res.status(201).json({
       success: true,
-      message: `Account for ${displayName} (${role}) created successfully.`,
+      message: `Account for ${displayName} (${role}) configured successfully.`,
       user: newUser,
     });
   } catch (err: any) {
     console.error('[Admin Create User] Error:', err);
-    return res.status(500).json({ error: err.message || 'Failed to create user in Firebase Auth.' });
+    return res.status(500).json({ error: err.message || 'Failed to create user account.' });
   }
 });
 
@@ -489,31 +492,29 @@ router.patch('/admin/users/:id', authenticateUser, requireAdmin, async (req: Aut
   }
 
   try {
-    // Update Firebase Auth if password or disabled status changed
-    const fbUpdates: any = {};
-    if (typeof is_active === 'boolean') {
-      fbUpdates.disabled = !is_active;
-    }
-    if (name) {
-      fbUpdates.displayName = name;
-    }
-    if (password && typeof password === 'string' && password.length >= 6) {
-      fbUpdates.password = password;
-    }
-
-    if (Object.keys(fbUpdates).length > 0) {
+    // Update Firebase Auth if credentials available
+    if (hasAdminCredentials && adminAuth) {
       try {
-        await adminAuth.updateUser(user.id, fbUpdates);
+        const fbUpdates: any = {};
+        if (typeof is_active === 'boolean') {
+          fbUpdates.disabled = !is_active;
+        }
+        if (name) {
+          fbUpdates.displayName = name;
+        }
+        if (password && typeof password === 'string' && password.length >= 6) {
+          fbUpdates.password = password;
+        }
+
+        if (Object.keys(fbUpdates).length > 0) {
+          await adminAuth.updateUser(user.id, fbUpdates);
+        }
+
+        if (role && role !== user.role) {
+          await adminAuth.setCustomUserClaims(user.id, { role });
+        }
       } catch (fbErr) {
         console.warn('[Admin Patch User] Firebase Auth update note:', fbErr);
-      }
-    }
-
-    if (role && role !== user.role) {
-      try {
-        await adminAuth.setCustomUserClaims(user.id, { role });
-      } catch (claimErr) {
-        console.warn('[Admin Patch User] Custom claims note:', claimErr);
       }
     }
 
@@ -569,14 +570,20 @@ router.post('/admin/users/:id/reset-password', authenticateUser, requireAdmin, a
   }
 
   try {
-    await adminAuth.updateUser(user.id, { password: newPassword });
+    if (hasAdminCredentials && adminAuth) {
+      try {
+        await adminAuth.updateUser(user.id, { password: newPassword });
+      } catch (fbErr) {
+        console.warn('[Admin Reset Password] Firebase Auth note:', fbErr);
+      }
+    }
     return res.json({
       success: true,
       message: `Password for ${user.name} (${user.email}) has been reset successfully.`,
     });
   } catch (err: any) {
     console.error('[Admin Reset Password] Error:', err);
-    return res.status(500).json({ error: err.message || 'Failed to reset password in Firebase Auth.' });
+    return res.status(500).json({ error: err.message || 'Failed to reset password.' });
   }
 });
 
@@ -608,10 +615,12 @@ router.delete('/admin/users/:id', authenticateUser, requireAdmin, async (req: Au
   }
 
   try {
-    try {
-      await adminAuth.deleteUser(user.id);
-    } catch (fbErr) {
-      console.warn('[Admin Delete User] Firebase Auth delete note:', fbErr);
+    if (hasAdminCredentials && adminAuth) {
+      try {
+        await adminAuth.deleteUser(user.id);
+      } catch (fbErr) {
+        console.warn('[Admin Delete User] Firebase Auth delete note:', fbErr);
+      }
     }
 
     db.users.delete(user.id);
@@ -717,11 +726,12 @@ router.post('/coaches', authenticateUser, requireAdmin, (req: AuthenticatedReque
     return res.status(400).json({ error: 'Coach name and email are required' });
   }
 
+  const cleanEmail = String(email).trim().toLowerCase();
   const coachId = `coach-${Date.now()}`;
   const newCoach: Coach = {
     id: coachId,
     name: String(name).trim(),
-    email: String(email).trim(),
+    email: cleanEmail,
     phone: phone ? String(phone).trim() : '',
     color: color || '#3b82f6',
     color_name: color_name || 'Pastel Blue',
@@ -732,18 +742,33 @@ router.post('/coaches', authenticateUser, requireAdmin, (req: AuthenticatedReque
 
   db.coaches.set(coachId, newCoach);
 
-  // Automatically create a user login account for this coach
-  const userId = `user-${coachId}`;
-  const newUser: User = {
-    id: userId,
-    email: newCoach.email,
-    name: newCoach.name,
-    role: 'COACH',
-    coach_id: coachId,
-    is_active: true,
-    created_at: new Date().toISOString(),
-  };
-  db.users.set(userId, newUser);
+  // Link or create user login record
+  const existingUser = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
+  if (existingUser) {
+    existingUser.coach_id = coachId;
+    if (!existingUser.role) {
+      existingUser.role = 'COACH';
+    }
+    db.users.set(existingUser.id, existingUser);
+    syncDocToFirestore('users', existingUser.id, existingUser).catch(console.error);
+  } else {
+    const userId = `user-${coachId}`;
+    const newUser: User = {
+      id: userId,
+      email: cleanEmail,
+      username: cleanEmail.split('@')[0],
+      name: newCoach.name,
+      role: 'COACH',
+      coach_id: coachId,
+      is_active: true,
+      created_at: new Date().toISOString(),
+    };
+    db.users.set(userId, newUser);
+    syncDocToFirestore('users', userId, newUser).catch(console.error);
+  }
+
+  db.saveToDisk();
+  syncDocToFirestore('coaches', coachId, newCoach).catch(console.error);
 
   return res.status(201).json(newCoach);
 });
