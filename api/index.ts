@@ -18,16 +18,14 @@ app.use((req, res, next) => {
   next();
 });
 
-// Lazy-initialize Firestore sync in serverless environment
+// Safe background Firestore sync initialization in serverless environment
 let firestoreSyncInitialized = false;
-app.use(async (req, res, next) => {
+app.use((req, res, next) => {
   if (!firestoreSyncInitialized) {
     firestoreSyncInitialized = true;
-    try {
-      await initializeFirestoreSync();
-    } catch (err) {
-      console.warn('[Serverless] Firestore sync initialization error:', err);
-    }
+    initializeFirestoreSync().catch((err) => {
+      console.warn('[Serverless] Non-blocking Firestore sync note:', err?.message || err);
+    });
   }
   next();
 });

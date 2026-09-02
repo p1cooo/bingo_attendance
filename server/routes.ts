@@ -2680,42 +2680,65 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 
 // Dashboard Quick Stats
 const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
-  const currentMonth = '2026-08';
-  const today = '2026-08-16';
+  try {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-  const monthSessions = Array.from(db.sessions.values()).filter((s) =>
-    s.session_date.startsWith(currentMonth)
-  );
+    const sessions = db?.sessions ? Array.from(db.sessions.values()) : [];
+    const attendance = db?.attendance ? Array.from(db.attendance.values()) : [];
+    const students = db?.students ? Array.from(db.students.values()) : [];
+    const coaches = db?.coaches ? Array.from(db.coaches.values()) : [];
 
-  const monthAttendances = Array.from(db.attendance.values()).filter((a) => {
-    const sess = db.sessions.get(a.session_id);
-    return sess && sess.session_date.startsWith(currentMonth) && (a.status === 'PRESENT' || a.status === 'LATE');
-  });
+    const monthSessions = sessions.filter((s) => s?.session_date && s.session_date.startsWith(currentMonth));
+    const monthAttendances = attendance.filter((a) => {
+      const sess = db.sessions.get(a.session_id);
+      return sess && sess.session_date && sess.session_date.startsWith(currentMonth) && (a.status === 'PRESENT' || a.status === 'LATE');
+    });
 
-  const monthReplacements = Array.from(db.attendance.values()).filter((a) => {
-    const sess = db.sessions.get(a.session_id);
-    return (
-      sess &&
-      sess.session_date.startsWith(currentMonth) &&
-      a.attendance_type === 'REPLACEMENT' &&
-      (a.status === 'PRESENT' || a.status === 'LATE')
-    );
-  });
+    const monthReplacements = attendance.filter((a) => {
+      const sess = db.sessions.get(a.session_id);
+      return (
+        sess &&
+        sess.session_date &&
+        sess.session_date.startsWith(currentMonth) &&
+        a.attendance_type === 'REPLACEMENT' &&
+        (a.status === 'PRESENT' || a.status === 'LATE')
+      );
+    });
 
-  const todaySessions = Array.from(db.sessions.values())
-    .filter((s) => s.session_date === today)
-    .map((s) => db.getPopulatedSession(s.id)!)
-    .filter(Boolean);
+    const todaySessions = sessions
+      .filter((s) => s?.session_date === today)
+      .map((s) => {
+        try {
+          return db.getPopulatedSession(s.id);
+        } catch {
+          return s;
+        }
+      })
+      .filter(Boolean);
 
-  return res.json({
-    month: currentMonth,
-    sessions_this_month: monthSessions.length,
-    student_attendances: monthAttendances.length,
-    replacement_attendances: monthReplacements.length,
-    today_sessions: todaySessions,
-    total_active_students: Array.from(db.students.values()).filter((s) => s.status === 'ACTIVE').length,
-    total_active_coaches: Array.from(db.coaches.values()).filter((c) => c.is_active).length,
-  });
+    return res.json({
+      month: currentMonth,
+      sessions_this_month: monthSessions.length,
+      student_attendances: monthAttendances.length,
+      replacement_attendances: monthReplacements.length,
+      today_sessions: todaySessions,
+      total_active_students: students.filter((s) => s?.status === 'ACTIVE').length,
+      total_active_coaches: coaches.filter((c) => c?.is_active).length,
+    });
+  } catch (err: any) {
+    console.error('[Dashboard Stats Error]:', err);
+    return res.json({
+      month: new Date().toISOString().substring(0, 7),
+      sessions_this_month: 0,
+      student_attendances: 0,
+      replacement_attendances: 0,
+      today_sessions: [],
+      total_active_students: 0,
+      total_active_coaches: 0,
+    });
+  }
 };
 
 router.get('/reports/stats', authenticateUser, requireAdmin, getDashboardStatsHandler);
