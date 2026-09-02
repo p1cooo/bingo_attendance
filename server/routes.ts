@@ -254,6 +254,7 @@ router.post('/admin/provision-superadmin', async (req, res) => {
 
     db.users.set(superAdminUser.id, superAdminUser);
     db.saveToDisk();
+    syncDocToFirestore('users', superAdminUser.id, superAdminUser).catch(console.error);
 
     return res.json({
       success: true,
@@ -377,6 +378,7 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req: Authenti
 
     db.users.set(newUser.id, newUser);
     db.saveToDisk();
+    syncDocToFirestore('users', newUser.id, newUser).catch(console.error);
 
     return res.status(201).json({
       success: true,
@@ -459,6 +461,7 @@ router.patch('/admin/users/:id', authenticateUser, requireAdmin, async (req: Aut
 
     db.users.set(user.id, user);
     db.saveToDisk();
+    syncDocToFirestore('users', user.id, user).catch(console.error);
 
     return res.json({
       success: true,
@@ -546,6 +549,7 @@ router.delete('/admin/users/:id', authenticateUser, requireAdmin, async (req: Au
 
     db.users.delete(user.id);
     db.saveToDisk();
+    deleteDocFromFirestore('users', user.id).catch(console.error);
 
     return res.json({
       success: true,

@@ -32,6 +32,9 @@ export const LoginView: React.FC = () => {
   // Initial Provisioning State
   const [isProvisioned, setIsProvisioned] = useState<boolean | null>(null);
   const [isProvisionModalOpen, setIsProvisionModalOpen] = useState(false);
+  const [provisionUsername, setProvisionUsername] = useState('weihaosuper');
+  const [provisionDisplayName, setProvisionDisplayName] = useState('Wei Hao (Super Admin)');
+  const [provisionEmail, setProvisionEmail] = useState('weihaosuper@academy.com');
   const [provisionPassword, setProvisionPassword] = useState('');
   const [showProvisionPassword, setShowProvisionPassword] = useState(false);
   const [provisionError, setProvisionError] = useState<string | null>(null);
@@ -42,8 +45,12 @@ export const LoginView: React.FC = () => {
       try {
         const res = await api.getProvisionStatus();
         setIsProvisioned(res.isProvisioned);
+        if (res.defaultUsername) {
+          setProvisionUsername(res.defaultUsername);
+        }
       } catch (e) {
-        setIsProvisioned(true); // default to true if error
+        // If status check fails on Vercel serverless cold start, keep null or allow manual setup
+        setIsProvisioned(false);
       }
     }
     checkProvision();
@@ -80,9 +87,9 @@ export const LoginView: React.FC = () => {
 
     try {
       await api.provisionSuperAdmin({
-        username: 'weihaosuper',
-        email: 'weihaosuper@academy.com',
-        displayName: 'Wei Hao (Super Admin)',
+        username: provisionUsername.trim() || 'weihaosuper',
+        email: provisionEmail.trim() || `${provisionUsername.trim()}@academy.com`,
+        displayName: provisionDisplayName.trim() || 'Super Admin',
         password: provisionPassword,
       });
 
@@ -90,7 +97,7 @@ export const LoginView: React.FC = () => {
       setIsProvisionModalOpen(false);
 
       // Immediately log in with the new credentials
-      await login('weihaosuper', provisionPassword);
+      await login(provisionUsername.trim() || 'weihaosuper', provisionPassword);
     } catch (err: any) {
       setProvisionError(err.message || 'Failed to provision Super Admin account.');
     } finally {
@@ -227,6 +234,19 @@ export const LoginView: React.FC = () => {
                 )}
               </button>
             </form>
+
+            {/* Initial Setup / Provision Super Admin Link */}
+            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-neutral-800 text-center">
+              <button
+                type="button"
+                id="init-superadmin-btn"
+                onClick={() => setIsProvisionModalOpen(true)}
+                className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:underline inline-flex items-center gap-1.5 cursor-pointer py-1 px-2 rounded-xl transition-colors"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span>First-time setup? Initialize Super Admin Account</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -241,7 +261,7 @@ export const LoginView: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-lg font-black text-slate-900 dark:text-white">Provision Super Admin</h3>
-                <p className="text-xs text-slate-500">Account: <strong>weihaosuper</strong></p>
+                <p className="text-xs text-slate-500">Initial Master Administrator Setup</p>
               </div>
             </div>
 
@@ -251,22 +271,50 @@ export const LoginView: React.FC = () => {
               </div>
             )}
 
-            <form onSubmit={handleProvisionSuperAdmin} className="space-y-4">
-              <div className="space-y-1.5">
+            <form onSubmit={handleProvisionSuperAdmin} className="space-y-3.5">
+              <div className="space-y-1">
                 <label className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                  Username
+                  Super Admin Username *
                 </label>
                 <input
                   type="text"
-                  disabled
-                  value="weihaosuper"
-                  className="w-full px-3.5 py-2.5 bg-slate-100 dark:bg-neutral-800 border-2 border-slate-300 dark:border-neutral-700 rounded-2xl text-xs font-mono font-bold text-slate-600 dark:text-slate-300"
+                  required
+                  value={provisionUsername}
+                  onChange={(e) => setProvisionUsername(e.target.value)}
+                  placeholder="e.g. weihaosuper"
+                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 rounded-2xl text-xs font-bold text-slate-900 dark:text-white"
                 />
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <label className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                  Set Initial Password *
+                  Full Name / Display Name
+                </label>
+                <input
+                  type="text"
+                  value={provisionDisplayName}
+                  onChange={(e) => setProvisionDisplayName(e.target.value)}
+                  placeholder="Wei Hao (Super Admin)"
+                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 rounded-2xl text-xs font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Admin Email
+                </label>
+                <input
+                  type="email"
+                  value={provisionEmail}
+                  onChange={(e) => setProvisionEmail(e.target.value)}
+                  placeholder="weihaosuper@academy.com"
+                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 rounded-2xl text-xs font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Set Master Password *
                 </label>
                 <div className="relative">
                   <input
@@ -277,7 +325,7 @@ export const LoginView: React.FC = () => {
                     placeholder="Enter secure password (min 6 characters)"
                     value={provisionPassword}
                     onChange={(e) => setProvisionPassword(e.target.value)}
-                    className="w-full pl-3.5 pr-10 py-2.5 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 rounded-2xl text-xs font-bold text-slate-900 dark:text-white"
+                    className="w-full pl-3.5 pr-10 py-2 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 rounded-2xl text-xs font-bold text-slate-900 dark:text-white"
                   />
                   <button
                     type="button"
@@ -289,11 +337,11 @@ export const LoginView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3">
+              <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsProvisionModalOpen(false)}
-                  className="px-4 py-2 rounded-2xl text-xs font-bold text-slate-600 hover:text-slate-900"
+                  className="px-4 py-2 rounded-2xl text-xs font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
                 >
                   Cancel
                 </button>
