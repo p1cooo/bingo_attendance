@@ -30,6 +30,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Normalize req.url so Express router always matches under various Vercel rewrite modes
+app.use((req, res, next) => {
+  if (req.url.startsWith('/api/index.ts')) {
+    req.url = req.url.replace('/api/index.ts', '') || '/';
+  } else if (req.url.startsWith('/api/index')) {
+    req.url = req.url.replace('/api/index', '') || '/';
+  }
+  next();
+});
+
 // Health check endpoints
 app.get(['/health', '/api/health'], (req, res) => {
   res.json({ status: 'ok', serverless: true, time: new Date().toISOString() });
@@ -51,6 +61,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-export default app;
+export default function handler(req: any, res: any) {
+  return app(req, res);
+}
+
 
 
