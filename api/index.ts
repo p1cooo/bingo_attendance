@@ -49,21 +49,27 @@ app.get(['/health', '/api/health'], (req, res) => {
 app.use('/api', apiRouter);
 app.use('/', apiRouter);
 
+// Express global 404 handler that always returns clean JSON (preventing HTML 404s)
+app.use((req: express.Request, res: express.Response) => {
+  res.status(404).json({
+    error: `API route not found: ${req.method} ${req.originalUrl || req.url}`,
+    path: req.originalUrl || req.url,
+  });
+});
+
 // Express global error handler to prevent unhandled serverless 500 HTML crashes
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('[API Serverless Error]:', err);
   if (res.headersSent) {
     return next(err);
   }
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error occurred on backend.',
-    code: err.code || 'INTERNAL_ERROR',
+  res.status(err?.status || 500).json({
+    error: err?.message || 'Internal server error occurred on backend.',
+    code: err?.code || 'INTERNAL_ERROR',
   });
 });
 
-export default function handler(req: any, res: any) {
-  return app(req, res);
-}
+export default app;
 
 
 

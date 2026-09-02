@@ -98,17 +98,20 @@ if (getApps().length === 0) {
   adminApp = getApps()[0];
 }
 
+export const hasAdminCredentials = Boolean(clientEmail && privateKey && projectId);
+
 let firestoreInstance: Firestore | null = null;
-export function getFirestoreDb(): Firestore {
+export function getFirestoreDb(): Firestore | null {
   if (!firestoreInstance) {
     try {
-      firestoreInstance =
-        databaseId && databaseId !== '(default)'
-          ? getFirestore(adminApp, databaseId)
-          : getFirestore(adminApp);
+      if (hasAdminCredentials) {
+        firestoreInstance =
+          databaseId && databaseId !== '(default)'
+            ? getFirestore(adminApp, databaseId)
+            : getFirestore(adminApp);
+      }
     } catch (err) {
-      console.warn('[FirebaseAdmin] Fallback to default firestore instance:', err);
-      firestoreInstance = getFirestore(adminApp);
+      console.warn('[FirebaseAdmin] Firestore initialization note:', err);
     }
   }
   return firestoreInstance;
@@ -117,6 +120,25 @@ export function getFirestoreDb(): Firestore {
 export const firestore: Firestore = new Proxy({} as Firestore, {
   get(target, prop, receiver) {
     const db = getFirestoreDb();
+    if (!db) {
+      // Graceful no-op stub if no server-side credentials
+      if (prop === 'collection') {
+        return () => ({
+          get: async () => ({ empty: true, docs: [], forEach: () => {} }),
+          doc: () => ({
+            set: async () => {},
+            get: async () => ({ exists: false, data: () => null }),
+            delete: async () => {},
+          }),
+          orderBy: () => ({
+            limit: () => ({
+              get: async () => ({ empty: true, docs: [] }),
+            }),
+          }),
+        });
+      }
+      return undefined;
+    }
     const value = Reflect.get(db, prop, receiver);
     if (typeof value === 'function') {
       return value.bind(db);

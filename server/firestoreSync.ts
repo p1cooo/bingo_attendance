@@ -1,7 +1,12 @@
-import { firestore } from './firebaseAdmin.js';
+import { firestore, hasAdminCredentials } from './firebaseAdmin.js';
 import { db } from './db.js';
 
 export async function initializeFirestoreSync() {
+  if (!hasAdminCredentials) {
+    console.log('[Firestore] Running in standalone / client-sync mode (no service account env credentials). Local memory and disk persistence active.');
+    return;
+  }
+
   console.log('[Firestore] Initializing Firestore synchronization...');
   try {
     // Load Users
@@ -67,6 +72,7 @@ export async function initializeFirestoreSync() {
 }
 
 export async function syncDocToFirestore(collectionName: string, docId: string, data: any) {
+  if (!hasAdminCredentials) return;
   try {
     await firestore.collection(collectionName).doc(docId).set(data, { merge: true });
   } catch (err) {
@@ -75,6 +81,7 @@ export async function syncDocToFirestore(collectionName: string, docId: string, 
 }
 
 export async function deleteDocFromFirestore(collectionName: string, docId: string) {
+  if (!hasAdminCredentials) return;
   try {
     await firestore.collection(collectionName).doc(docId).delete();
   } catch (err) {
