@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { db } from './db.js';
 import { User, Coach } from '../src/types.js';
-import { adminAuth } from './firebaseAdmin.js';
+import { adminAuth, hasAdminCredentials } from './firebaseAdmin.js';
 
 /**
  * ============================================================================
@@ -63,57 +63,61 @@ export async function authenticateUser(req: AuthenticatedRequest, res: Response,
     let decodedUid: string | undefined;
     let decodedExp: number | undefined;
 
-    // 1. Primary: Verify Firebase ID Token (Stateless for Vercel Serverless)
+    // 1. Primary: Verify Firebase ID Token if admin credentials exist
     if (token.includes('.') && !token.startsWith('token-')) {
       let isVerified = false;
-      try {
-        if (adminAuth && typeof adminAuth.verifyIdToken === 'function') {
-          const decoded = await adminAuth.verifyIdToken(token);
-          if (decoded && decoded.uid) {
-            tokenVerificationStatus = 'SUCCESS_ADMIN_SDK';
-            decodedIss = decoded.iss;
-            decodedAud = decoded.aud;
-            decodedUid = decoded.uid;
-            decodedExp = decoded.exp;
-            isVerified = true;
+      if (hasAdminCredentials) {
+        try {
+          if (adminAuth && typeof adminAuth.verifyIdToken === 'function') {
+            const decoded = await adminAuth.verifyIdToken(token);
+            if (decoded && decoded.uid) {
+              tokenVerificationStatus = 'SUCCESS_ADMIN_SDK';
+              decodedIss = decoded.iss;
+              decodedAud = decoded.aud;
+              decodedUid = decoded.uid;
+              decodedExp = decoded.exp;
+              isVerified = true;
 
-            const email = (decoded.email || '').toLowerCase().trim();
-            user = Array.from(db.users.values()).find(
-              (u) => u.id === decoded.uid || (email && u.email.toLowerCase() === email)
-            );
+              const email = (decoded.email || '').toLowerCase().trim();
+              user = Array.from(db.users.values()).find(
+                (u) => u.id === decoded.uid || (email && u.email.toLowerCase() === email)
+              );
 
-            if (!user && (decoded.uid || email)) {
-              const isSuperAdminEmail =
-                decoded.role === 'SUPER_ADMIN' ||
-                email.includes('weihao') ||
-                email === 'twyuan07@gmail.com' ||
-                email === 'whcagallery@gmail.com' ||
-                email === 'weihaosuper@academy.com' ||
-                email.includes('super');
-              const isAdminEmail = email.includes('admin') || email.includes('staff');
-              user = {
-                id: decoded.uid,
-                username: email ? email.split('@')[0] : 'user',
-                email: email || `${decoded.uid}@academy.com`,
-                name: decoded.name || (isSuperAdminEmail ? 'Wei Hao (Super Admin)' : 'Academy User'),
-                role: isSuperAdminEmail ? 'SUPER_ADMIN' : isAdminEmail ? 'ADMIN' : ((decoded.role as any) || 'SUPER_ADMIN'),
-                is_active: true,
-                created_at: new Date().toISOString(),
-              };
-              db.users.set(user.id, user);
+              if (!user && (decoded.uid || email)) {
+                const isSuperAdminEmail =
+                  decoded.role === 'SUPER_ADMIN' ||
+                  email.includes('weihao') ||
+                  email === 'twyuan07@gmail.com' ||
+                  email === 'whcagallery@gmail.com' ||
+                  email === 'weihaosuper@academy.com' ||
+                  email.includes('super');
+                const isAdminEmail = email.includes('admin') || email.includes('staff');
+                user = {
+                  id: decoded.uid,
+                  username: email ? email.split('@')[0] : 'user',
+                  email: email || `${decoded.uid}@academy.com`,
+                  name: decoded.name || (isSuperAdminEmail ? 'Wei Hao (Super Admin)' : 'Academy User'),
+                  role: isSuperAdminEmail ? 'SUPER_ADMIN' : isAdminEmail ? 'ADMIN' : ((decoded.role as any) || 'SUPER_ADMIN'),
+                  is_active: true,
+                  created_at: new Date().toISOString(),
+                };
+                db.users.set(user.id, user);
+              }
             }
           }
+        } catch (err: any) {
+          tokenVerificationStatus = `FAILED_ADMIN_SDK (${err?.message || 'Verification Error'})`;
         }
-      } catch (err: any) {
-        tokenVerificationStatus = `FAILED_ADMIN_SDK (${err?.message || 'Verification Error'})`;
       }
 
-      // 2. Stateless JWT Payload Fallback (for Serverless without private key env vars)
+      // 2. Stateless JWT Payload Fallback (for Serverless / Vercel without service account secrets)
       if (!isVerified) {
         try {
           const parts = token.split('.');
           if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
+            const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const padded = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, '=');
+            const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'));
             decodedIss = payload.iss;
             decodedAud = payload.aud;
             decodedUid = payload.sub || payload.user_id;
@@ -176,8 +180,14 @@ export async function authenticateUser(req: AuthenticatedRequest, res: Response,
       }
     }
 
-    // Super Admin role enforcement for master email
-    if (user && (user.email.toLowerCase() === 'twyuan07@gmail.com' || user.email.toLowerCase().includes('weihaosuper'))) {
+    // Super Admin role enforcement for master accounts
+    if (
+      user &&
+      (user.email.toLowerCase() === 'twyuan07@gmail.com' ||
+       user.email.toLowerCase() === 'whcagallery@gmail.com' ||
+       user.email.toLowerCase().includes('weihao') ||
+       user.email.toLowerCase().includes('super'))
+    ) {
       user.role = 'SUPER_ADMIN';
     }
 

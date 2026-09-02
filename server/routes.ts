@@ -2773,8 +2773,8 @@ const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
   }
 };
 
-router.get('/reports/stats', authenticateUser, requireAdmin, getDashboardStatsHandler);
-router.get('/dashboard/stats', authenticateUser, requireAdmin, getDashboardStatsHandler);
+router.get('/reports/stats', authenticateUser, requireCoachOrAdmin, getDashboardStatsHandler);
+router.get('/dashboard/stats', authenticateUser, requireCoachOrAdmin, getDashboardStatsHandler);
 
 // ============================================================
 // 9. AUDIT LOGS & NOTIFICATIONS

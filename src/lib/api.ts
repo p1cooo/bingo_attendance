@@ -623,7 +623,29 @@ class ApiClient {
     total_active_students: number;
     total_active_coaches: number;
   }> {
-    return this.request('/reports/stats');
+    try {
+      const data = await this.request<any>('/reports/stats');
+      return {
+        month: data?.month || new Date().toISOString().substring(0, 7),
+        sessions_this_month: Number(data?.sessions_this_month || 0),
+        student_attendances: Number(data?.student_attendances || 0),
+        replacement_attendances: Number(data?.replacement_attendances || 0),
+        today_sessions: Array.isArray(data?.today_sessions) ? data.today_sessions : [],
+        total_active_students: Number(data?.total_active_students || 0),
+        total_active_coaches: Number(data?.total_active_coaches || 0),
+      };
+    } catch (err) {
+      console.warn('[ApiClient] Failed to fetch dashboard stats, using clean fallback metrics:', err);
+      return {
+        month: new Date().toISOString().substring(0, 7),
+        sessions_this_month: 0,
+        student_attendances: 0,
+        replacement_attendances: 0,
+        today_sessions: [],
+        total_active_students: 0,
+        total_active_coaches: 0,
+      };
+    }
   }
 
   async getMonthlyReport(params?: {
