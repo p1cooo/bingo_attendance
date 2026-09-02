@@ -78,7 +78,7 @@ export const LoginView: React.FC = () => {
                 Academy Sign In
               </h2>
               <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1.5">
-                Sign in with your Firebase account credentials
+                Sign in to access your academy dashboard
               </p>
             </div>
 
@@ -104,7 +104,7 @@ export const LoginView: React.FC = () => {
                     required
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
-                    placeholder="e.g. whcagallery@gmail.com"
+                    placeholder="name@domain.com"
                     className="w-full pl-9 pr-3 py-2.5 text-xs font-bold rounded-2xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:bg-white transition-all shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
                   />
                 </div>
