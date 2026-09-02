@@ -26,46 +26,106 @@ const databaseId =
   '(default)';
 
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
-let privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
+const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
 
-// Support both standard multi-line keys and escaped \n strings from Vercel / CI env vars
-if (privateKey) {
-  // Strip enclosing quotes if present from environment copy-pastes
-  if ((privateKey.startsWith('"') && privateKey.endsWith('"')) || (privateKey.startsWith("'") && privateKey.endsWith("'"))) {
-    privateKey = privateKey.slice(1, -1);
+function formatPrivateKey(rawKey?: string): string | undefined {
+  if (!rawKey) return undefined;
+  let key = rawKey.trim();
+
+  // If user pasted whole service account JSON into the private key environment variable
+  if (key.startsWith('{') && key.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(key);
+      if (parsed.private_key) {
+        key = parsed.private_key;
+      }
+    } catch {
+      // Ignore JSON parse error
+    }
   }
-  privateKey = privateKey.replace(/\\n/g, '\n');
+
+  // Strip wrapping single or double quotes
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'")) ||
+    (key.startsWith('`') && key.endsWith('`'))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+
+  // Replace literal '\n' sequences with real newlines
+  key = key.replace(/\\n/g, '\n');
+
+  // Ensure standard PEM structure
+  if (!key.includes('BEGIN PRIVATE KEY') && !key.includes('BEGIN RSA PRIVATE KEY')) {
+    key = `-----BEGIN PRIVATE KEY-----\n${key}\n-----END PRIVATE KEY-----`;
+  }
+
+  return key;
 }
+
+const privateKey = formatPrivateKey(rawPrivateKey);
 
 let adminApp: App;
 
 if (getApps().length === 0) {
+  let initialized = false;
   if (clientEmail && privateKey && projectId) {
-    // Explicit service account credential provided (recommended for Vercel / serverless)
-    adminApp = initializeApp({
-      credential: cert({
+    try {
+      adminApp = initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
         projectId,
-        clientEmail,
-        privateKey,
-      }),
-      projectId,
-    });
-  } else if (projectId) {
-    // Application Default Credentials (GCP / Cloud Run / Local emulator)
-    adminApp = initializeApp({ projectId });
-  } else {
-    adminApp = initializeApp();
+      });
+      initialized = true;
+    } catch (certError) {
+      console.warn('[FirebaseAdmin] Failed to initialize with cert credentials, attempting fallback:', certError);
+    }
+  }
+
+  if (!initialized) {
+    try {
+      adminApp = initializeApp({ projectId });
+    } catch (fallbackError) {
+      console.warn('[FirebaseAdmin] Fallback initialization error, creating bare default app:', fallbackError);
+      adminApp = initializeApp();
+    }
   }
 } else {
   adminApp = getApps()[0];
 }
 
-// In Firestore Admin SDK, if databaseId is '(default)', passing it or undefined connects to default db.
-export const firestore: Firestore =
-  databaseId && databaseId !== '(default)'
-    ? getFirestore(adminApp, databaseId)
-    : getFirestore(adminApp);
+let firestoreInstance: Firestore | null = null;
+export function getFirestoreDb(): Firestore {
+  if (!firestoreInstance) {
+    try {
+      firestoreInstance =
+        databaseId && databaseId !== '(default)'
+          ? getFirestore(adminApp, databaseId)
+          : getFirestore(adminApp);
+    } catch (err) {
+      console.warn('[FirebaseAdmin] Fallback to default firestore instance:', err);
+      firestoreInstance = getFirestore(adminApp);
+    }
+  }
+  return firestoreInstance;
+}
+
+export const firestore: Firestore = new Proxy({} as Firestore, {
+  get(target, prop, receiver) {
+    const db = getFirestoreDb();
+    const value = Reflect.get(db, prop, receiver);
+    if (typeof value === 'function') {
+      return value.bind(db);
+    }
+    return value;
+  },
+});
 
 export const adminAuth: Auth = getAuth(adminApp);
 export { adminApp, projectId, databaseId };
+
 

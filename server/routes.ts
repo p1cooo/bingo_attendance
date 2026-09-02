@@ -218,32 +218,44 @@ router.post('/admin/provision-superadmin', async (req, res) => {
   const cleanUsername = String(username || 'weihaosuper').trim().toLowerCase();
   const cleanEmail = String(email || 'weihaosuper@academy.com').trim().toLowerCase();
 
+  let fbUserUid = `user-superadmin-${Date.now()}`;
+  let fbSuccess = false;
+
+  // Try creating in Firebase Authentication
   try {
-    let fbUser;
     try {
-      fbUser = await adminAuth.getUserByEmail(cleanEmail);
-      await adminAuth.updateUser(fbUser.uid, {
+      const existingFbUser = await adminAuth.getUserByEmail(cleanEmail);
+      await adminAuth.updateUser(existingFbUser.uid, {
         password,
         displayName: displayName || 'Super Admin',
         disabled: false,
       });
+      fbUserUid = existingFbUser.uid;
+      fbSuccess = true;
     } catch {
-      fbUser = await adminAuth.createUser({
+      const newFbUser = await adminAuth.createUser({
         email: cleanEmail,
         password,
         displayName: displayName || 'Super Admin',
       });
+      fbUserUid = newFbUser.uid;
+      fbSuccess = true;
     }
 
-    // Set Custom Claims for SUPER_ADMIN role
-    try {
-      await adminAuth.setCustomUserClaims(fbUser.uid, { role: 'SUPER_ADMIN' });
-    } catch (claimErr) {
-      console.warn('[Provision] Custom claims note:', claimErr);
+    if (fbSuccess) {
+      try {
+        await adminAuth.setCustomUserClaims(fbUserUid, { role: 'SUPER_ADMIN' });
+      } catch (claimErr) {
+        console.warn('[Provision] Custom claims note:', claimErr);
+      }
     }
+  } catch (authErr: any) {
+    console.warn('[Provision] Firebase Admin Auth sync warning (continuing with database provision):', authErr?.message);
+  }
 
+  try {
     const superAdminUser: User = {
-      id: fbUser.uid,
+      id: fbUserUid,
       username: cleanUsername,
       email: cleanEmail,
       name: displayName || 'Super Admin',
@@ -268,7 +280,7 @@ router.post('/admin/provision-superadmin', async (req, res) => {
       },
     });
   } catch (err: any) {
-    console.error('[Provision] Error creating Super Admin:', err);
+    console.error('[Provision] Error saving Super Admin:', err);
     return res.status(500).json({ error: err.message || 'Failed to provision Super Admin account.' });
   }
 });

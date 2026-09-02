@@ -41,5 +41,18 @@ app.get(['/health', '/api/health'], (req, res) => {
 app.use('/api', apiRouter);
 app.use('/', apiRouter);
 
+// Express global error handler to prevent unhandled serverless 500 HTML crashes
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('[API Serverless Error]:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error occurred on backend.',
+    code: err.code || 'INTERNAL_ERROR',
+  });
+});
+
 export default app;
+
 
