@@ -1,8 +1,10 @@
 import { Router, Response } from 'express';
 import { db } from './db.js';
+import { adminAuth } from './firebaseAdmin.js';
 import {
   authenticateUser,
   requireAdmin,
+  requireSuperAdmin,
   requireCoachOrAdmin,
   verifySessionAttendanceAccess,
   createTokenForUser,
@@ -46,6 +48,515 @@ router.use((req, res, next) => {
 // 1. AUTHENTICATION ENDPOINTS
 // ============================================================
 
+/**
+ * Resolves a username, student ID, coach alias, or email input to the registered Firebase account email.
+ * This does NOT verify or handle passwords, keeping credentials secure and handled by Firebase Auth.
+ */
+router.post('/auth/resolve-account', (req, res) => {
+  const { input } = req.body;
+  const loginInput = String(input || '').trim();
+
+  if (!loginInput) {
+    return res.status(400).json({ error: 'Username or email is required' });
+  }
+
+  const user = db.findUserByLogin(loginInput);
+
+  if (!user) {
+    return res.status(404).json({
+      error: `Account "${loginInput}" not found. Please verify your username or email address.`,
+    });
+  }
+
+  if (!user.is_active) {
+    return res.status(403).json({ error: 'This user account is inactive' });
+  }
+
+  return res.json({
+    success: true,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    userId: user.id,
+  });
+});
+
+/**
+ * Synchronizes client-side Firebase Auth sessions with backend database profile.
+ * Verifies the Firebase ID Token using Firebase Admin SDK.
+ */
+router.post('/auth/firebase-session', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const bodyToken = req.body?.idToken;
+  const token = (authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : bodyToken || '').trim();
+
+  if (!token) {
+    return res.status(401).json({ error: 'Firebase ID token is required' });
+  }
+
+  try {
+    const decoded = await adminAuth.verifyIdToken(token);
+    const email = (decoded.email || '').toLowerCase().trim();
+
+    let user = Array.from(db.users.values()).find(
+      (u) => u.id === decoded.uid || (email && u.email.toLowerCase() === email)
+    );
+
+    if (user) {
+      if (
+        decoded.role === 'SUPER_ADMIN' ||
+        email === 'weihaosuper@academy.com' ||
+        user.username === 'weihaosuper' ||
+        user.role === 'SUPER_ADMIN'
+      ) {
+        user.role = 'SUPER_ADMIN';
+      }
+    }
+
+    if (!user && email) {
+      // Check coaches
+      const matchedCoach = Array.from(db.coaches.values()).find(
+        (c) => c.email.toLowerCase() === email
+      );
+
+      if (matchedCoach) {
+        user = {
+          id: decoded.uid,
+          username: matchedCoach.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
+          email: matchedCoach.email,
+          name: matchedCoach.name,
+          role: 'COACH',
+          coach_id: matchedCoach.id,
+          is_active: matchedCoach.is_active,
+          created_at: new Date().toISOString(),
+        };
+        db.users.set(user.id, user);
+        db.saveToDisk();
+      } else {
+        // General user account (e.g. Super Admin or Admin or Coach)
+        const isSuperAdminEmail =
+          decoded.role === 'SUPER_ADMIN' ||
+          email.includes('weihaosuper') ||
+          email === 'twyuan07@gmail.com';
+        const isAdminEmail = email.includes('admin') || email.includes('staff');
+        user = {
+          id: decoded.uid,
+          username: email.split('@')[0],
+          email: email,
+          name: decoded.name || (isSuperAdminEmail ? 'Wei Hao (Super Admin)' : email.split('@')[0]),
+          role: isSuperAdminEmail ? 'SUPER_ADMIN' : isAdminEmail ? 'ADMIN' : 'COACH',
+          is_active: true,
+          created_at: new Date().toISOString(),
+        };
+        db.users.set(user.id, user);
+        db.saveToDisk();
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: 'User profile not found for this Firebase account' });
+    }
+
+    if (!user.is_active) {
+      return res.status(403).json({ error: 'This user account is inactive' });
+    }
+
+    const coachProfile = user.coach_id ? db.coaches.get(user.coach_id) : undefined;
+    const studentProfile = user.student_id ? db.getPopulatedStudent(user.student_id) : undefined;
+
+    return res.json({
+      token,
+      user,
+      coach_profile: coachProfile,
+      student_profile: studentProfile,
+    });
+  } catch (error: any) {
+    console.error('[Auth] Firebase session verification failed:', error?.message || error);
+    return res.status(401).json({ error: 'Invalid or expired Firebase ID token' });
+  }
+});
+
+// ============================================================
+// SUPER ADMIN PROVISIONING & ACCOUNT MANAGEMENT ENDPOINTS
+// ============================================================
+
+/**
+ * Checks whether the initial Super Admin account (weihaosuper) has been provisioned.
+ */
+router.get('/admin/provision-status', (req, res) => {
+  const hasSuperAdmin = Array.from(db.users.values()).some((u) => u.role === 'SUPER_ADMIN');
+  return res.json({
+    isProvisioned: hasSuperAdmin,
+    defaultUsername: 'weihaosuper',
+  });
+});
+
+/**
+ * Secure one-time initial provisioning of the Super Admin (weihaosuper).
+ * Only accessible if no SUPER_ADMIN exists in the database.
+ * Directly creates credentials in Firebase Auth and avoids plaintext storage.
+ */
+router.post('/admin/provision-superadmin', async (req, res) => {
+  const existingSuperAdmin = Array.from(db.users.values()).find((u) => u.role === 'SUPER_ADMIN');
+  if (existingSuperAdmin) {
+    return res.status(403).json({
+      error: 'Forbidden: Super Admin has already been provisioned. Log in with your credentials.',
+    });
+  }
+
+  const {
+    username = 'weihaosuper',
+    email = 'weihaosuper@academy.com',
+    password,
+    displayName = 'Wei Hao (Super Admin)',
+  } = req.body;
+
+  if (!password || typeof password !== 'string' || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  }
+
+  const cleanUsername = String(username || 'weihaosuper').trim().toLowerCase();
+  const cleanEmail = String(email || 'weihaosuper@academy.com').trim().toLowerCase();
+
+  try {
+    let fbUser;
+    try {
+      fbUser = await adminAuth.getUserByEmail(cleanEmail);
+      await adminAuth.updateUser(fbUser.uid, {
+        password,
+        displayName: displayName || 'Super Admin',
+        disabled: false,
+      });
+    } catch {
+      fbUser = await adminAuth.createUser({
+        email: cleanEmail,
+        password,
+        displayName: displayName || 'Super Admin',
+      });
+    }
+
+    // Set Custom Claims for SUPER_ADMIN role
+    try {
+      await adminAuth.setCustomUserClaims(fbUser.uid, { role: 'SUPER_ADMIN' });
+    } catch (claimErr) {
+      console.warn('[Provision] Custom claims note:', claimErr);
+    }
+
+    const superAdminUser: User = {
+      id: fbUser.uid,
+      username: cleanUsername,
+      email: cleanEmail,
+      name: displayName || 'Super Admin',
+      role: 'SUPER_ADMIN',
+      is_active: true,
+      created_at: new Date().toISOString(),
+    };
+
+    db.users.set(superAdminUser.id, superAdminUser);
+    db.saveToDisk();
+
+    return res.json({
+      success: true,
+      message: 'Super Admin account provisioned successfully. You may now log in.',
+      user: {
+        id: superAdminUser.id,
+        username: superAdminUser.username,
+        email: superAdminUser.email,
+        name: superAdminUser.name,
+        role: superAdminUser.role,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Provision] Error creating Super Admin:', err);
+    return res.status(500).json({ error: err.message || 'Failed to provision Super Admin account.' });
+  }
+});
+
+/**
+ * List all registered user accounts with linked profile information.
+ * Accessible to Administrators and Super Administrators.
+ */
+router.get('/admin/users', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const usersList = Array.from(db.users.values()).map((user) => {
+    const coach = user.coach_id ? db.coaches.get(user.coach_id) : undefined;
+    const student = user.student_id ? db.getPopulatedStudent(user.student_id) : undefined;
+    return {
+      ...user,
+      coach_profile: coach,
+      student_profile: student,
+    };
+  });
+
+  return res.json({ users: usersList });
+});
+
+/**
+ * Create a new user account (Coach, Staff, Student, or Admin).
+ * Uses Firebase Admin SDK to register credentials without storing plaintext passwords.
+ * Accessible to Administrators and Super Administrators.
+ */
+router.post('/admin/users', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { username, email, displayName, role, password, coach_id, student_id } = req.body;
+
+  if (!email || !password || !role || !displayName) {
+    return res.status(400).json({ error: 'Display Name, Email, Role, and Password are required.' });
+  }
+
+  // Validate role is strictly one of the 3 allowed roles
+  if (role !== 'COACH' && role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
+    return res.status(400).json({ error: 'Invalid role. Valid roles are SUPER_ADMIN, ADMIN, and COACH.' });
+  }
+
+  // Privilege Guard: ADMIN can ONLY create COACH accounts
+  if (req.user?.role === 'ADMIN' && role !== 'COACH') {
+    return res.status(403).json({ error: 'Forbidden: Administrators can only create Coach accounts.' });
+  }
+
+  // Privilege Guard: Only Super Admins can create Admin or Super Admin accounts
+  if ((role === 'ADMIN' || role === 'SUPER_ADMIN') && req.user?.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrators can create Administrator or Super Administrator accounts.' });
+  }
+
+  if (typeof password !== 'string' || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+  }
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const cleanUsername = username ? String(username).trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '') : cleanEmail.split('@')[0];
+
+  // Verify unique email and username in database
+  const existingByEmail = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
+  if (existingByEmail) {
+    return res.status(400).json({ error: `An account with email "${cleanEmail}" already exists.` });
+  }
+
+  const existingByUsername = Array.from(db.users.values()).find(
+    (u) => u.username && u.username.toLowerCase() === cleanUsername
+  );
+  if (existingByUsername) {
+    return res.status(400).json({ error: `The username "${cleanUsername}" is already taken.` });
+  }
+
+  try {
+    // 1. Create account in Firebase Authentication
+    let fbUser;
+    try {
+      fbUser = await adminAuth.getUserByEmail(cleanEmail);
+      await adminAuth.updateUser(fbUser.uid, {
+        password,
+        displayName,
+        disabled: false,
+      });
+    } catch {
+      fbUser = await adminAuth.createUser({
+        email: cleanEmail,
+        password,
+        displayName,
+      });
+    }
+
+    // 2. Set Custom User Claims
+    try {
+      await adminAuth.setCustomUserClaims(fbUser.uid, { role });
+    } catch (claimErr) {
+      console.warn('[Admin Create User] Custom claims note:', claimErr);
+    }
+
+    // 3. Create database record
+    const newUser: User = {
+      id: fbUser.uid,
+      username: cleanUsername,
+      email: cleanEmail,
+      name: displayName,
+      role,
+      coach_id: coach_id || undefined,
+      student_id: student_id || undefined,
+      is_active: true,
+      created_at: new Date().toISOString(),
+    };
+
+    db.users.set(newUser.id, newUser);
+    db.saveToDisk();
+
+    return res.status(201).json({
+      success: true,
+      message: `Account for ${displayName} (${role}) created successfully.`,
+      user: newUser,
+    });
+  } catch (err: any) {
+    console.error('[Admin Create User] Error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to create user in Firebase Auth.' });
+  }
+});
+
+/**
+ * Update an existing user account (role, status, username, linked profile, or password).
+ * Accessible to Administrators and Super Administrators.
+ */
+router.patch('/admin/users/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const user = db.users.get(id);
+
+  if (!user) {
+    return res.status(404).json({ error: 'User account not found.' });
+  }
+
+  const { name, role, username, email, is_active, coach_id, student_id, password } = req.body;
+
+  // Role hierarchy guard:
+  // Administrators can only modify Coach accounts and cannot promote anyone to Admin or Super Admin
+  if (req.user?.role === 'ADMIN') {
+    if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Forbidden: Administrators cannot modify Administrator or Super Administrator accounts.' });
+    }
+    if (role && role !== 'COACH') {
+      return res.status(403).json({ error: 'Forbidden: Administrators cannot assign Administrator or Super Administrator privileges.' });
+    }
+  }
+
+  // Only Super Admins can modify Super Admin accounts or promote users to Super Admin
+  if ((user.role === 'SUPER_ADMIN' || role === 'SUPER_ADMIN') && req.user?.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrators can modify Super Admin accounts or grant Super Admin privileges.' });
+  }
+
+  try {
+    // Update Firebase Auth if password or disabled status changed
+    const fbUpdates: any = {};
+    if (typeof is_active === 'boolean') {
+      fbUpdates.disabled = !is_active;
+    }
+    if (name) {
+      fbUpdates.displayName = name;
+    }
+    if (password && typeof password === 'string' && password.length >= 6) {
+      fbUpdates.password = password;
+    }
+
+    if (Object.keys(fbUpdates).length > 0) {
+      try {
+        await adminAuth.updateUser(user.id, fbUpdates);
+      } catch (fbErr) {
+        console.warn('[Admin Patch User] Firebase Auth update note:', fbErr);
+      }
+    }
+
+    if (role && role !== user.role) {
+      try {
+        await adminAuth.setCustomUserClaims(user.id, { role });
+      } catch (claimErr) {
+        console.warn('[Admin Patch User] Custom claims note:', claimErr);
+      }
+    }
+
+    // Update database record
+    if (name !== undefined) user.name = name;
+    if (role !== undefined) user.role = role;
+    if (username !== undefined) user.username = String(username).trim().toLowerCase();
+    if (email !== undefined) user.email = String(email).trim().toLowerCase();
+    if (is_active !== undefined) user.is_active = is_active;
+    if (coach_id !== undefined) user.coach_id = coach_id || undefined;
+    if (student_id !== undefined) user.student_id = student_id || undefined;
+
+    db.users.set(user.id, user);
+    db.saveToDisk();
+
+    return res.json({
+      success: true,
+      message: 'User account updated successfully.',
+      user,
+    });
+  } catch (err: any) {
+    console.error('[Admin Patch User] Error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to update user.' });
+  }
+});
+
+/**
+ * Reset a user's password directly in Firebase Auth.
+ * Accessible to Administrators and Super Administrators.
+ */
+router.post('/admin/users/:id/reset-password', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const user = db.users.get(id);
+
+  if (!user) {
+    return res.status(404).json({ error: 'User account not found.' });
+  }
+
+  // Guard: Administrators cannot reset password for Admin or Super Admin accounts
+  if (req.user?.role === 'ADMIN' && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN')) {
+    return res.status(403).json({ error: 'Forbidden: Administrators cannot reset passwords for Administrator or Super Administrator accounts.' });
+  }
+
+  // Guard: Only Super Admins can reset Super Admin passwords
+  if (user.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrators can reset Super Admin passwords.' });
+  }
+
+  const { newPassword } = req.body;
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  try {
+    await adminAuth.updateUser(user.id, { password: newPassword });
+    return res.json({
+      success: true,
+      message: `Password for ${user.name} (${user.email}) has been reset successfully.`,
+    });
+  } catch (err: any) {
+    console.error('[Admin Reset Password] Error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to reset password in Firebase Auth.' });
+  }
+});
+
+/**
+ * Delete or remove a user account.
+ * Accessible to Administrators and Super Administrators.
+ */
+router.delete('/admin/users/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const currentReqUser = req.user!;
+
+  if (currentReqUser.id === id) {
+    return res.status(400).json({ error: 'You cannot delete your own active administrator account.' });
+  }
+
+  const user = db.users.get(id);
+  if (!user) {
+    return res.status(404).json({ error: 'User account not found.' });
+  }
+
+  // Guard: Administrators cannot delete Admin or Super Admin accounts
+  if (req.user?.role === 'ADMIN' && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN')) {
+    return res.status(403).json({ error: 'Forbidden: Administrators cannot delete Administrator or Super Administrator accounts.' });
+  }
+
+  // Guard: Only Super Admin can delete Super Admin account
+  if (user.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrators can delete Super Admin accounts.' });
+  }
+
+  try {
+    try {
+      await adminAuth.deleteUser(user.id);
+    } catch (fbErr) {
+      console.warn('[Admin Delete User] Firebase Auth delete note:', fbErr);
+    }
+
+    db.users.delete(user.id);
+    db.saveToDisk();
+
+    return res.json({
+      success: true,
+      message: `User ${user.name} (${user.email}) removed successfully.`,
+    });
+  } catch (err: any) {
+    console.error('[Admin Delete User] Error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to delete user.' });
+  }
+});
+
 router.post('/auth/login', (req, res) => {
   const { email, username, password } = req.body;
   const loginInput = String(username || email || '').trim();
@@ -59,27 +570,17 @@ router.post('/auth/login', (req, res) => {
 
   if (!user) {
     return res.status(401).json({
-      error: `Account "${loginInput}" not found. Try coachchuah, coachtan, or admin123.`,
+      error: `Account "${loginInput}" not found. Please verify your username or contact your administrator.`,
     });
   }
 
   if (!user.is_active) {
-    return res.status(403).json({ error: 'This user account is inactive' });
+    return res.status(403).json({ error: 'This user account is inactive or disabled' });
   }
 
   const pwd = String(password).trim();
-  // Password verification: supports password123, admin123, coach123, admin, coach, or secret123
-  const isAcceptedPassword =
-    pwd === 'password123' ||
-    pwd === 'admin123' ||
-    pwd === 'coach123' ||
-    pwd === 'admin' ||
-    pwd === 'coach' ||
-    pwd === 'secret123' ||
-    pwd === 'password';
-
-  if (!isAcceptedPassword) {
-    return res.status(401).json({ error: 'Invalid password. (Use: password123)' });
+  if (pwd.length < 6) {
+    return res.status(401).json({ error: 'Invalid password. Password must be at least 6 characters long.' });
   }
 
   const token = createTokenForUser(user.id);
@@ -386,6 +887,131 @@ router.post('/students', authenticateUser, requireAdmin, (req: AuthenticatedRequ
 
   const populated = db.getPopulatedStudent(stuId);
   return res.status(201).json(populated);
+});
+
+router.post('/students/bulk', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const { students } = req.body;
+  if (!Array.isArray(students) || students.length === 0) {
+    return res.status(400).json({ error: 'Array of students is required.' });
+  }
+
+  const created: any[] = [];
+  const errors: { row: number; full_name?: string; feedback: string }[] = [];
+
+  students.forEach((item: any, idx: number) => {
+    const rowNum = idx + 1;
+    const {
+      full_name,
+      nick_name,
+      school,
+      parent_name,
+      parent_phone,
+      parent_email,
+      parent_relation,
+      schedule_ids,
+      status,
+      student_id,
+    } = item;
+
+    if (!full_name || !String(full_name).trim()) {
+      errors.push({ row: rowNum, full_name, feedback: 'Student full name is required.' });
+      return;
+    }
+
+    const cleanFullName = String(full_name).trim();
+
+    // Check duplicate student name or student ID
+    let finalStudentId = student_id ? String(student_id).trim().toUpperCase() : '';
+    if (!finalStudentId) {
+      const count = db.students.size + created.length + 1;
+      finalStudentId = `STU-0${100 + count}`;
+    }
+
+    const existingWithId = Array.from(db.students.values()).find(
+      (s) => s.student_id === finalStudentId
+    );
+    if (existingWithId) {
+      errors.push({ row: rowNum, full_name: cleanFullName, feedback: `Student ID ${finalStudentId} is already in use.` });
+      return;
+    }
+
+    // Verify schedule_ids if provided
+    const validScheduleIds: string[] = [];
+    const invalidScheduleIds: string[] = [];
+    if (Array.isArray(schedule_ids) && schedule_ids.length > 0) {
+      schedule_ids.forEach((sid: string) => {
+        const cleanSid = String(sid).trim();
+        if (db.schedules.has(cleanSid) || db.classes.has(cleanSid)) {
+          validScheduleIds.push(cleanSid);
+        } else {
+          invalidScheduleIds.push(cleanSid);
+        }
+      });
+    }
+
+    if (invalidScheduleIds.length > 0) {
+      errors.push({
+        row: rowNum,
+        full_name: cleanFullName,
+        feedback: `Schedule ID(s) not found: ${invalidScheduleIds.join(', ')}.`,
+      });
+      return;
+    }
+
+    // Create or link parent
+    let parentId: string | undefined;
+    if (parent_name || parent_phone || parent_email) {
+      parentId = `parent-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      db.parents.set(parentId, {
+        id: parentId,
+        name: String(parent_name || 'Guardian').trim(),
+        phone: String(parent_phone || '').trim(),
+        email: parent_email ? String(parent_email).trim() : undefined,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    const stuId = `stu-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const newStudent: Student = {
+      id: stuId,
+      student_id: finalStudentId,
+      full_name: cleanFullName,
+      nick_name: nick_name ? String(nick_name).trim() : undefined,
+      school: school ? String(school).trim() : undefined,
+      parent_id: parentId,
+      parent_relation: parent_relation ? String(parent_relation).trim() : 'Parent',
+      status: status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+      created_at: new Date().toISOString(),
+    };
+
+    db.students.set(stuId, newStudent);
+
+    // Enroll in schedules
+    validScheduleIds.forEach((schedId) => {
+      const memId = `m-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      db.memberships.set(memId, {
+        id: memId,
+        student_id: stuId,
+        schedule_id: schedId,
+        joined_date: new Date().toISOString().split('T')[0],
+        status: 'ACTIVE',
+      });
+    });
+
+    const populated = db.getPopulatedStudent(stuId);
+    created.push(populated);
+  });
+
+  db.saveToDisk();
+
+  return res.status(200).json({
+    success: true,
+    message: `Imported ${created.length} students successfully.${errors.length > 0 ? ` ${errors.length} rows had errors.` : ''}`,
+    importedCount: created.length,
+    errorCount: errors.length,
+    created,
+    errors,
+  });
 });
 
 router.put('/students/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
@@ -2014,7 +2640,7 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 });
 
 // Dashboard Quick Stats
-router.get('/reports/stats', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
   const currentMonth = '2026-08';
   const today = '2026-08-16';
 
@@ -2039,7 +2665,8 @@ router.get('/reports/stats', authenticateUser, requireAdmin, (req: Authenticated
 
   const todaySessions = Array.from(db.sessions.values())
     .filter((s) => s.session_date === today)
-    .map((s) => db.getPopulatedSession(s.id)!);
+    .map((s) => db.getPopulatedSession(s.id)!)
+    .filter(Boolean);
 
   return res.json({
     month: currentMonth,
@@ -2050,7 +2677,10 @@ router.get('/reports/stats', authenticateUser, requireAdmin, (req: Authenticated
     total_active_students: Array.from(db.students.values()).filter((s) => s.status === 'ACTIVE').length,
     total_active_coaches: Array.from(db.coaches.values()).filter((c) => c.is_active).length,
   });
-});
+};
+
+router.get('/reports/stats', authenticateUser, requireAdmin, getDashboardStatsHandler);
+router.get('/dashboard/stats', authenticateUser, requireAdmin, getDashboardStatsHandler);
 
 // ============================================================
 // 9. AUDIT LOGS & NOTIFICATIONS

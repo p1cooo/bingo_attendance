@@ -22,7 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ workspaceTitle }) => {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="font-black text-slate-900 dark:text-white text-base leading-tight tracking-tight">
-                CHESS ACADEMY
+                BINGO CHESS ACADEMY
               </h1>
               {workspaceTitle && (
                 <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-100 dark:bg-neutral-800 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-neutral-700">

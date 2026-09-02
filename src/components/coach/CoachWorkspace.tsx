@@ -7,17 +7,26 @@ import { CoachAttendanceScreen } from './CoachAttendanceScreen.js';
 import { Header } from '../common/Header.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import { EmptyState } from '../common/EmptyState.js';
+import { CustomDatePicker } from '../common/CustomDatePicker.js';
+import {
+  getTodayDateString,
+  getFixedWeekDays,
+  getWeekStart,
+  shiftDate,
+  formatFullDate,
+} from '../../lib/dateUtils.js';
 import {
   Calendar,
   Clock,
   Users,
   ChevronRight,
+  ChevronLeft,
   CheckCircle2,
   AlertCircle,
   CalendarDays,
   Sparkles,
   MapPin,
-  ChevronLeft,
+  RotateCcw,
 } from 'lucide-react';
 
 export const CoachWorkspace: React.FC = () => {
@@ -25,23 +34,38 @@ export const CoachWorkspace: React.FC = () => {
   const { showToast } = useToast();
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string>('2026-08-16'); // Sunday
+  // Default to dynamic today date
+  const todayStr = getTodayDateString();
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => getWeekStart(todayStr, 'SUN'));
   const [sessions, setSessions] = useState<ClassSession[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Generate 7-day strip around the current selected week (Aug 15 - Aug 21, 2026)
-  const weekDays = [
-    { label: 'Sat', dayNum: '15', dateStr: '2026-08-15', full: 'Saturday, Aug 15' },
-    { label: 'Sun', dayNum: '16', dateStr: '2026-08-16', full: 'Sunday, Aug 16 (Today)' },
-    { label: 'Mon', dayNum: '17', dateStr: '2026-08-17', full: 'Monday, Aug 17' },
-    { label: 'Tue', dayNum: '18', dateStr: '2026-08-18', full: 'Tuesday, Aug 18' },
-    { label: 'Wed', dayNum: '19', dateStr: '2026-08-19', full: 'Wednesday, Aug 19' },
-    { label: 'Thu', dayNum: '20', dateStr: '2026-08-20', full: 'Thursday, Aug 20' },
-    { label: 'Fri', dayNum: '21', dateStr: '2026-08-21', full: 'Friday, Aug 21' },
-    { label: 'Sat', dayNum: '22', dateStr: '2026-08-22', full: 'Saturday, Aug 22' },
-    { label: 'Sun', dayNum: '23', dateStr: '2026-08-23', full: 'Sunday, Aug 23' },
-    { label: 'Sat (5th)', dayNum: '29', dateStr: '2026-08-29', full: 'Saturday, Aug 29 (Off)' },
-  ];
+  // Fixed 7-day strip (Sunday to Saturday) containing the current weekAnchorDate
+  const weekDays = getFixedWeekDays(weekAnchorDate, 'SUN');
+
+  const handleSelectDay = (dateStr: string) => {
+    setSelectedDate(dateStr);
+  };
+
+  const handleShiftDay = (offset: number) => {
+    const newDate = shiftDate(selectedDate, offset);
+    setSelectedDate(newDate);
+    const newWeekStart = getWeekStart(newDate, 'SUN');
+    if (newWeekStart !== weekAnchorDate) {
+      setWeekAnchorDate(newWeekStart);
+    }
+  };
+
+  const handleJumpToday = () => {
+    setSelectedDate(todayStr);
+    setWeekAnchorDate(getWeekStart(todayStr, 'SUN'));
+  };
+
+  const handleCustomDateSelect = (newDate: string) => {
+    setSelectedDate(newDate);
+    setWeekAnchorDate(getWeekStart(newDate, 'SUN'));
+  };
 
   const fetchTodaySessions = async () => {
     try {
@@ -86,6 +110,8 @@ export const CoachWorkspace: React.FC = () => {
   const totalStudents = sessions.reduce((acc, s) => acc + (s.expected_students_count || 0), 0);
   const totalMarked = sessions.reduce((acc, s) => acc + (s.marked_attendance_count || 0), 0);
   const totalPresent = sessions.reduce((acc, s) => acc + (s.present_count || 0), 0);
+
+  const isSelectedToday = selectedDate === getTodayDateString();
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 transition-colors pb-16">
@@ -141,39 +167,81 @@ export const CoachWorkspace: React.FC = () => {
           </div>
         </div>
 
-        {/* Horizontal Week Strip Date Navigation */}
+        {/* Horizontal Dynamic Date Strip & Custom Calendar Navigation */}
         <div className="p-4 rounded-3xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
-              Select Training Date
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <input
-                type="date"
+              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                Training Date:
+              </span>
+              <span className="text-xs font-black text-slate-900 dark:text-white">
+                {formatFullDate(selectedDate)}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => handleShiftDay(-1)}
+                className="px-2.5 py-1.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 text-xs font-black bg-slate-50 dark:bg-neutral-800 text-slate-800 dark:text-slate-200 hover:bg-slate-100 transition cursor-pointer flex items-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
+                title="Previous Day"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Prev</span>
+              </button>
+
+              {!isSelectedToday && (
+                <button
+                  type="button"
+                  onClick={handleJumpToday}
+                  className="px-2.5 py-1.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 text-xs font-black bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 transition cursor-pointer flex items-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                  Today
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => handleShiftDay(1)}
+                className="px-2.5 py-1.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 text-xs font-black bg-slate-50 dark:bg-neutral-800 text-slate-800 dark:text-slate-200 hover:bg-slate-100 transition cursor-pointer flex items-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
+                title="Next Day"
+              >
+                <span className="hidden sm:inline">Next</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              <CustomDatePicker
                 value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="px-2.5 py-1 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
+                onChange={handleCustomDateSelect}
+                compact
               />
             </div>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+          <div className="grid grid-cols-7 gap-2 pt-1">
             {weekDays.map((wd) => {
               const isSelected = selectedDate === wd.dateStr;
               return (
                 <button
                   key={wd.dateStr}
-                  onClick={() => setSelectedDate(wd.dateStr)}
-                  className={`flex flex-col items-center justify-center min-w-[62px] py-2 px-2.5 rounded-2xl transition-all cursor-pointer ${
+                  type="button"
+                  onClick={() => handleSelectDay(wd.dateStr)}
+                  className={`flex flex-col items-center justify-center py-2 px-1 rounded-2xl transition-all cursor-pointer ${
                     isSelected
-                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-[1.03]'
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-[1.02]'
+                      : wd.isToday
+                      ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 border-2 border-indigo-300 dark:border-indigo-700 hover:bg-indigo-100'
                       : 'bg-slate-50 dark:bg-neutral-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-neutral-700 hover:bg-slate-100'
                   }`}
                 >
                   <span className="text-[10px] font-black uppercase tracking-wider opacity-80">
-                    {wd.label}
+                    {wd.dayLabel}
                   </span>
                   <span className="text-base font-black leading-tight">{wd.dayNum}</span>
+                  {wd.isToday && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 dark:bg-indigo-400 mt-0.5" />
+                  )}
                 </button>
               );
             })}

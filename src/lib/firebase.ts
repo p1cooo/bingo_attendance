@@ -1,37 +1,26 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import appletConfig from '../../firebase-applet-config.json';
 
-const env = (import.meta as any).env || {};
+const configData: Record<string, string | undefined> = (appletConfig as Record<string, string | undefined>) || {};
 
-const apiKey = env.VITE_FIREBASE_API_KEY;
-const authDomain = env.VITE_FIREBASE_AUTH_DOMAIN;
-const projectId = env.VITE_FIREBASE_PROJECT_ID;
-const storageBucket = env.VITE_FIREBASE_STORAGE_BUCKET;
-const messagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID;
-const appId = env.VITE_FIREBASE_APP_ID;
+const apiKey = import.meta.env.VITE_FIREBASE_API_KEY || configData.apiKey || '';
+const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || configData.authDomain || '';
+const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || configData.projectId || '';
+const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || configData.storageBucket || '';
+const messagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || configData.messagingSenderId || '';
+const appId = import.meta.env.VITE_FIREBASE_APP_ID || configData.appId || '';
 
-// Validate that required Firebase configuration variables are provided
-const missingVars: string[] = [];
-if (!apiKey) missingVars.push('VITE_FIREBASE_API_KEY');
-if (!authDomain) missingVars.push('VITE_FIREBASE_AUTH_DOMAIN');
-if (!projectId) missingVars.push('VITE_FIREBASE_PROJECT_ID');
-if (!appId) missingVars.push('VITE_FIREBASE_APP_ID');
-
-if (missingVars.length > 0) {
-  console.warn(
-    `[Firebase Config Error] Missing required Firebase environment variables: ${missingVars.join(', ')}. ` +
-    `Please configure them in your environment variables (.env).`
-  );
-}
+export const isFirebaseAuthAvailable = Boolean(apiKey && apiKey.length > 5 && projectId);
 
 const firebaseConfig = {
-  apiKey: apiKey || '',
-  authDomain: authDomain || '',
-  projectId: projectId || '',
+  apiKey: apiKey || 'dummy-api-key-for-init',
+  authDomain: authDomain || `${projectId || 'academy'}.firebaseapp.com`,
+  projectId: projectId || 'academy',
   storageBucket: storageBucket || '',
   messagingSenderId: messagingSenderId || '',
-  appId: appId || '',
+  appId: appId || '1:123456789:web:abcdef',
 };
 
 let app: FirebaseApp;
@@ -42,6 +31,10 @@ if (getApps().length === 0) {
 }
 
 export const clientAuth: Auth = getAuth(app);
-export const clientDb: Firestore = getFirestore(app);
+const databaseId = configData.firestoreDatabaseId && configData.firestoreDatabaseId !== '(default)'
+  ? configData.firestoreDatabaseId
+  : undefined;
+export const clientDb: Firestore = databaseId ? getFirestore(app, databaseId) : getFirestore(app);
 export default app;
+
 

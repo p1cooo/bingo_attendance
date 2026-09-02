@@ -255,7 +255,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-8">
       {/* Top Header & View Mode Switcher */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -319,7 +319,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search class or room..."
+              placeholder="Search class or venue..."
               className="w-full pl-9 pr-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none"
             />
           </div>
@@ -405,7 +405,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
               return (
                 <div
                   key={cls.id}
-                  className="bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] flex flex-col justify-between relative overflow-hidden transition-all hover:translate-y-[-2px]"
+                  className="h-full bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] flex flex-col justify-between relative overflow-hidden transition-all hover:translate-y-[-2px]"
                 >
                   <div
                     className="absolute top-0 left-0 right-0 h-2"
@@ -551,7 +551,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
               return (
                 <div
                   key={day.value}
-                  className="bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] flex flex-col justify-between"
+                  className="h-full bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] flex flex-col justify-between"
                 >
                   <div>
                     {/* Day Header */}
@@ -774,7 +774,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
 
               <div>
                 <label className="block text-[10px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                  Room / Chess Hall
+                  Venue
                 </label>
                 <input
                   type="text"

@@ -2,65 +2,64 @@ import React, { useState } from 'react';
 import { Header } from '../common/Header.js';
 import { DashboardView } from './DashboardView.js';
 import { StudentsView } from './StudentsView.js';
-import { CoachesView } from './CoachesView.js';
+import { StaffAndCoachesView } from './StaffAndCoachesView.js';
 import { ClassesAndSchedulesView } from './ClassesAndSchedulesView.js';
 import { SessionsView } from './SessionsView.js';
-import { AttendanceManagementView } from './AttendanceManagementView.js';
 import { MonthlyReportsView } from './MonthlyReportsView.js';
 import { SettingsView } from './SettingsView.js';
+import { useAuth } from '../../context/AuthContext.js';
 import {
   LayoutDashboard,
   Users,
   UserCheck,
   BookOpen,
   CalendarDays,
-  ClipboardCheck,
   FileBarChart,
   Settings,
 } from 'lucide-react';
 
 export const AdminWorkspace: React.FC = () => {
+  const { isSuperAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
 
   // Deep linking / quick actions between tabs
   const [isAddStudentOpen, setIsAddStudentOpen] = useState(false);
-  const [isAddCoachOpen, setIsAddCoachOpen] = useState(false);
+  const [isAddStaffCoachOpen, setIsAddStaffCoachOpen] = useState(false);
   const [isCreateScheduleOpen, setIsCreateScheduleOpen] = useState(false);
   const [inspectedSessionId, setInspectedSessionId] = useState<string | null>(null);
 
   const handleSelectSessionToInspect = (sessionId: string) => {
     setInspectedSessionId(sessionId);
-    setActiveTab('attendance');
+    setActiveTab('sessions');
   };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'students', label: 'Students', icon: Users },
-    { id: 'coaches', label: 'Coaches', icon: UserCheck },
+    { id: 'staff_coaches', label: 'Staff & Coaches', icon: UserCheck },
     { id: 'classes', label: 'Classes & Schedules', icon: BookOpen },
     { id: 'sessions', label: 'Sessions', icon: CalendarDays },
-    { id: 'attendance', label: 'Attendance', icon: ClipboardCheck },
     { id: 'reports', label: 'Reports', icon: FileBarChart },
     { id: 'settings', label: 'Rules & Logs', icon: Settings },
   ];
 
   return (
     <div className="min-h-screen bg-[#fdfdfd] dark:bg-neutral-950 transition-colors pb-16">
-      <Header workspaceTitle="Admin Management Portal" />
+      <Header workspaceTitle={isSuperAdmin ? 'Super Admin Portal' : 'Admin Management Portal'} />
 
       {/* Bento Navigation Bar */}
       <div className="border-b-2 border-slate-900 dark:border-neutral-800 bg-white dark:bg-neutral-900 sticky top-0 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-1.5 overflow-x-auto py-2.5 no-scrollbar">
             {navItems.map(({ id, label, icon: Icon }) => {
-              const isActive = activeTab === id;
+              const isActive = activeTab === id || (id === 'staff_coaches' && (activeTab === 'coaches' || activeTab === 'users'));
               return (
                 <button
                   key={id}
                   id={`admin-nav-${id}`}
                   onClick={() => {
                     setActiveTab(id);
-                    if (id !== 'attendance') {
+                    if (id !== 'sessions') {
                       setInspectedSessionId(null);
                     }
                   }}
@@ -83,14 +82,20 @@ export const AdminWorkspace: React.FC = () => {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {activeTab === 'dashboard' && (
           <DashboardView
-            onNavigate={(tab) => setActiveTab(tab)}
+            onNavigate={(tab) => {
+              if (tab === 'coaches' || tab === 'users') {
+                setActiveTab('staff_coaches');
+              } else {
+                setActiveTab(tab);
+              }
+            }}
             onOpenAddStudent={() => {
               setActiveTab('students');
               setIsAddStudentOpen(true);
             }}
             onOpenAddCoach={() => {
-              setActiveTab('coaches');
-              setIsAddCoachOpen(true);
+              setActiveTab('staff_coaches');
+              setIsAddStaffCoachOpen(true);
             }}
             onOpenCreateSchedule={() => {
               setActiveTab('classes');
@@ -107,10 +112,10 @@ export const AdminWorkspace: React.FC = () => {
           />
         )}
 
-        {activeTab === 'coaches' && (
-          <CoachesView
-            initialAddModalOpen={isAddCoachOpen}
-            onCloseInitialAddModal={() => setIsAddCoachOpen(false)}
+        {(activeTab === 'staff_coaches' || activeTab === 'coaches' || activeTab === 'users') && (
+          <StaffAndCoachesView
+            initialAddModalOpen={isAddStaffCoachOpen}
+            onCloseInitialAddModal={() => setIsAddStaffCoachOpen(false)}
           />
         )}
 
@@ -122,13 +127,10 @@ export const AdminWorkspace: React.FC = () => {
         )}
 
         {activeTab === 'sessions' && (
-          <SessionsView onInspectSession={handleSelectSessionToInspect} />
-        )}
-
-        {activeTab === 'attendance' && (
-          <AttendanceManagementView
+          <SessionsView
             initialSessionId={inspectedSessionId}
             onClearInitialSession={() => setInspectedSessionId(null)}
+            onInspectSession={handleSelectSessionToInspect}
           />
         )}
 
@@ -139,3 +141,4 @@ export const AdminWorkspace: React.FC = () => {
     </div>
   );
 };
+

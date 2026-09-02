@@ -4,12 +4,19 @@ import { useToast } from '../common/Toast.js';
 import { ClassSession, Coach, AcademyClass, SessionStatus, SessionType } from '../../types.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import { Modal } from '../common/Modal.js';
-import { CoachBadge } from '../common/CoachBadge.js';
+import { CustomDatePicker } from '../common/CustomDatePicker.js';
+import { SessionRollCallView } from './SessionRollCallView.js';
+import {
+  getTodayDateString,
+  getFixedWeekDays,
+  getWeekStart,
+  shiftDate,
+  formatFullDate,
+} from '../../lib/dateUtils.js';
 import {
   Calendar,
   Clock,
   UserCheck,
-  Sparkles,
   Users,
   Search,
   CheckCircle2,
@@ -21,25 +28,51 @@ import {
   MapPin,
   RefreshCw,
   Info,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ShieldCheck,
   AlertTriangle,
+  Layers,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 
 interface SessionsViewProps {
-  onInspectSession: (sessionId: string) => void;
+  initialSessionId?: string | null;
+  onClearInitialSession?: () => void;
+  onInspectSession?: (sessionId: string) => void;
 }
 
-export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) => {
+export const SessionsView: React.FC<SessionsViewProps> = ({
+  initialSessionId,
+  onClearInitialSession,
+  onInspectSession,
+}) => {
   const { showToast } = useToast();
 
+  const [inspectingSessionId, setInspectingSessionId] = useState<string | null>(initialSessionId || null);
   const [sessions, setSessions] = useState<ClassSession[]>([]);
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [classes, setClasses] = useState<AcademyClass[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters
-  const [selectedMonth, setSelectedMonth] = useState('2026-08');
-  const [selectedDate, setSelectedDate] = useState('');
+  // Sync initialSessionId if provided by parent (e.g. from Dashboard click)
+  useEffect(() => {
+    if (initialSessionId) {
+      setInspectingSessionId(initialSessionId);
+    }
+  }, [initialSessionId]);
+
+  // Active Date & View Mode
+  const todayStr = getTodayDateString();
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => getWeekStart(todayStr, 'SUN'));
+  const [viewMode, setViewMode] = useState<'DAY' | 'MONTH'>('DAY');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => todayStr.substring(0, 7));
+
+  // Additional Filters
   const [selectedCoachId, setSelectedCoachId] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
@@ -58,14 +91,20 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
   const loadData = async () => {
     try {
       setLoading(true);
+      const queryParams: any = {
+        coach_id: selectedCoachId,
+        class_id: selectedClassId,
+        status: selectedStatus,
+      };
+
+      if (viewMode === 'DAY') {
+        queryParams.date = selectedDate;
+      } else {
+        queryParams.month = selectedMonth;
+      }
+
       const [sessRes, coachRes, classRes] = await Promise.all([
-        api.getSessions({
-          month: selectedMonth,
-          date: selectedDate,
-          coach_id: selectedCoachId,
-          class_id: selectedClassId,
-          status: selectedStatus,
-        }),
+        api.getSessions(queryParams),
         api.getCoaches(),
         api.getClasses(),
       ]);
@@ -81,12 +120,20 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
 
   useEffect(() => {
     loadData();
-  }, [selectedMonth, selectedDate, selectedCoachId, selectedClassId, selectedStatus]);
+  }, [selectedDate, viewMode, selectedMonth, selectedCoachId, selectedClassId, selectedStatus]);
 
   const handleOpenEdit = (session: ClassSession) => {
     setEditingSession(session);
     setEditForm({
-      session_type: session.session_type || (session.status === 'COACH_CANCELLED' ? 'COACH_CANCELLED' : session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' ? 'PLANNED_OFF_DAY' : session.replacement_coach_id ? 'REPLACEMENT_COACH' : 'NORMAL'),
+      session_type:
+        session.session_type ||
+        (session.status === 'COACH_CANCELLED'
+          ? 'COACH_CANCELLED'
+          : session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY'
+          ? 'PLANNED_OFF_DAY'
+          : session.replacement_coach_id
+          ? 'REPLACEMENT_COACH'
+          : 'NORMAL'),
       replacement_coach_id: session.replacement_coach_id || session.actual_coach_id || '',
       status: session.status,
       cancellation_reason: session.cancellation_reason || '',
@@ -102,9 +149,18 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
       setIsSubmitting(true);
       await api.updateSession(editingSession.id, {
         session_type: editForm.session_type,
-        replacement_coach_id: editForm.session_type === 'REPLACEMENT_COACH' ? editForm.replacement_coach_id : null,
-        actual_coach_id: editForm.session_type === 'REPLACEMENT_COACH' ? editForm.replacement_coach_id : editingSession.default_coach_id || editingSession.scheduled_coach_id,
-        status: editForm.session_type === 'COACH_CANCELLED' ? 'COACH_CANCELLED' : editForm.session_type === 'PLANNED_OFF_DAY' ? 'PLANNED_OFF_DAY' : editForm.status,
+        replacement_coach_id:
+          editForm.session_type === 'REPLACEMENT_COACH' ? editForm.replacement_coach_id : null,
+        actual_coach_id:
+          editForm.session_type === 'REPLACEMENT_COACH'
+            ? editForm.replacement_coach_id
+            : editingSession.default_coach_id || editingSession.scheduled_coach_id,
+        status:
+          editForm.session_type === 'COACH_CANCELLED'
+            ? 'COACH_CANCELLED'
+            : editForm.session_type === 'PLANNED_OFF_DAY'
+            ? 'PLANNED_OFF_DAY'
+            : editForm.status,
         cancellation_reason: editForm.cancellation_reason,
         notes: editForm.notes,
       });
@@ -121,62 +177,282 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
 
   const defaultCoachForEditing = editingSession?.default_coach || editingSession?.scheduled_coach;
 
+  // Fixed 7-day strip (Sunday to Saturday) containing the current weekAnchorDate
+  const dayStrip = getFixedWeekDays(weekAnchorDate, 'SUN');
+
+  const handleSelectDay = (dateStr: string) => {
+    setSelectedDate(dateStr);
+  };
+
+  const handleShiftDay = (offset: number) => {
+    const newDate = shiftDate(selectedDate, offset);
+    setSelectedDate(newDate);
+    // If the shifted day is outside current week strip, shift week anchor too
+    const newWeekStart = getWeekStart(newDate, 'SUN');
+    if (newWeekStart !== weekAnchorDate) {
+      setWeekAnchorDate(newWeekStart);
+    }
+  };
+
+  const handleShiftWeek = (offsetWeeks: number) => {
+    const newWeekAnchor = shiftDate(weekAnchorDate, offsetWeeks * 7);
+    setWeekAnchorDate(newWeekAnchor);
+    setSelectedDate(newWeekAnchor);
+  };
+
+  const handleJumpToday = () => {
+    setSelectedDate(todayStr);
+    setWeekAnchorDate(getWeekStart(todayStr, 'SUN'));
+  };
+
+  const handleCustomDateSelect = (newDate: string) => {
+    setSelectedDate(newDate);
+    setWeekAnchorDate(getWeekStart(newDate, 'SUN'));
+  };
+
+  // If inspecting a specific session roll call, render dedicated inspector
+  if (inspectingSessionId) {
+    return (
+      <SessionRollCallView
+        sessionId={inspectingSessionId}
+        onBack={() => {
+          setInspectingSessionId(null);
+          if (onClearInitialSession) onClearInitialSession();
+          loadData();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Top Banner & Mode Toggle */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-neutral-900 p-6 rounded-3xl border-2 border-slate-900 dark:border-neutral-800 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.05)]">
         <div>
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-              Concrete Occurrences
+              Operations Timetable
             </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-              {sessions.length} sessions in {selectedMonth}
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-bold">
+              {viewMode === 'DAY'
+                ? formatFullDate(selectedDate)
+                : `${selectedMonth} Monthly Overview`}
             </span>
           </div>
           <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight mt-1">
-            Calendar Sessions
+            Academy Sessions
           </h2>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
-            Every date occurrence belongs to the class's <strong className="text-slate-900 dark:text-white font-bold">Default Coach</strong>. If a coach is absent, assign a <strong className="text-indigo-600 dark:text-indigo-400">Replacement Coach</strong> for that single session without modifying the recurring class structure.
+            Monitor concrete daily chess sessions, manage coach substitutions, and track real-time attendance roll calls.
           </p>
         </div>
 
+        {/* View Switcher: Day vs Month */}
         <div className="flex items-center gap-2">
-          <input
-            type="month"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="px-3.5 py-2 text-xs font-black bg-slate-100 dark:bg-neutral-800 border-2 border-slate-900 dark:border-white rounded-xl text-slate-900 dark:text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
-          />
+          <div className="p-1 rounded-2xl bg-slate-100 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 flex items-center gap-1">
+            <button
+              id="view-mode-day-btn"
+              type="button"
+              onClick={() => setViewMode('DAY')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                viewMode === 'DAY'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Day Timetable</span>
+            </button>
+            <button
+              id="view-mode-month-btn"
+              type="button"
+              onClick={() => setViewMode('MONTH')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                viewMode === 'MONTH'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>Month Overview</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Filter Bar */}
-      <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-800 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.05)]">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Specific Date */}
-          <div>
-            <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-              Date Filter
-            </label>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
-            />
+      {/* Date Navigation Strip (When in DAY view) */}
+      {viewMode === 'DAY' && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-800 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.05)] space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {/* Prev Week Button */}
+              <button
+                id="prev-week-btn"
+                type="button"
+                onClick={() => handleShiftWeek(-1)}
+                className="px-2.5 py-2 rounded-xl border-2 border-slate-300 dark:border-neutral-700 hover:border-slate-900 hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-700 dark:text-slate-300 transition text-xs font-bold flex items-center gap-1 cursor-pointer"
+                title="Previous Week"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+                <span className="hidden md:inline">Prev Week</span>
+              </button>
+
+              {/* Prev Day Button */}
+              <button
+                id="prev-day-btn"
+                type="button"
+                onClick={() => handleShiftDay(-1)}
+                className="p-2 rounded-xl border-2 border-slate-900 dark:border-neutral-700 hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-900 dark:text-white transition shadow-2xs cursor-pointer"
+                title="Previous Day"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              {/* Today Button */}
+              <button
+                id="today-btn"
+                type="button"
+                onClick={handleJumpToday}
+                className={`px-3.5 py-2 rounded-xl text-xs font-black border-2 transition-all cursor-pointer ${
+                  selectedDate === todayStr
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-2xs'
+                    : 'bg-white dark:bg-neutral-800 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-neutral-700 hover:bg-slate-50'
+                }`}
+              >
+                Today
+              </button>
+
+              {/* Next Day Button */}
+              <button
+                id="next-day-btn"
+                type="button"
+                onClick={() => handleShiftDay(1)}
+                className="p-2 rounded-xl border-2 border-slate-900 dark:border-neutral-700 hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-900 dark:text-white transition shadow-2xs cursor-pointer"
+                title="Next Day"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+
+              {/* Next Week Button */}
+              <button
+                id="next-week-btn"
+                type="button"
+                onClick={() => handleShiftWeek(1)}
+                className="px-2.5 py-2 rounded-xl border-2 border-slate-300 dark:border-neutral-700 hover:border-slate-900 hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-700 dark:text-slate-300 transition text-xs font-bold flex items-center gap-1 cursor-pointer"
+                title="Next Week"
+              >
+                <span className="hidden md:inline">Next Week</span>
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+
+              <span className="text-sm font-black text-slate-900 dark:text-white ml-2">
+                {formatFullDate(selectedDate)}
+              </span>
+            </div>
+
+            {/* Custom Date Picker Popup */}
+            <div>
+              <CustomDatePicker
+                value={selectedDate}
+                onChange={handleCustomDateSelect}
+                buttonLabel="Select Date"
+              />
+            </div>
           </div>
 
+          {/* 7-Day Fixed Quick Strip (Sun - Sat) */}
+          <div className="grid grid-cols-7 gap-2 pt-2 border-t border-slate-100 dark:border-neutral-800">
+            {dayStrip.map((item) => {
+              const isSelected = item.dateStr === selectedDate;
+              return (
+                <button
+                  key={item.dateStr}
+                  type="button"
+                  onClick={() => handleSelectDay(item.dateStr)}
+                  className={`flex flex-col items-center py-2.5 px-1 rounded-2xl border-2 transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-[1.02]'
+                      : item.isToday
+                      ? 'bg-amber-50/70 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 border-amber-400 dark:border-amber-600'
+                      : 'bg-slate-50 dark:bg-neutral-800/50 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-neutral-700 hover:border-slate-400'
+                  }`}
+                >
+                  <span className="text-[10px] font-black uppercase tracking-wider opacity-80">
+                    {item.dayLabel}
+                  </span>
+                  <span className="text-base font-black leading-none my-0.5">
+                    {item.dayNum}
+                  </span>
+                  {item.isToday && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-0.5" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Month Selector Strip (When in MONTH view) */}
+      {viewMode === 'MONTH' && (
+        <div className="p-4 rounded-3xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-800 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.05)] flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
+              Active Month:
+            </span>
+            <span className="text-sm font-black text-slate-900 dark:text-white">
+              {selectedMonth}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const [y, m] = selectedMonth.split('-').map(Number);
+                const prevDate = new Date(y, m - 2, 1);
+                setSelectedMonth(`${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`);
+              }}
+              className="p-2 rounded-xl border-2 border-slate-900 dark:border-neutral-700 hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-900 dark:text-white transition shadow-xs cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedMonth(getTodayDateString().substring(0, 7))}
+              className="px-3 py-1.5 rounded-xl text-xs font-black border-2 border-slate-900 dark:border-neutral-700 bg-white dark:bg-neutral-800 hover:bg-slate-50 cursor-pointer"
+            >
+              This Month
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const [y, m] = selectedMonth.split('-').map(Number);
+                const nextDate = new Date(y, m, 1);
+                setSelectedMonth(`${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`);
+              }}
+              className="p-2 rounded-xl border-2 border-slate-900 dark:border-neutral-700 hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-900 dark:text-white transition shadow-xs cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Filter Bar */}
+      <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border-2 border-slate-900/10 dark:border-neutral-800 shadow-2xs space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {/* Coach Filter */}
           <div>
             <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-              Coach
+              Filter by Coach
             </label>
             <select
               value={selectedCoachId}
               onChange={(e) => setSelectedCoachId(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
+              className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white focus:outline-none"
             >
               <option value="">All Coaches</option>
               {coaches.map((c) => (
@@ -190,12 +466,12 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
           {/* Class Filter */}
           <div>
             <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-              Class
+              Filter by Class
             </label>
             <select
               value={selectedClassId}
               onChange={(e) => setSelectedClassId(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
+              className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white focus:outline-none"
             >
               <option value="">All Classes</option>
               {classes.map((cls) => (
@@ -209,12 +485,12 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
           {/* Status Filter */}
           <div>
             <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-              Status
+              Filter by Status
             </label>
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
+              className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white focus:outline-none"
             >
               <option value="">All Statuses</option>
               <option value="SCHEDULED">Scheduled</option>
@@ -226,21 +502,164 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
         </div>
       </div>
 
-      {/* Sessions Table */}
+      {/* Main Content Area */}
       {loading ? (
-        <LoadingSkeleton count={5} type="row" />
+        <LoadingSkeleton count={4} />
       ) : sessions.length === 0 ? (
         <div className="p-12 text-center rounded-3xl border-2 border-dashed border-slate-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-xs text-slate-500">
-          No calendar sessions found matching your filters for {selectedMonth}.
+          No calendar sessions scheduled for {viewMode === 'DAY' ? selectedDate : selectedMonth}.
+        </div>
+      ) : viewMode === 'DAY' ? (
+        /* DAY TIMETABLE VIEW (CARD-BASED) */
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {sessions.map((sess) => {
+            const isCancelled =
+              sess.status === 'COACH_CANCELLED' ||
+              sess.status === 'CANCELLED' ||
+              sess.session_type === 'COACH_CANCELLED';
+            const isOffDay =
+              sess.status === 'PLANNED_OFF_DAY' ||
+              sess.status === 'OFF_DAY' ||
+              sess.session_type === 'PLANNED_OFF_DAY';
+            const defaultCoach = sess.default_coach || sess.scheduled_coach;
+            const actualCoach = sess.teaching_coach || sess.actual_coach || defaultCoach;
+            const isReplacement =
+              !isCancelled &&
+              !isOffDay &&
+              (sess.session_type === 'REPLACEMENT_COACH' ||
+                (sess.replacement_coach_id && sess.replacement_coach_id !== defaultCoach?.id));
+
+            const coachColor = actualCoach?.color || defaultCoach?.color || '#3b82f6';
+            const venueName = sess.room_location || sess.class_item?.room_location || 'Main Hall';
+            const presentCount = sess.present_count || 0;
+            const expectedCount = sess.expected_students_count || 0;
+
+            return (
+              <div
+                key={sess.id}
+                className={`rounded-3xl border-2 border-slate-900 dark:border-neutral-700 p-5 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden transition-all bg-white dark:bg-neutral-900 flex flex-col justify-between gap-4 ${
+                  isCancelled
+                    ? 'bg-rose-50/40 dark:bg-rose-950/20'
+                    : isOffDay
+                    ? 'bg-slate-50/50 dark:bg-neutral-900/50 opacity-80'
+                    : ''
+                }`}
+              >
+                {/* Coach Color Left Stripe */}
+                <div
+                  className="absolute left-0 top-0 bottom-0 w-2.5"
+                  style={{ backgroundColor: coachColor }}
+                />
+
+                <div className="pl-3 space-y-3">
+                  {/* Top Bar: Time & Venue Badges */}
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-black bg-slate-100 dark:bg-neutral-800 text-slate-900 dark:text-white border border-slate-300 dark:border-neutral-700">
+                        <Clock className="w-3.5 h-3.5 text-slate-500" />
+                        <span>
+                          {sess.start_time} – {sess.end_time}
+                        </span>
+                      </div>
+
+                      <div className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                        <MapPin className="w-3 h-3 text-slate-400" />
+                        <span>Venue: {venueName}</span>
+                      </div>
+                    </div>
+
+                    {/* Status Badge */}
+                    {isCancelled ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
+                        Cancelled
+                      </span>
+                    ) : isOffDay ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-800 dark:bg-neutral-800 dark:text-slate-300 border border-slate-300 dark:border-neutral-700">
+                        Off-Day
+                      </span>
+                    ) : isReplacement ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700">
+                        Replacement Coach
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                        Scheduled
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Class Name */}
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 dark:text-white">
+                      {sess.class_item?.name || 'Chess Class'}
+                    </h3>
+                  </div>
+
+                  {/* Coach Assignment Info */}
+                  <div className="flex items-center gap-3 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="w-3 h-3 rounded-full border border-slate-900/30"
+                        style={{ backgroundColor: coachColor }}
+                      />
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        Coach {actualCoach?.name || defaultCoach?.name || 'Unassigned'}
+                      </span>
+                      {isReplacement && (
+                        <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">
+                          (Sub for {defaultCoach?.name})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Attendance Stats Pill */}
+                  {!isCancelled && !isOffDay && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-black bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                        <Users className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>{presentCount} / {expectedCount} Checked In</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Card Actions */}
+                <div className="pl-3 pt-3 border-t border-slate-100 dark:border-neutral-800 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEdit(sess)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-neutral-800 border border-slate-300 dark:border-neutral-700 cursor-pointer"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Substitute / Edit</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInspectingSessionId(sess.id);
+                      if (onInspectSession) onInspectSession(sess.id);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.08)] cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Inspect Roll Call</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : (
+        /* MONTH OVERVIEW VIEW (TABLE) */
         <div className="bg-white dark:bg-neutral-900 rounded-3xl border-2 border-slate-900 dark:border-neutral-800 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.05)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 dark:bg-neutral-800/80 border-b-2 border-slate-900 dark:border-neutral-700 text-slate-600 dark:text-slate-400 font-black uppercase text-[10px] tracking-wider">
                 <tr>
                   <th className="py-3.5 px-4">Date & Time</th>
-                  <th className="py-3.5 px-4">Class</th>
+                  <th className="py-3.5 px-4">Class & Venue</th>
                   <th className="py-3.5 px-4">Default Coach</th>
                   <th className="py-3.5 px-4">Teaching Coach</th>
                   <th className="py-3.5 px-4">Session Status</th>
@@ -250,11 +669,21 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-neutral-800">
                 {sessions.map((sess) => {
-                  const isCancelled = sess.status === 'COACH_CANCELLED' || sess.status === 'CANCELLED' || sess.session_type === 'COACH_CANCELLED';
-                  const isOffDay = sess.status === 'PLANNED_OFF_DAY' || sess.status === 'OFF_DAY' || sess.session_type === 'PLANNED_OFF_DAY';
+                  const isCancelled =
+                    sess.status === 'COACH_CANCELLED' ||
+                    sess.status === 'CANCELLED' ||
+                    sess.session_type === 'COACH_CANCELLED';
+                  const isOffDay =
+                    sess.status === 'PLANNED_OFF_DAY' ||
+                    sess.status === 'OFF_DAY' ||
+                    sess.session_type === 'PLANNED_OFF_DAY';
                   const defaultCoach = sess.default_coach || sess.scheduled_coach;
                   const actualCoach = sess.teaching_coach || sess.actual_coach || defaultCoach;
-                  const isReplacement = !isCancelled && !isOffDay && (sess.session_type === 'REPLACEMENT_COACH' || (sess.replacement_coach_id && sess.replacement_coach_id !== defaultCoach?.id));
+                  const isReplacement =
+                    !isCancelled &&
+                    !isOffDay &&
+                    (sess.session_type === 'REPLACEMENT_COACH' ||
+                      (sess.replacement_coach_id && sess.replacement_coach_id !== defaultCoach?.id));
 
                   const presentCount = sess.present_count || 0;
                   const expectedCount = sess.expected_students_count || 0;
@@ -277,17 +706,19 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                         </div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
                           <Clock className="w-3 h-3 text-slate-400" />
-                          <span>{sess.start_time} – {sess.end_time}</span>
+                          <span>
+                            {sess.start_time} – {sess.end_time}
+                          </span>
                         </div>
                       </td>
 
-                      {/* Class */}
+                      {/* Class & Venue */}
                       <td className="py-3.5 px-4">
                         <span className="font-bold text-slate-900 dark:text-white">
                           {sess.class_item?.name || 'Class'}
                         </span>
                         <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                          {sess.class_item?.room_location || 'Chess Hall'}
+                          Venue: {sess.room_location || sess.class_item?.room_location || 'Main Hall'}
                         </div>
                       </td>
 
@@ -298,10 +729,10 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                             className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black text-white shrink-0"
                             style={{ backgroundColor: defaultCoach?.color || '#3b82f6' }}
                           >
-                            {defaultCoach?.name?.charAt(0) || 'C'}
+                            {(defaultCoach?.name || 'C').substring(0, 1)}
                           </div>
-                          <span className="font-bold text-slate-800 dark:text-slate-200">
-                            Coach {defaultCoach?.name || 'Assigned'}
+                          <span className="font-medium text-slate-800 dark:text-slate-200">
+                            Coach {defaultCoach?.name || 'Unassigned'}
                           </span>
                         </div>
                       </td>
@@ -309,94 +740,88 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                       {/* Teaching Coach */}
                       <td className="py-3.5 px-4">
                         {isCancelled ? (
-                          <span className="text-slate-400 italic text-[11px]">No Coach (Cancelled)</span>
+                          <span className="text-rose-600 dark:text-rose-400 font-bold text-xs">
+                            None (Cancelled)
+                          </span>
                         ) : isOffDay ? (
-                          <span className="text-slate-400 italic text-[11px]">Off-Day</span>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <div className="flex items-center gap-1.5">
-                              <div
-                                className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black text-white shrink-0"
-                                style={{ backgroundColor: actualCoach?.color || '#3b82f6' }}
-                              >
-                                {actualCoach?.name?.charAt(0) || 'C'}
-                              </div>
-                              <span className="font-bold text-slate-900 dark:text-white">
+                          <span className="text-slate-400 font-medium text-xs">
+                            None (Off-Day)
+                          </span>
+                        ) : isReplacement ? (
+                          <div className="flex items-center gap-1.5">
+                            <div
+                              className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black text-white shrink-0"
+                              style={{ backgroundColor: actualCoach?.color || '#8b5cf6' }}
+                            >
+                              {(actualCoach?.name || 'R').substring(0, 1)}
+                            </div>
+                            <div>
+                              <span className="font-bold text-indigo-700 dark:text-indigo-300">
                                 Coach {actualCoach?.name}
                               </span>
-                            </div>
-
-                            {isReplacement && (
-                              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                              <span className="block text-[9px] font-black uppercase text-indigo-600">
                                 Replacement
                               </span>
-                            )}
+                            </div>
                           </div>
+                        ) : (
+                          <span className="text-slate-500 dark:text-slate-400 text-xs">
+                            Same as Default
+                          </span>
                         )}
                       </td>
 
                       {/* Status */}
                       <td className="py-3.5 px-4">
-                        {isCancelled ? (
-                          <div>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                              Coach Cancelled
-                            </span>
-                            {sess.cancellation_reason && (
-                              <div className="text-[10px] text-rose-600 dark:text-rose-400 truncate max-w-[140px] mt-0.5">
-                                {sess.cancellation_reason}
-                              </div>
-                            )}
-                          </div>
-                        ) : isOffDay ? (
-                          <div>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black bg-slate-100 text-slate-700 dark:bg-neutral-800 dark:text-slate-300 border border-slate-200 dark:border-neutral-700">
-                              Planned Off-Day
-                            </span>
-                          </div>
-                        ) : (
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black ${
-                              sess.status === 'COMPLETED'
-                                ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                                : 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                            }`}
-                          >
-                            {sess.status === 'COMPLETED' ? 'Completed' : 'Scheduled'}
-                          </span>
-                        )}
+                        <span
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                            isCancelled
+                              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700'
+                              : isOffDay
+                              ? 'bg-slate-200 text-slate-800 dark:bg-neutral-800 dark:text-slate-300'
+                              : sess.status === 'COMPLETED'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700'
+                              : 'bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                          }`}
+                        >
+                          {isCancelled
+                            ? 'Cancelled'
+                            : isOffDay
+                            ? 'Off-Day'
+                            : sess.status === 'COMPLETED'
+                            ? 'Completed'
+                            : 'Scheduled'}
+                        </span>
                       </td>
 
                       {/* Attendance */}
                       <td className="py-3.5 px-4 text-center">
-                        {isOffDay || isCancelled ? (
-                          <span className="text-slate-400 text-[11px]">—</span>
-                        ) : (
-                          <div>
-                            <span className="font-bold text-slate-900 dark:text-white">
-                              {presentCount} / {expectedCount}
-                            </span>
-                            <span className="text-[10px] text-slate-400 block">present</span>
-                          </div>
-                        )}
+                        <span className="font-mono font-bold text-xs">
+                          {presentCount} / {expectedCount}
+                        </span>
                       </td>
 
                       {/* Actions */}
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={() => onInspectSession(sess.id)}
-                            className="p-1.5 rounded-xl border border-slate-200 dark:border-neutral-700 text-slate-600 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors"
-                            title="Take or Inspect Attendance"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                          <button
+                            type="button"
                             onClick={() => handleOpenEdit(sess)}
-                            className="p-1.5 rounded-xl border border-slate-200 dark:border-neutral-700 text-slate-600 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
-                            title="Assign Replacement Coach or Mark Exception"
+                            className="p-1.5 rounded-xl bg-slate-100 dark:bg-neutral-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 cursor-pointer"
+                            title="Edit Session / Substitution"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInspectingSessionId(sess.id);
+                              if (onInspectSession) onInspectSession(sess.id);
+                            }}
+                            className="p-1.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 cursor-pointer"
+                            title="Inspect Attendance"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -409,39 +834,37 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
         </div>
       )}
 
-      {/* Edit Session Exception Modal */}
+      {/* EDIT / SUBSTITUTION MODAL */}
       <Modal
         isOpen={!!editingSession}
-        onClose={() => !isSubmitting && setEditingSession(null)}
-        title={editingSession ? `Session: ${editingSession.session_date} (${editingSession.class_item?.name})` : 'Edit Session'}
+        onClose={() => setEditingSession(null)}
+        title={`Session Substitution & Status: ${editingSession?.session_date}`}
+        size="lg"
       >
         {editingSession && (
           <form onSubmit={handleSaveEdit} className="space-y-4">
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-neutral-800 border-2 border-slate-200 dark:border-neutral-700 text-xs">
-              <div className="text-[10px] font-black uppercase text-slate-500">
-                Class & Default Coach
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-neutral-800 border border-slate-200 dark:border-neutral-700 space-y-1">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white">
+                <span>{editingSession.class_item?.name}</span>
+                <span>{editingSession.start_time} – {editingSession.end_time}</span>
               </div>
-              <div className="font-black text-slate-900 dark:text-white text-sm mt-0.5">
-                {editingSession.class_item?.name}
-              </div>
-              <div className="text-xs text-slate-600 dark:text-slate-300 mt-1">
-                Permanent Default Coach:{' '}
-                <strong className="text-slate-900 dark:text-white font-bold">
-                  Coach {defaultCoachForEditing?.name || 'Assigned'}
-                </strong>
+              <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                <span>Default Coach: <strong>Coach {defaultCoachForEditing?.name}</strong></span>
+                <span>Venue: <strong>{editingSession.room_location || editingSession.class_item?.room_location || 'Main Hall'}</strong></span>
               </div>
             </div>
 
-            {/* Session Type Exception Selector */}
-            <div>
-              <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1.5">
-                Session Type & Coach Assignment
+            {/* Session Type Picker */}
+            <div className="space-y-2">
+              <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300">
+                Session Mode / Substitution Assignment
               </label>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <label
                   className={`flex items-start gap-2.5 p-3 rounded-2xl border-2 cursor-pointer transition-all ${
                     editForm.session_type === 'NORMAL'
-                      ? 'border-slate-900 dark:border-white bg-slate-50 dark:bg-neutral-800'
+                      ? 'border-slate-900 dark:border-white bg-slate-100 dark:bg-neutral-800'
                       : 'border-slate-200 dark:border-neutral-700 hover:bg-slate-50/50'
                   }`}
                 >
@@ -483,7 +906,11 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                       setEditForm({
                         ...editForm,
                         session_type: 'REPLACEMENT_COACH',
-                        replacement_coach_id: editForm.replacement_coach_id || coaches.find((c) => c.id !== defaultCoachForEditing?.id)?.id || coaches[0]?.id || '',
+                        replacement_coach_id:
+                          editForm.replacement_coach_id ||
+                          coaches.find((c) => c.id !== defaultCoachForEditing?.id)?.id ||
+                          coaches[0]?.id ||
+                          '',
                         status: 'SCHEDULED',
                       })
                     }
@@ -546,7 +973,8 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                         ...editForm,
                         session_type: 'PLANNED_OFF_DAY',
                         status: 'PLANNED_OFF_DAY',
-                        cancellation_reason: editForm.cancellation_reason || 'Academy 5th week off-day / holiday',
+                        cancellation_reason:
+                          editForm.cancellation_reason || 'Academy 5th week off-day / holiday',
                       })
                     }
                     className="mt-0.5"
@@ -581,7 +1009,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                   ))}
                 </select>
                 <p className="text-[11px] text-indigo-700 dark:text-indigo-300">
-                  ℹ️ Coach credit and teaching attendance will go to this replacement coach for this session. The Class's default coach remains Coach {defaultCoachForEditing?.name}.
+                  ℹ️ Teaching credit will go to this replacement coach for this occurrence. The class's recurring default coach remains Coach {defaultCoachForEditing?.name}.
                 </p>
               </div>
             )}
@@ -596,7 +1024,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                   type="text"
                   value={editForm.cancellation_reason}
                   onChange={(e) => setEditForm({ ...editForm, cancellation_reason: e.target.value })}
-                  placeholder="e.g. Coach Chuah sick leave, or 5th Saturday off-day"
+                  placeholder="e.g. Coach sick leave, or 5th Saturday off-day"
                   className="w-full px-3.5 py-2 text-xs font-bold bg-slate-50 dark:bg-neutral-800 border-2 border-slate-200 dark:border-neutral-700 rounded-xl text-slate-900 dark:text-white"
                 />
               </div>
@@ -621,14 +1049,14 @@ export const SessionsView: React.FC<SessionsViewProps> = ({ onInspectSession }) 
                 type="button"
                 disabled={isSubmitting}
                 onClick={() => setEditingSession(null)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400"
+                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-5 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black rounded-xl border-2 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
+                className="px-5 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black rounded-xl border-2 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] cursor-pointer"
               >
                 {isSubmitting ? 'Saving...' : 'Save Changes'}
               </button>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../common/Toast.js';
+import { getCurrentMonthString, getTodayDateString } from '../../lib/dateUtils.js';
 import {
   AttendanceRecord,
   Coach,
@@ -53,7 +54,7 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
   const [loading, setLoading] = useState(true);
 
   // Filters (Structural API queries vs In-Memory Instant Filters)
-  const [selectedMonth, setSelectedMonth] = useState('2026-08');
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthString());
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedCoachId, setSelectedCoachId] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('');
@@ -563,7 +564,7 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
                         className="hover:bg-slate-50/60 dark:hover:bg-neutral-800/40 transition-colors"
                       >
                         <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-white">
-                          {rec.session?.session_date || rec.marked_at?.slice(0, 10) || '2026-08'}
+                          {rec.session?.session_date || rec.marked_at?.slice(0, 10) || getTodayDateString()}
                         </td>
                         <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
                           <div>{rec.student?.full_name || 'Student'}</div>

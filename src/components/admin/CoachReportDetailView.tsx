@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../common/Toast.js';
+import { getCurrentMonthString } from '../../lib/dateUtils.js';
 import { Coach, ClassSession, AttendanceRecord, AcademyClass } from '../../types.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import {
@@ -36,7 +37,7 @@ export const CoachReportDetailView: React.FC<CoachReportDetailViewProps> = ({
 }) => {
   const { showToast } = useToast();
 
-  const [selectedMonth, setSelectedMonth] = useState(initialMonth || '2026-08');
+  const [selectedMonth, setSelectedMonth] = useState(initialMonth || getCurrentMonthString());
   const [currentCoachId, setCurrentCoachId] = useState(coachId);
   const [selectedClassType, setSelectedClassType] = useState<'ALL' | 'GROUP' | 'INDIVIDUAL'>('ALL');
   

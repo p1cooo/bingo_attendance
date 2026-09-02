@@ -634,7 +634,7 @@ export const ClassesView: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
-                Room / Board Location
+                Venue
               </label>
               <input
                 type="text"

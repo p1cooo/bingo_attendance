@@ -1,6 +1,6 @@
 {
-  "name": "Academy Management System",
-  "description": "Grandmaster Chess Academy digital roll-call, coach scheduling, 5th-week off-day calculation, and parent notification system.",
+  "name": "Bingo Chess Academy",
+  "description": "Bingo Chess Academy digital roll-call, coach scheduling, 5th-week off-day calculation, and parent notification system.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

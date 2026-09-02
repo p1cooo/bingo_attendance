@@ -145,7 +145,7 @@ export const SettingsView: React.FC = () => {
               </h3>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-              When a month contains a 5th recurring weekday (e.g. 5th Saturday on 29 August 2026), classes are marked as OFF_DAY by default.
+              When a month contains a 5th recurring weekday (e.g. 5th Saturday or 5th Sunday), classes are marked as OFF_DAY by default.
             </p>
           </div>
           <span className="inline-block mt-4 text-[10px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded-lg w-fit">

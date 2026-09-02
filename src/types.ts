@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'COACH' | 'STUDENT';
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'COACH';
 
 export type ClassType = 'GROUP' | 'INDIVIDUAL';
 
@@ -16,6 +16,7 @@ export type NotificationStatus = 'QUEUED' | 'SENT' | 'FAILED' | 'DISABLED';
 
 export interface User {
   id: string;
+  username?: string;
   email: string;
   name: string;
   role: UserRole;
@@ -23,6 +24,7 @@ export interface User {
   student_id?: string;
   is_active: boolean;
   created_at: string;
+  last_login_at?: string;
 }
 
 export interface Coach {

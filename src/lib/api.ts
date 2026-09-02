@@ -11,6 +11,7 @@ import {
   MonthlyReportItem,
   MonthlyStudentReportItem,
 } from '../types.js';
+import { clientAuth } from './firebase.js';
 
 const API_BASE = '/api';
 
@@ -18,15 +19,19 @@ class ApiClient {
   private token: string | null = null;
 
   constructor() {
-    this.token = localStorage.getItem('ams_token');
+    if (typeof window !== 'undefined') {
+      this.token = localStorage.getItem('ams_token');
+    }
   }
 
   setToken(token: string | null) {
     this.token = token;
-    if (token) {
-      localStorage.setItem('ams_token', token);
-    } else {
-      localStorage.removeItem('ams_token');
+    if (typeof window !== 'undefined') {
+      if (token) {
+        localStorage.setItem('ams_token', token);
+      } else {
+        localStorage.removeItem('ams_token');
+      }
     }
   }
 
@@ -34,20 +39,78 @@ class ApiClient {
     return this.token;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}, isRetry = false): Promise<T> {
+    const hasCurrentUser = Boolean(clientAuth?.currentUser);
+    const currentUid = clientAuth?.currentUser ? clientAuth.currentUser.uid : null;
+    let getIdTokenSuccess = false;
+    let tokenExpTime: string | null = null;
+
+    // Proactively get fresh Firebase ID token if clientAuth is signed in
+    let bearerToken = this.token;
+    if (clientAuth?.currentUser) {
+      try {
+        const freshToken = await clientAuth.currentUser.getIdToken();
+        if (freshToken) {
+          bearerToken = freshToken;
+          getIdTokenSuccess = true;
+          if (this.token !== freshToken) {
+            this.setToken(freshToken);
+          }
+          try {
+            const parts = freshToken.split('.');
+            if (parts.length === 3) {
+              const payload = JSON.parse(atob(parts[1]));
+              if (payload.exp) {
+                tokenExpTime = new Date(payload.exp * 1000).toISOString();
+              }
+            }
+          } catch {
+            // Ignore JWT parse error for logging
+          }
+        }
+      } catch {
+        bearerToken = this.token;
+      }
+    } else if (bearerToken && bearerToken.includes('.')) {
+      try {
+        const parts = bearerToken.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1]));
+          if (payload.exp) {
+            tokenExpTime = new Date(payload.exp * 1000).toISOString();
+          }
+        }
+      } catch {
+        // Ignore JWT parse error for logging
+      }
+    }
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),
     };
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+    if (bearerToken) {
+      headers['Authorization'] = `Bearer ${bearerToken}`;
     }
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
     });
+
+    // If 401 Unauthorized occurs and Firebase Auth user is signed in, force refresh and retry once
+    if (response.status === 401 && !isRetry && clientAuth?.currentUser) {
+      try {
+        const forcedToken = await clientAuth.currentUser.getIdToken(true);
+        if (forcedToken) {
+          this.setToken(forcedToken);
+          return this.request<T>(endpoint, options, true);
+        }
+      } catch (refreshErr) {
+        console.warn('[ApiClient] Silent ID token refresh failed:', refreshErr);
+      }
+    }
 
     if (!response.ok) {
       let errorMessage = `HTTP Error ${response.status}`;
@@ -76,6 +139,24 @@ class ApiClient {
   }
 
   // --- Auth ---
+  async resolveAccount(input: string): Promise<{ success: boolean; email: string; name: string; role: string; userId: string }> {
+    return this.request<{ success: boolean; email: string; name: string; role: string; userId: string }>('/auth/resolve-account', {
+      method: 'POST',
+      body: JSON.stringify({ input }),
+    });
+  }
+
+  async syncFirebaseSession(idToken?: string): Promise<{ token: string; user: User; coach_profile?: Coach }> {
+    const res = await this.request<{ token: string; user: User; coach_profile?: Coach }>('/auth/firebase-session', {
+      method: 'POST',
+      body: JSON.stringify({ idToken }),
+    });
+    if (res.token) {
+      this.setToken(res.token);
+    }
+    return res;
+  }
+
   async login(usernameOrEmail: string, password: string): Promise<{ token: string; user: User; coach_profile?: Coach }> {
     const res = await this.request<{ token: string; user: User; coach_profile?: Coach }>('/auth/login', {
       method: 'POST',
@@ -148,6 +229,20 @@ class ApiClient {
     return this.request('/students', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async bulkCreateStudents(students: any[]): Promise<{
+    success: boolean;
+    message: string;
+    importedCount: number;
+    errorCount: number;
+    created: Student[];
+    errors: { row: number; full_name?: string; feedback: string }[];
+  }> {
+    return this.request('/students/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ students }),
     });
   }
 
@@ -561,6 +656,74 @@ class ApiClient {
 
   async getStudentProfile(): Promise<Student> {
     return this.request('/student/me/profile');
+  }
+
+  // --- Super Admin & User Accounts Management ---
+  async getProvisionStatus(): Promise<{ isProvisioned: boolean; defaultUsername: string }> {
+    return this.request<{ isProvisioned: boolean; defaultUsername: string }>('/admin/provision-status');
+  }
+
+  async provisionSuperAdmin(data: {
+    username?: string;
+    email?: string;
+    password: string;
+    displayName?: string;
+  }): Promise<{ success: boolean; message: string; user: User }> {
+    return this.request<{ success: boolean; message: string; user: User }>('/admin/provision-superadmin', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getUsers(): Promise<{ users: (User & { coach_profile?: Coach; student_profile?: Student })[] }> {
+    return this.request<{ users: (User & { coach_profile?: Coach; student_profile?: Student })[] }>('/admin/users');
+  }
+
+  async createUser(data: {
+    displayName: string;
+    username: string;
+    email: string;
+    role: string;
+    password: string;
+    coach_id?: string;
+    student_id?: string;
+  }): Promise<{ success: boolean; message: string; user: User }> {
+    return this.request<{ success: boolean; message: string; user: User }>('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateUser(
+    id: string,
+    data: {
+      name?: string;
+      role?: string;
+      username?: string;
+      email?: string;
+      is_active?: boolean;
+      coach_id?: string;
+      student_id?: string;
+      password?: string;
+    }
+  ): Promise<{ success: boolean; message: string; user: User }> {
+    return this.request<{ success: boolean; message: string; user: User }>(`/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteUser(id: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(`/admin/users/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async resetUserPassword(id: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(`/admin/users/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword }),
+    });
   }
 }
 

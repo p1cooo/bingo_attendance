@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useToast } from '../common/Toast.js';
 import { api } from '../../lib/api.js';
+import { getTodayDateString } from '../../lib/dateUtils.js';
 import { ClassSession, Student, AttendanceRecord, AttendanceStatus } from '../../types.js';
 import {
   ArrowLeft,
@@ -55,7 +56,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [unregFullName, setUnregFullName] = useState('');
   const [unregNickName, setUnregNickName] = useState('');
   const [unregParentPhone, setUnregParentPhone] = useState('');
-  const [unregStatus, setUnregStatus] = useState<AttendanceStatus>('PRESENT');
+  const [unregStatus, setUnregStatus] = useState<'PRESENT' | 'ABSENT'>('PRESENT');
   const [unregNote, setUnregNote] = useState('');
   const [isAddingUnreg, setIsAddingUnreg] = useState(false);
 
@@ -78,14 +79,18 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   // Load all students for replacement search when modal opens
   useEffect(() => {
     if (isReplacementModalOpen && allStudents.length === 0) {
-      api.getStudents({ status: 'ACTIVE' }).then(setAllStudents).catch(console.error);
+      api.getStudents({ status: 'ACTIVE' })
+        .then((stus) => setAllStudents(stus || []))
+        .catch(() => {
+          showToast('Failed to load students list for replacement', 'error');
+        });
     }
   }, [isReplacementModalOpen, allStudents.length]);
 
   const handleMarkStatus = async (
     studentId: string,
     studentName: string,
-    status: AttendanceStatus,
+    status: 'PRESENT' | 'ABSENT',
     attendanceType: 'REGULAR' | 'REPLACEMENT' = 'REGULAR'
   ) => {
     if (!session) return;
@@ -100,10 +105,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
 
       if (status === 'PRESENT') {
         showToast(`✓ ${studentName}: PRESENT (Attendance recorded)`, 'success', 2000);
-      } else if (status === 'ABSENT') {
-        showToast(`⚠ ${studentName}: ABSENT (Attendance recorded)`, 'info', 2000);
       } else {
-        showToast(`✓ ${studentName}: marked ${status}`, 'success', 2000);
+        showToast(`✕ ${studentName}: ABSENT (Attendance recorded)`, 'info', 2000);
       }
 
       // Reload session
@@ -210,7 +213,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   // Combine enrolled students with attendance records
   const attendanceMap = new Map<string, AttendanceRecord>();
   session.attendance_records?.forEach((rec) => {
-    attendanceMap.set(rec.student_id, rec);
+    if (rec && rec.student_id) {
+      attendanceMap.set(rec.student_id, rec);
+    }
   });
 
   interface StudentRollItem {
@@ -224,24 +229,25 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
 
   // Add enrolled students
   session.enrolled_students?.forEach((stu) => {
+    if (!stu) return;
     const record = attendanceMap.get(stu.id);
     rollList.push({
       student: stu,
       record,
       isReplacement: record?.attendance_type === 'REPLACEMENT',
-      isUnregistered: !!stu.is_unregistered || stu.student_id?.startsWith('UNREG-'),
+      isUnregistered: !!stu.is_unregistered || (typeof stu.student_id === 'string' && stu.student_id.startsWith('UNREG-')),
     });
   });
 
   // Add replacement or unregistered students who are in attendance_records but not in enrolled_students
   session.attendance_records?.forEach((rec) => {
-    if (!rollList.some((r) => r.student.id === rec.student_id)) {
+    if (rec && rec.student_id && !rollList.some((r) => r.student.id === rec.student_id)) {
       if (rec.student) {
         rollList.push({
           student: rec.student,
           record: rec,
           isReplacement: rec.attendance_type === 'REPLACEMENT',
-          isUnregistered: !!rec.student.is_unregistered || rec.student.student_id?.startsWith('UNREG-'),
+          isUnregistered: !!rec.student.is_unregistered || (typeof rec.student.student_id === 'string' && rec.student.student_id.startsWith('UNREG-')),
         });
       }
     }
@@ -252,38 +258,38 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase().trim();
     return (
-      item.student.full_name.toLowerCase().includes(q) ||
-      item.student.student_id.toLowerCase().includes(q) ||
-      (item.student.nick_name && item.student.nick_name.toLowerCase().includes(q))
+      (item.student?.full_name && item.student.full_name.toLowerCase().includes(q)) ||
+      (item.student?.student_id && item.student.student_id.toLowerCase().includes(q)) ||
+      (item.student?.nick_name && item.student.nick_name.toLowerCase().includes(q))
     );
   });
 
-  // Stats calculation
+  // Stats calculation: Present + Absent + Unmarked = Expected / Total Students
   const totalStudents = rollList.length;
-  const presentCount = rollList.filter(
-    (item) => item.record?.status === 'PRESENT' || item.record?.status === 'LATE'
-  ).length;
+  const presentCount = rollList.filter((item) => item.record?.status === 'PRESENT').length;
   const absentCount = rollList.filter((item) => item.record?.status === 'ABSENT').length;
-  const unmarkedCount = rollList.filter((item) => !item.record).length;
+  const unmarkedCount = rollList.filter(
+    (item) => !item.record || (item.record.status !== 'PRESENT' && item.record.status !== 'ABSENT')
+  ).length;
 
   const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
   const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
   const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
-  const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (session.actual_coach?.color || '#3b82f6');
+  const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (session.actual_coach?.color || coachProfile?.color || '#3b82f6');
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayDateString();
   const isFutureSession = session.session_date > todayStr && user?.role !== 'ADMIN';
 
   // Filter candidate students for replacement modal
-  const existingStudentIds = new Set(rollList.map((r) => r.student.id));
+  const existingStudentIds = new Set(rollList.map((r) => r.student?.id).filter(Boolean));
   const candidateStudents = allStudents
-    .filter((s) => !existingStudentIds.has(s.id))
+    .filter((s) => s && !existingStudentIds.has(s.id))
     .filter((s) => {
       if (!replacementSearch) return true;
       const q = replacementSearch.toLowerCase().trim();
       return (
-        s.full_name.toLowerCase().includes(q) ||
-        s.student_id.toLowerCase().includes(q) ||
+        (s.full_name && s.full_name.toLowerCase().includes(q)) ||
+        (s.student_id && s.student_id.toLowerCase().includes(q)) ||
         (s.nick_name && s.nick_name.toLowerCase().includes(q))
       );
     });
@@ -352,7 +358,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                 <Clock className="w-3.5 h-3.5" />
                 {session.session_date} ({session.start_time} – {session.end_time})
               </span>
-              {session.room_location && <span>• Room: {session.room_location}</span>}
+              {session.room_location && <span>• Venue: {session.room_location}</span>}
             </div>
           </div>
 
@@ -475,6 +481,15 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           filteredRoll.map(({ student, record, isReplacement, isUnregistered }) => {
             const status = record?.status;
             const isSaving = savingStudentId === student.id;
+            const studentFullName = student?.full_name || 'Student';
+            const studentId = student?.student_id || '';
+            const initials = studentFullName
+              .trim()
+              .split(/\s+/)
+              .map((n) => n[0])
+              .join('')
+              .substring(0, 2)
+              .toUpperCase();
 
             return (
               <div
@@ -485,10 +500,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     ? 'bg-[#ecfdf5] dark:bg-emerald-950/20'
                     : status === 'ABSENT'
                     ? 'bg-[#fff1f2] dark:bg-rose-950/20'
-                    : status === 'LATE'
-                    ? 'bg-[#fffbeb] dark:bg-amber-950/20'
-                    : status === 'EXCUSED'
-                    ? 'bg-[#faf5ff] dark:bg-purple-950/20'
                     : 'bg-white dark:bg-neutral-900'
                 }`}
               >
@@ -496,17 +507,13 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   {/* Student Details */}
                   <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-xs flex items-center justify-center border-2 border-slate-900 flex-shrink-0">
-                      {student.full_name
-                        .split(' ')
-                        .map((n) => n[0])
-                        .join('')
-                        .substring(0, 2)}
+                      {initials}
                     </div>
 
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
-                          {student.full_name}
+                          {studentFullName}
                         </h4>
                         {student.nick_name && (
                           <span className="text-xs font-bold text-slate-500">
@@ -526,7 +533,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2.5 text-xs text-slate-500 font-bold flex-wrap">
-                        <span className="font-mono">{student.student_id}</span>
+                        {studentId && <span className="font-mono">{studentId}</span>}
                         {student.school && <span>• {student.school}</span>}
                         {student.parent?.name && (
                           <span>• Parent: {student.parent.name}</span>
@@ -544,8 +551,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* 4 Direct 1-Tap Attendance Actions */}
-                  <div className="flex items-center gap-1.5 self-end sm:self-center flex-wrap">
+                  {/* 2 Direct 1-Tap Attendance Actions: [ ✓ Present ] [ ✕ Absent ] */}
+                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                     {/* PRESENT */}
                     <button
                       type="button"
@@ -553,15 +560,15 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
-                          student.full_name,
+                          studentFullName,
                           'PRESENT',
                           isReplacement ? 'REPLACEMENT' : 'REGULAR'
                         )
                       }
-                      className={`h-9 px-3.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
+                      className={`h-9 px-4 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
                         status === 'PRESENT'
                           ? 'bg-emerald-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-emerald-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                          : 'bg-white hover:bg-emerald-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer'
                       }`}
                     >
                       <Check className="w-3.5 h-3.5 stroke-[3]" />
@@ -575,61 +582,19 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
-                          student.full_name,
+                          studentFullName,
                           'ABSENT',
                           isReplacement ? 'REPLACEMENT' : 'REGULAR'
                         )
                       }
-                      className={`h-9 px-3 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
+                      className={`h-9 px-4 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
                         status === 'ABSENT'
                           ? 'bg-rose-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-rose-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                          : 'bg-white hover:bg-rose-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer'
                       }`}
                     >
                       <X className="w-3.5 h-3.5 stroke-[3]" />
                       <span>Absent</span>
-                    </button>
-
-                    {/* LATE */}
-                    <button
-                      type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
-                      onClick={() =>
-                        handleMarkStatus(
-                          student.id,
-                          student.full_name,
-                          'LATE',
-                          isReplacement ? 'REPLACEMENT' : 'REGULAR'
-                        )
-                      }
-                      className={`h-9 px-2.5 rounded-xl text-xs font-black transition-all border-2 border-slate-900 ${
-                        status === 'LATE'
-                          ? 'bg-amber-500 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-amber-50 text-slate-900 dark:bg-neutral-800 dark:text-white disabled:opacity-40 disabled:cursor-not-allowed'
-                      }`}
-                    >
-                      <span>Late</span>
-                    </button>
-
-                    {/* EXCUSED */}
-                    <button
-                      type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
-                      onClick={() =>
-                        handleMarkStatus(
-                          student.id,
-                          student.full_name,
-                          'EXCUSED',
-                          isReplacement ? 'REPLACEMENT' : 'REGULAR'
-                        )
-                      }
-                      className={`h-9 px-2.5 rounded-xl text-xs font-black transition-all border-2 border-slate-900 ${
-                        status === 'EXCUSED'
-                          ? 'bg-purple-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
-                          : 'bg-white hover:bg-purple-50 text-slate-900 dark:bg-neutral-800 dark:text-white disabled:opacity-40 disabled:cursor-not-allowed'
-                      }`}
-                    >
-                      <span>Excused</span>
                     </button>
                   </div>
                 </div>
@@ -695,19 +660,21 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
               Initial Roll Call Status
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['PRESENT', 'LATE', 'ABSENT'] as AttendanceStatus[]).map((st) => (
+            <div className="grid grid-cols-2 gap-2">
+              {(['PRESENT', 'ABSENT'] as const).map((st) => (
                 <button
                   key={st}
                   type="button"
                   onClick={() => setUnregStatus(st)}
-                  className={`py-2 px-3 rounded-xl text-xs font-black border-2 border-slate-900 transition-all ${
+                  className={`py-2 px-3 rounded-xl text-xs font-black border-2 border-slate-900 transition-all cursor-pointer ${
                     unregStatus === st
-                      ? 'bg-slate-900 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]'
-                      : 'bg-white text-slate-900 hover:bg-slate-100'
+                      ? st === 'PRESENT'
+                        ? 'bg-emerald-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]'
+                        : 'bg-rose-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]'
+                      : 'bg-white text-slate-900 hover:bg-slate-100 dark:bg-neutral-800 dark:text-white'
                   }`}
                 >
-                  {st}
+                  {st === 'PRESENT' ? '✓ Present' : '✕ Absent'}
                 </button>
               ))}
             </div>

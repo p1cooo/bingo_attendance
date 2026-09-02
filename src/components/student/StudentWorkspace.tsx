@@ -77,7 +77,7 @@ export const StudentWorkspace: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-black text-sm sm:text-base text-slate-900 dark:text-white tracking-tight">
-                  CHESS ACADEMY
+                  BINGO CHESS ACADEMY
                 </span>
                 <span className="bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-300 dark:border-sky-800 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
                   Student Portal
@@ -309,7 +309,7 @@ export const StudentWorkspace: React.FC = () => {
                         return (
                           <tr key={rec.id} className="hover:bg-slate-50/50 dark:hover:bg-neutral-800/40">
                             <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-white">
-                              {rec.session?.session_date || '2026-08'}
+                              {rec.session?.session_date || rec.created_at?.substring(0, 10) || '—'}
                             </td>
                             <td className="py-3 px-4 font-bold text-slate-800 dark:text-slate-200">
                               {rec.session?.class_item?.name || 'Group Training'}

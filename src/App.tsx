@@ -27,12 +27,8 @@ function AppContent() {
     return <LoginView />;
   }
 
-  if (user.role === 'ADMIN') {
+  if (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN') {
     return <AdminWorkspace />;
-  }
-
-  if (user.role === 'STUDENT') {
-    return <StudentWorkspace />;
   }
 
   return <CoachWorkspace />;

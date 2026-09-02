@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../common/Toast.js';
+import { formatFullDate, getTodayDateString, formatMonthName, getCurrentMonthString } from '../../lib/dateUtils.js';
 import { ClassSession } from '../../types.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import { CoachBadge } from '../common/CoachBadge.js';
@@ -43,24 +44,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     total_active_coaches: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadDashboard = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await api.getDashboardStats();
+      setStats({
+        ...data,
+        today_sessions: Array.isArray(data?.today_sessions) ? data.today_sessions.filter(Boolean) : [],
+      });
+    } catch (err: any) {
+      const msg = err.message || 'Failed to load dashboard metrics';
+      setError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadDashboard() {
-      try {
-        setLoading(true);
-        const data = await api.getDashboardStats();
-        setStats(data);
-      } catch (err: any) {
-        showToast(err.message || 'Failed to load dashboard', 'error');
-      } finally {
-        setLoading(false);
-      }
-    }
-
     loadDashboard();
   }, []);
 
-  if (loading || !stats) {
+  if (loading) {
     return (
       <div className="space-y-6">
         <LoadingSkeleton count={3} type="stat" />
@@ -68,6 +76,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
     );
   }
+
+  if (error || !stats) {
+    return (
+      <div className="p-8 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-center space-y-4 shadow-2xs">
+        <div className="text-rose-500 font-semibold text-sm">
+          {error || 'Unable to display dashboard metrics'}
+        </div>
+        <p className="text-xs text-neutral-500 max-w-md mx-auto">
+          We encountered an issue retrieving the latest operations summary. Click below to retry.
+        </p>
+        <button
+          onClick={loadDashboard}
+          className="inline-flex items-center gap-1.5 py-2 px-4 rounded-xl text-xs font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 transition-colors shadow-2xs cursor-pointer"
+        >
+          <span>Retry Loading</span>
+        </button>
+      </div>
+    );
+  }
+
+  const currentMonthLabel = formatMonthName(stats.month || getCurrentMonthString());
+  const todayLabel = formatFullDate(getTodayDateString());
 
   return (
     <div className="space-y-8">
@@ -78,7 +108,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Academy Overview
           </h2>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-            August 2026 Operations & Digital Attendance Summary
+            {currentMonthLabel} Operations & Digital Attendance Summary
           </p>
         </div>
 
@@ -87,7 +117,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             id="quick-add-student-btn"
             onClick={onOpenAddStudent}
-            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-semibold bg-white hover:bg-neutral-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors shadow-2xs"
+            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-semibold bg-white hover:bg-neutral-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors shadow-2xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Student</span>
@@ -95,15 +125,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <button
             id="quick-add-coach-btn"
             onClick={onOpenAddCoach}
-            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-semibold bg-white hover:bg-neutral-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors shadow-2xs"
+            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-semibold bg-white hover:bg-neutral-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors shadow-2xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add Coach</span>
+            <span>Add Staff / Coach</span>
           </button>
           <button
             id="quick-create-schedule-btn"
             onClick={onOpenCreateSchedule}
-            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 transition-colors shadow-2xs"
+            className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 transition-colors shadow-2xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Create Schedule</span>
@@ -167,7 +197,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Today's Classes
             </h3>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Sunday, 16 August 2026 · Live Session Attendance
+              {todayLabel} · Live Session Attendance
             </p>
           </div>
 
