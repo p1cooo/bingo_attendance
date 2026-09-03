@@ -3,6 +3,19 @@ import { db } from './db.js';
 
 let syncPromise: Promise<void> | null = null;
 
+/** Firestore rejects undefined values; optional fields are omitted instead. */
+function removeUndefinedValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(removeUndefinedValues);
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .map(([key, child]) => [key, removeUndefinedValues(child)])
+    );
+  }
+  return value;
+}
+
 /** Load durable Firestore state once per serverless instance before serving requests. */
 export function initializeFirestoreSync(): Promise<void> {
   if (!hasAdminCredentials) return Promise.reject(new Error(firebaseAdminConfigurationError()));
@@ -30,7 +43,7 @@ export function initializeFirestoreSync(): Promise<void> {
 
 export async function syncDocToFirestore(collectionName: string, docId: string, data: unknown) {
   if (!hasAdminCredentials) throw new Error(firebaseAdminConfigurationError());
-  await getFirestoreDb().collection(collectionName).doc(docId).set(data, { merge: true });
+  await getFirestoreDb().collection(collectionName).doc(docId).set(removeUndefinedValues(data), { merge: true });
 }
 
 export async function deleteDocFromFirestore(collectionName: string, docId: string) {

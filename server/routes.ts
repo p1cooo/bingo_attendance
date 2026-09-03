@@ -566,7 +566,7 @@ router.get('/coaches', authenticateUser, (req: AuthenticatedRequest, res: Respon
   return res.json(coachesList);
 });
 
-router.post('/coaches', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/coaches', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { name, email, phone, color, color_name, bio } = req.body;
 
   if (!name || !email) {
@@ -587,37 +587,27 @@ router.post('/coaches', authenticateUser, requireAdmin, (req: AuthenticatedReque
     created_at: new Date().toISOString(),
   };
 
-  db.coaches.set(coachId, newCoach);
-
-  // Link or create user login record
-  const existingUser = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
-  if (existingUser) {
-    existingUser.coach_id = coachId;
-    if (!existingUser.role) {
-      existingUser.role = 'COACH';
+  try {
+    // Link the Firebase-authenticated account created by /admin/users.
+    const existingUser = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
+    if (!existingUser) {
+      return res.status(400).json({ error: 'Create the Firebase account before creating the coach profile.' });
     }
+    existingUser.coach_id = coachId;
+    existingUser.role = 'COACH';
+
+    await Promise.all([
+      syncDocToFirestore('users', existingUser.id, existingUser),
+      syncDocToFirestore('coaches', coachId, newCoach),
+    ]);
     db.users.set(existingUser.id, existingUser);
-    syncDocToFirestore('users', existingUser.id, existingUser).catch(console.error);
-  } else {
-    const userId = `user-${coachId}`;
-    const newUser: User = {
-      id: userId,
-      email: cleanEmail,
-      username: cleanEmail.split('@')[0],
-      name: newCoach.name,
-      role: 'COACH',
-      coach_id: coachId,
-      is_active: true,
-      created_at: new Date().toISOString(),
-    };
-    db.users.set(userId, newUser);
-    syncDocToFirestore('users', userId, newUser).catch(console.error);
+    db.coaches.set(coachId, newCoach);
+    db.saveToDisk();
+    return res.status(201).json(newCoach);
+  } catch (error: any) {
+    console.error('[Create Coach] Firestore write failed:', error?.message || error);
+    return res.status(503).json({ error: 'Coach could not be saved to Firestore. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
-
-  db.saveToDisk();
-  syncDocToFirestore('coaches', coachId, newCoach).catch(console.error);
-
-  return res.status(201).json(newCoach);
 });
 
 router.put('/coaches/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
@@ -652,7 +642,7 @@ router.put('/coaches/:id', authenticateUser, requireAdmin, (req: AuthenticatedRe
   return res.json(coach);
 });
 
-router.delete('/coaches/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.delete('/coaches/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const coach = db.coaches.get(id);
 
@@ -660,15 +650,21 @@ router.delete('/coaches/:id', authenticateUser, requireAdmin, (req: Authenticate
     return res.status(404).json({ error: 'Coach not found' });
   }
 
-  db.coaches.delete(id);
-
-  // Delete associated user
-  const user = Array.from(db.users.values()).find((u) => u.coach_id === id);
-  if (user) {
-    db.users.delete(user.id);
+  try {
+    const user = Array.from(db.users.values()).find((u) => u.coach_id === id);
+    if (user && adminAuth) await adminAuth.deleteUser(user.id);
+    await Promise.all([
+      deleteDocFromFirestore('coaches', id),
+      ...(user ? [deleteDocFromFirestore('users', user.id)] : []),
+    ]);
+    db.coaches.delete(id);
+    if (user) db.users.delete(user.id);
+    db.saveToDisk();
+    return res.json({ success: true, message: `Coach ${coach.name} deleted successfully` });
+  } catch (error: any) {
+    console.error('[Delete Coach] Firestore/Auth delete failed:', error?.message || error);
+    return res.status(503).json({ error: 'Coach could not be deleted completely. Please retry.', code: 'DELETE_FAILED' });
   }
-
-  return res.json({ success: true, message: `Coach ${coach.name} deleted successfully` });
 });
 
 // ============================================================
@@ -749,7 +745,7 @@ router.get('/students/:id', authenticateUser, (req: AuthenticatedRequest, res: R
   });
 });
 
-router.post('/students', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/students', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const {
     student_id,
     full_name,
@@ -810,6 +806,9 @@ router.post('/students', authenticateUser, requireAdmin, (req: AuthenticatedRequ
     created_at: new Date().toISOString(),
   };
 
+  const recordsToPersist: Array<[string, string, unknown]> = [];
+  if (parentId) recordsToPersist.push(['parents', parentId, db.parents.get(parentId)!]);
+  recordsToPersist.push(['students', stuId, newStudent]);
   db.students.set(stuId, newStudent);
 
   // Enroll in schedules if provided
@@ -817,19 +816,27 @@ router.post('/students', authenticateUser, requireAdmin, (req: AuthenticatedRequ
     schedule_ids.forEach((schedId) => {
       if (db.schedules.has(schedId)) {
         const memId = `m-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-        db.memberships.set(memId, {
+        const membership = {
           id: memId,
           student_id: stuId,
           schedule_id: schedId,
           joined_date: new Date().toISOString().split('T')[0],
-          status: 'ACTIVE',
-        });
+          status: 'ACTIVE' as const,
+        };
+        db.memberships.set(memId, membership);
+        recordsToPersist.push(['memberships', memId, membership]);
       }
     });
   }
 
-  const populated = db.getPopulatedStudent(stuId);
-  return res.status(201).json(populated);
+  try {
+    await Promise.all(recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record)));
+    db.saveToDisk();
+    return res.status(201).json(db.getPopulatedStudent(stuId));
+  } catch (error: any) {
+    console.error('[Create Student] Firestore write failed:', error?.message || error);
+    return res.status(503).json({ error: 'Student could not be saved to Firestore. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 });
 
 router.post('/students/bulk', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
@@ -1037,7 +1044,7 @@ router.put('/students/:id', authenticateUser, requireAdmin, (req: AuthenticatedR
   return res.json(populated);
 });
 
-router.delete('/students/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.delete('/students/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const student = db.students.get(id);
 
@@ -1045,15 +1052,25 @@ router.delete('/students/:id', authenticateUser, requireAdmin, (req: Authenticat
     return res.status(404).json({ error: 'Student not found' });
   }
 
-  // Remove memberships
-  Array.from(db.memberships.entries()).forEach(([mId, m]) => {
+  const membershipIds = Array.from(db.memberships.entries()).flatMap(([mId, m]) => {
     if (m.student_id === id) {
-      db.memberships.delete(mId);
+      return [mId];
     }
+    return [];
   });
-
-  db.students.delete(id);
-  return res.json({ success: true, message: `Student ${student.full_name} deleted successfully` });
+  try {
+    await Promise.all([
+      deleteDocFromFirestore('students', id),
+      ...membershipIds.map((membershipId) => deleteDocFromFirestore('memberships', membershipId)),
+    ]);
+    membershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
+    db.students.delete(id);
+    db.saveToDisk();
+    return res.json({ success: true, message: `Student ${student.full_name} deleted successfully` });
+  } catch (error: any) {
+    console.error('[Delete Student] Firestore delete failed:', error?.message || error);
+    return res.status(503).json({ error: 'Student could not be deleted completely. Please retry.', code: 'DELETE_FAILED' });
+  }
 });
 
 // ============================================================
@@ -1105,7 +1122,7 @@ router.get('/classes/:id', authenticateUser, (req: AuthenticatedRequest, res: Re
   return res.json(cls);
 });
 
-router.post('/classes', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/classes', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const {
     name,
     class_type,
@@ -1143,6 +1160,7 @@ router.post('/classes', authenticateUser, requireAdmin, (req: AuthenticatedReque
     created_at: new Date().toISOString(),
   };
 
+  const recordsToPersist: Array<[string, string, unknown]> = [['classes', classId, newClass]];
   db.classes.set(classId, newClass);
 
   // Synchronize recurring schedule
@@ -1160,25 +1178,34 @@ router.post('/classes', authenticateUser, requireAdmin, (req: AuthenticatedReque
     created_at: newClass.created_at,
   };
   db.schedules.set(classId, newSched);
+  recordsToPersist.push(['schedules', classId, newSched]);
 
   // Enroll initial students if provided
   if (Array.isArray(student_ids)) {
     student_ids.forEach((stuId: string) => {
       if (db.students.has(stuId)) {
         const memId = `m-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-        db.memberships.set(memId, {
+        const membership = {
           id: memId,
           student_id: stuId,
           schedule_id: classId,
           joined_date: new Date().toISOString().split('T')[0],
-          status: 'ACTIVE',
-        });
+          status: 'ACTIVE' as const,
+        };
+        db.memberships.set(memId, membership);
+        recordsToPersist.push(['memberships', memId, membership]);
       }
     });
   }
 
-  db.saveToDisk();
-  return res.status(201).json(db.getPopulatedClass(classId));
+  try {
+    await Promise.all(recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record)));
+    db.saveToDisk();
+    return res.status(201).json(db.getPopulatedClass(classId));
+  } catch (error: any) {
+    console.error('[Create Class] Firestore write failed:', error?.message || error);
+    return res.status(503).json({ error: 'Class could not be saved to Firestore. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 });
 
 router.put('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
@@ -1300,7 +1327,7 @@ router.put('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRe
   return res.json(db.getPopulatedClass(id));
 });
 
-router.delete('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.delete('/classes/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.classes.get(id);
 
@@ -1308,17 +1335,27 @@ router.delete('/classes/:id', authenticateUser, requireAdmin, (req: Authenticate
     return res.status(404).json({ error: 'Class not found' });
   }
 
-  // Remove memberships
-  Array.from(db.memberships.entries()).forEach(([mId, m]) => {
+  const membershipIds = Array.from(db.memberships.entries()).flatMap(([mId, m]) => {
     if (m.schedule_id === id) {
-      db.memberships.delete(mId);
+      return [mId];
     }
+    return [];
   });
-
-  db.classes.delete(id);
-  db.schedules.delete(id);
-  db.saveToDisk();
-  return res.json({ success: true, message: `Class ${cls.name} deleted successfully` });
+  try {
+    await Promise.all([
+      deleteDocFromFirestore('classes', id),
+      deleteDocFromFirestore('schedules', id),
+      ...membershipIds.map((membershipId) => deleteDocFromFirestore('memberships', membershipId)),
+    ]);
+    membershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
+    db.classes.delete(id);
+    db.schedules.delete(id);
+    db.saveToDisk();
+    return res.json({ success: true, message: `Class ${cls.name} deleted successfully` });
+  } catch (error: any) {
+    console.error('[Delete Class] Firestore delete failed:', error?.message || error);
+    return res.status(503).json({ error: 'Class could not be deleted completely. Please retry.', code: 'DELETE_FAILED' });
+  }
 });
 
 // ============================================================
