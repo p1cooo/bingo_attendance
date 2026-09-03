@@ -574,6 +574,16 @@ router.post('/coaches', authenticateUser, requireAdmin, async (req: Authenticate
   }
 
   const cleanEmail = String(email).trim().toLowerCase();
+  const existingCoach = Array.from(db.coaches.values()).find(
+    (candidate) => candidate.email.toLowerCase() === cleanEmail
+  );
+  if (existingCoach) {
+    return res.status(409).json({
+      error: 'A coach profile already exists for this email address.',
+      code: 'COACH_PROFILE_EXISTS',
+      coachId: existingCoach.id,
+    });
+  }
   const coachId = `coach-${Date.now()}`;
   const newCoach: Coach = {
     id: coachId,
