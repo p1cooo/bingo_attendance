@@ -834,6 +834,11 @@ router.post('/students', authenticateUser, requireAdmin, async (req: Authenticat
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedStudent(stuId));
   } catch (error: any) {
+    if (parentId) db.parents.delete(parentId);
+    db.students.delete(stuId);
+    recordsToPersist
+      .filter(([collection]) => collection === 'memberships')
+      .forEach(([, membershipId]) => db.memberships.delete(membershipId));
     console.error('[Create Student] Firestore write failed:', error?.message || error);
     return res.status(503).json({ error: 'Student could not be saved to Firestore. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
@@ -1203,6 +1208,11 @@ router.post('/classes', authenticateUser, requireAdmin, async (req: Authenticate
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedClass(classId));
   } catch (error: any) {
+    db.classes.delete(classId);
+    db.schedules.delete(classId);
+    recordsToPersist
+      .filter(([collection]) => collection === 'memberships')
+      .forEach(([, membershipId]) => db.memberships.delete(membershipId));
     console.error('[Create Class] Firestore write failed:', error?.message || error);
     return res.status(503).json({ error: 'Class could not be saved to Firestore. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
