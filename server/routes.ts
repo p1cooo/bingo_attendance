@@ -94,150 +94,23 @@ router.use('/auth/firebase-session', authenticateUser, (req: AuthenticatedReques
   });
 });
 
-router.post('/auth/firebase-session', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const bodyToken = req.body?.idToken;
-  const token = (authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : bodyToken || '').trim();
-
-  if (!token) {
-    return res.status(401).json({ error: 'Firebase ID token is required' });
-  }
-
-  try {
-    let email = '';
-    let decodedUid = '';
-    let decodedRole: string | undefined;
-    let decodedName: string | undefined;
-    let isVerified = false;
-
-    // 1. Verify via Firebase Admin SDK if credentials exist
-    if (hasAdminCredentials && adminAuth && typeof adminAuth.verifyIdToken === 'function') {
-      try {
-        const decoded = await adminAuth.verifyIdToken(token);
-        if (decoded && decoded.uid) {
-          decodedUid = decoded.uid;
-          email = (decoded.email || '').toLowerCase().trim();
-          decodedRole = (decoded.role as string) || undefined;
-          decodedName = decoded.name;
-          isVerified = true;
-        }
-      } catch (adminErr: any) {
-        console.warn('[Auth] Firebase Admin verifyIdToken note:', adminErr?.message || adminErr);
-      }
-    }
-
-    // 2. Stateless JWT Payload Fallback (for Vercel serverless without service account env vars)
-    if (!isVerified && token.includes('.')) {
-      try {
-        const parts = token.split('.');
-        if (parts.length === 3) {
-          const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-          const padded = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, '=');
-          const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'));
-          decodedUid = payload.sub || payload.user_id || `user-${Date.now()}`;
-          email = (payload.email || '').toLowerCase().trim();
-          decodedRole = payload.role;
-          decodedName = payload.name;
-          isVerified = true;
-        }
-      } catch (jwtErr) {
-        console.warn('[Auth] Fallback JWT decode error in firebase-session:', jwtErr);
-      }
-    }
-
-    let user = Array.from(db.users.values()).find(
-      (u) => (decodedUid && u.id === decodedUid) || (email && u.email.toLowerCase() === email)
-    );
-
-    const isSuperAdminEmail =
-      decodedRole === 'SUPER_ADMIN' ||
-      email.includes('weihaosuper') ||
-      email.includes('weihao') ||
-      email === 'twyuan07@gmail.com' ||
-      email === 'whcagallery@gmail.com' ||
-      email === 'weihaosuper@academy.com' ||
-      email.includes('super');
-    const isAdminEmail = email.includes('admin') || email.includes('staff');
-
-    if (user) {
-      if (isSuperAdminEmail || user.username === 'weihaosuper' || user.role === 'SUPER_ADMIN') {
-        user.role = 'SUPER_ADMIN';
-      }
-    } else if (email || decodedUid) {
-      // Check coaches
-      const matchedCoach = Array.from(db.coaches.values()).find(
-        (c) => c.email.toLowerCase() === email
-      );
-
-      if (matchedCoach) {
-        user = {
-          id: decodedUid || `coach-${Date.now()}`,
-          username: matchedCoach.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
-          email: matchedCoach.email,
-          name: matchedCoach.name,
-          role: 'COACH',
-          coach_id: matchedCoach.id,
-          is_active: matchedCoach.is_active,
-          created_at: new Date().toISOString(),
-        };
-        db.users.set(user.id, user);
-        db.saveToDisk();
-      } else {
-        // General user account (e.g. Super Admin or Admin or Coach)
-        user = {
-          id: decodedUid || `user-${Date.now()}`,
-          username: email ? email.split('@')[0] : 'admin',
-          email: email || `${decodedUid}@academy.com`,
-          name: decodedName || (isSuperAdminEmail ? 'Wei Hao (Super Admin)' : (email ? email.split('@')[0] : 'Admin User')),
-          role: isSuperAdminEmail ? 'SUPER_ADMIN' : isAdminEmail ? 'ADMIN' : (decodedRole as any || 'SUPER_ADMIN'),
-          is_active: true,
-          created_at: new Date().toISOString(),
-        };
-        db.users.set(user.id, user);
-        db.saveToDisk();
-      }
-    }
-
-    if (!user) {
-      return res.status(404).json({ error: 'User profile not found for this Firebase account' });
-    }
-
-    if (!user.is_active) {
-      return res.status(403).json({ error: 'This user account is inactive' });
-    }
-
-    const coachProfile = user.coach_id ? db.coaches.get(user.coach_id) : undefined;
-    const studentProfile = user.student_id ? db.getPopulatedStudent(user.student_id) : undefined;
-
-    return res.json({
-      token,
-      user,
-      coach_profile: coachProfile,
-      student_profile: studentProfile,
-    });
-  } catch (error: any) {
-    console.error('[Auth] Firebase session verification failed:', error?.message || error);
-    return res.status(401).json({ error: 'Invalid or expired Firebase ID token' });
-  }
-});
-
 // ============================================================
 // SUPER ADMIN PROVISIONING & ACCOUNT MANAGEMENT ENDPOINTS
 // ============================================================
 
 /**
- * Checks whether the initial Super Admin account (weihaosuper) has been provisioned.
+ * Checks whether an initial Super Admin account has been provisioned.
  */
 router.get('/admin/provision-status', (req, res) => {
   const hasSuperAdmin = Array.from(db.users.values()).some((u) => u.role === 'SUPER_ADMIN');
   return res.json({
     isProvisioned: hasSuperAdmin,
-    defaultUsername: 'weihaosuper',
+    defaultUsername: null,
   });
 });
 
 /**
- * Secure one-time initial provisioning of the Super Admin (weihaosuper).
+ * Secure one-time initial provisioning of a Super Admin.
  * Only accessible if no SUPER_ADMIN exists in the database.
  * Directly creates credentials in Firebase Auth and avoids plaintext storage.
  */
@@ -250,25 +123,29 @@ router.post('/admin/provision-superadmin', async (req, res) => {
   }
 
   const {
-    username = 'weihaosuper',
-    email = 'weihaosuper@academy.com',
     password,
-    displayName = 'Wei Hao (Super Admin)',
+    username,
+    email,
+    displayName,
   } = req.body;
 
-  if (!password || typeof password !== 'string' || password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  if (!username || !email || !displayName || !password || typeof password !== 'string' || password.length < 6) {
+    return res.status(400).json({ error: 'Username, email, display name, and a password of at least 6 characters are required.' });
   }
 
-  const cleanUsername = String(username || 'weihaosuper').trim().toLowerCase();
-  const cleanEmail = String(email || 'weihaosuper@academy.com').trim().toLowerCase();
+  const cleanUsername = String(username).trim().toLowerCase();
+  const cleanEmail = String(email).trim().toLowerCase();
 
-  let fbUserUid = `user-superadmin-${Date.now()}`;
+  if (!hasAdminCredentials || !adminAuth) {
+    return res.status(503).json({ error: 'Firebase Admin is not configured; Super Admin provisioning is unavailable.', code: 'FIREBASE_ADMIN_UNAVAILABLE' });
+  }
+
+  let fbUserUid = '';
   let fbSuccess = false;
 
   // 1. Attempt Firebase Authentication synchronization
   try {
-    if (adminAuth && typeof adminAuth.getUserByEmail === 'function') {
+    if (typeof adminAuth.getUserByEmail === 'function') {
       try {
         const existingFbUser = await adminAuth.getUserByEmail(cleanEmail);
         if (existingFbUser && existingFbUser.uid) {
@@ -306,7 +183,12 @@ router.post('/admin/provision-superadmin', async (req, res) => {
       }
     }
   } catch (authErr: any) {
-    console.warn('[Provision] Firebase Admin Auth sync warning (continuing with database provision):', authErr?.message);
+    console.error('[Provision] Firebase Admin Auth sync failed:', authErr?.message);
+    return res.status(502).json({ error: 'Firebase Authentication could not create the Super Admin account.', code: 'FIREBASE_AUTH_WRITE_FAILED' });
+  }
+
+  if (!fbSuccess || !fbUserUid) {
+    return res.status(502).json({ error: 'Firebase Authentication could not create the Super Admin account.', code: 'FIREBASE_AUTH_WRITE_FAILED' });
   }
 
   // 2. Save user to database and sync to Firestore
@@ -328,13 +210,7 @@ router.post('/admin/provision-superadmin', async (req, res) => {
       console.warn('[Provision] Save to disk note:', diskErr);
     }
 
-    try {
-      syncDocToFirestore('users', superAdminUser.id, superAdminUser).catch((syncErr) => {
-        console.warn('[Provision] Firestore sync background note:', syncErr?.message);
-      });
-    } catch (syncCallErr) {
-      console.warn('[Provision] Firestore sync call note:', syncCallErr);
-    }
+    await syncDocToFirestore('users', superAdminUser.id, superAdminUser);
 
     return res.json({
       success: true,

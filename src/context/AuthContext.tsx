@@ -121,11 +121,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 1. If user entered a username instead of an email, resolve to the registered email address
     if (!input.includes('@')) {
-      // Check known quick mappings
-      if (input.toLowerCase() === 'weihaosuper') {
-        targetEmail = 'twyuan07@gmail.com';
-      }
-
       // Try API resolve account
       try {
         const account = await api.resolveAccount(input);
