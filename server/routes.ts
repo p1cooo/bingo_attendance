@@ -1540,8 +1540,15 @@ router.get('/sessions', authenticateUser, async (req: AuthenticatedRequest, res:
   const { date, month, coach_id, class_id, status, my_classes_only } = req.query;
   const user = req.user!;
 
-  if (month && typeof month === 'string') {
-    const createdSessions = db.ensureSessionsForMonth(month);
+  // Day view requests a date, while month view requests a month. Generate
+  // recurring instances for either path before filtering the response.
+  const requestedMonth = typeof month === 'string'
+    ? month
+    : typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+      ? date.slice(0, 7)
+      : undefined;
+  if (requestedMonth) {
+    const createdSessions = db.ensureSessionsForMonth(requestedMonth);
     if (createdSessions.length > 0) {
       try {
         await Promise.all(createdSessions.map((session) => syncDocToFirestore('sessions', session.id, session)));
