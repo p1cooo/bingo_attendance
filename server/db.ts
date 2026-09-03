@@ -247,8 +247,9 @@ class DatabaseStore {
   }
 
   // Ensure concrete session instances exist for all active recurring classes in a target month
-  ensureSessionsForMonth(targetMonth: string) {
-    if (!targetMonth || !targetMonth.match(/^\d{4}-\d{2}$/)) return;
+  ensureSessionsForMonth(targetMonth: string): ClassSession[] {
+    if (!targetMonth || !targetMonth.match(/^\d{4}-\d{2}$/)) return [];
+    const createdSessions: ClassSession[] = [];
 
     const [yearStr, monthStr] = targetMonth.split('-');
     const year = parseInt(yearStr, 10);
@@ -288,10 +289,12 @@ class DatabaseStore {
               status: 'SCHEDULED',
             };
             this.sessions.set(sessId, newSession);
+            createdSessions.push(newSession);
           }
         }
       }
     });
+    return createdSessions;
   }
 
   // Find user by email, username, or name

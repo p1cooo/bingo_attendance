@@ -1218,7 +1218,7 @@ router.post('/classes', authenticateUser, requireAdmin, async (req: Authenticate
   }
 });
 
-router.put('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.put('/classes/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.classes.get(id);
 
@@ -1291,6 +1291,7 @@ router.put('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRe
   db.schedules.set(sched.id, sched);
 
   // Synchronize students if student_ids array provided
+  const membershipWrites: Promise<unknown>[] = [];
   if (Array.isArray(student_ids)) {
     const currentMemberships = Array.from(db.memberships.values()).filter(
       (m) => m.schedule_id === id || (sched && m.schedule_id === sched.id)
@@ -1302,6 +1303,7 @@ router.put('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRe
     currentMemberships.forEach((m) => {
       if (!targetStudentIds.has(m.student_id)) {
         db.memberships.delete(m.id);
+        membershipWrites.push(deleteDocFromFirestore('memberships', m.id));
       }
     });
 
@@ -1309,18 +1311,21 @@ router.put('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRe
     student_ids.forEach((stuId: string) => {
       if (!currentStudentIds.has(stuId) && db.students.has(stuId)) {
         const memId = `m-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-        db.memberships.set(memId, {
+        const membership = {
           id: memId,
           student_id: stuId,
           schedule_id: id,
           joined_date: new Date().toISOString().split('T')[0],
-          status: 'ACTIVE',
-        });
+          status: 'ACTIVE' as const,
+        };
+        db.memberships.set(memId, membership);
+        membershipWrites.push(syncDocToFirestore('memberships', memId, membership));
       }
     });
   }
 
   // Update future scheduled sessions to match new default coach if not already customized
+  const sessionWrites: Promise<unknown>[] = [];
   Array.from(db.sessions.values()).forEach((sess) => {
     if ((sess.class_id === id || sess.schedule_id === id) && sess.status === 'SCHEDULED') {
       if (cls.default_coach_id && sess.session_type === 'NORMAL') {
@@ -1330,11 +1335,23 @@ router.put('/classes/:id', authenticateUser, requireAdmin, (req: AuthenticatedRe
       }
       if (cls.start_time) sess.start_time = cls.start_time;
       if (cls.end_time) sess.end_time = cls.end_time;
+      sessionWrites.push(syncDocToFirestore('sessions', sess.id, sess));
     }
   });
 
-  db.saveToDisk();
-  return res.json(db.getPopulatedClass(id));
+  try {
+    await Promise.all([
+      syncDocToFirestore('classes', id, cls),
+      syncDocToFirestore('schedules', sched.id, sched),
+      ...membershipWrites,
+      ...sessionWrites,
+    ]);
+    db.saveToDisk();
+    return res.json(db.getPopulatedClass(id));
+  } catch (error: any) {
+    console.error('[Update Class] Firestore write failed:', error?.message || error);
+    return res.status(503).json({ error: 'Class changes could not be saved to Firestore. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 });
 
 router.delete('/classes/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
@@ -1519,12 +1536,20 @@ router.delete('/schedules/:id/students/:studentId', authenticateUser, requireAdm
 // 6. CALENDAR SESSIONS (CONCRETE OCCURRENCES)
 // ============================================================
 
-router.get('/sessions', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
+router.get('/sessions', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const { date, month, coach_id, class_id, status, my_classes_only } = req.query;
   const user = req.user!;
 
   if (month && typeof month === 'string') {
-    db.ensureSessionsForMonth(month);
+    const createdSessions = db.ensureSessionsForMonth(month);
+    if (createdSessions.length > 0) {
+      try {
+        await Promise.all(createdSessions.map((session) => syncDocToFirestore('sessions', session.id, session)));
+      } catch (error: any) {
+        console.error('[Generate Sessions] Firestore write failed:', error?.message || error);
+        return res.status(503).json({ error: 'Sessions could not be generated safely. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+      }
+    }
   }
 
   let list = Array.from(db.sessions.values()).map((s) => db.getPopulatedSession(s.id)!);
