@@ -25,6 +25,7 @@ import {
   BookOpen,
   LayoutGrid,
   List,
+  Download,
 } from 'lucide-react';
 
 const DAYS_OF_WEEK = [
@@ -236,6 +237,23 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
     }
   };
 
+  const handleExportSchedule = async () => {
+    try {
+      const blob = await api.exportClassSchedulesDocx();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'Bingo_Chess_Academy_Schedule.docx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showToast('✓ Word timetable downloaded', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to export Word timetable', 'error');
+    }
+  };
+
   // Group classes by day for the SCHEDULE VIEW
   const scheduleByDay: Record<number, AcademyClass[]> = {
     0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [],
@@ -273,6 +291,13 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={handleExportSchedule}
+            className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-2xl text-xs font-black bg-white dark:bg-neutral-900 hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-900 dark:text-white border-2 border-slate-900 dark:border-neutral-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export Word Timetable</span>
+          </button>
           {/* Unified View Toggle */}
           <div className="flex items-center bg-slate-100 dark:bg-neutral-800 p-1 rounded-2xl border-2 border-slate-900 dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.06)]">
             <button

@@ -1,178 +1,34 @@
-import { Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, HeadingLevel, BorderStyle } from 'docx';
+import { AlignmentType, Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
 import { db } from './db.js';
 
+const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const dayColours = ['22C55E', '06B6D4', '06B6D4', '06B6D4', '06B6D4', '06B6D4', '22C55E'];
+
+function coachColumn(coachId: string): Paragraph[] {
+  const coach = db.coaches.get(coachId);
+  const schedules = Array.from(db.schedules.values()).filter((s) => s.status === 'ACTIVE' && (s.coach_id === coachId || s.default_coach_id === coachId)).sort((a, b) => a.day_of_week - b.day_of_week || a.start_time.localeCompare(b.start_time));
+  const paragraphs: Paragraph[] = [new Paragraph({ children: [new TextRun({ text: coach?.name || 'Unassigned coach', bold: true, size: 28, color: '111827' })], spacing: { after: 150 } })];
+  let currentDay = -1;
+  for (const schedule of schedules) {
+    const cls = db.classes.get(schedule.class_id); if (!cls) continue;
+    if (currentDay !== schedule.day_of_week) { currentDay = schedule.day_of_week; paragraphs.push(new Paragraph({ children: [new TextRun({ text: dayNames[currentDay], bold: true, underline: {}, highlight: dayColours[currentDay] as any, size: 22 })], spacing: { before: 140, after: 20 } })); }
+    const students = Array.from(db.memberships.values()).filter((m) => (m.schedule_id === schedule.id || m.schedule_id === cls.id) && m.status === 'ACTIVE').map((m) => db.students.get(m.student_id)?.full_name).filter(Boolean) as string[];
+    const label = cls.class_type === 'INDIVIDUAL' ? `${schedule.start_time}-${schedule.end_time}: ${cls.name}` : `${schedule.start_time}-${schedule.end_time}: ${cls.name} (${students.length} students)`;
+    paragraphs.push(new Paragraph({ children: [new TextRun({ text: label, bold: true, size: 20 })], spacing: { after: cls.class_type === 'GROUP' ? 15 : 70 } }));
+    if (cls.class_type === 'GROUP') students.forEach((student, index) => paragraphs.push(new Paragraph({ children: [new TextRun({ text: `${index + 1}. ${student}`, size: 19 })], indent: { left: 180 }, spacing: { after: 8 } })));
+  }
+  if (!schedules.length) paragraphs.push(new Paragraph({ children: [new TextRun({ text: 'No active weekly classes', italics: true, color: '64748B', size: 19 })] }));
+  return paragraphs;
+}
+
 export async function generateClassScheduleDocx(): Promise<Buffer> {
-  const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const classesList = Array.from(db.classes.values());
-  const schedulesList = Array.from(db.schedules.values()).filter((s) => s.status === 'ACTIVE');
-
-  // Group schedules by day of week
-  const schedulesByDay = new Map<number, typeof schedulesList>();
-  for (let i = 0; i < 7; i++) {
-    schedulesByDay.set(i, []);
+  const coachIds = Array.from(new Set(Array.from(db.schedules.values()).filter((s) => s.status === 'ACTIVE').map((s) => s.coach_id || s.default_coach_id).filter(Boolean))) as string[];
+  const children: (Paragraph | Table)[] = [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'BINGO CHESS ACADEMY - WEEKLY CLASS TIMETABLE', bold: true, size: 30, color: '0F172A' })], spacing: { after: 100 } }), new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'Recurring schedules and current class rosters', italics: true, size: 19, color: '475569' })], spacing: { after: 240 } })];
+  for (let index = 0; index < coachIds.length; index += 2) {
+    const cells = coachIds.slice(index, index + 2).map((id) => new TableCell({ width: { size: 50, type: WidthType.PERCENTAGE }, children: coachColumn(id) }));
+    if (cells.length === 1) cells.push(new TableCell({ width: { size: 50, type: WidthType.PERCENTAGE }, children: [new Paragraph('')] }));
+    children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [new TableRow({ children: cells })] }));
+    if (index + 2 < coachIds.length) children.push(new Paragraph({ pageBreakBefore: true, text: '' }));
   }
-
-  schedulesList.forEach((s) => {
-    const list = schedulesByDay.get(s.day_of_week) || [];
-    list.push(s);
-    schedulesByDay.set(s.day_of_week, list);
-  });
-
-  const docChildren: any[] = [];
-
-  // Header Title
-  docChildren.push(
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 200 },
-      children: [
-        new TextRun({
-          text: 'CHESS ACADEMY MANAGEMENT SYSTEM',
-          bold: true,
-          size: 32, // 16pt
-          color: '0F172A',
-        }),
-      ],
-    }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 400 },
-      children: [
-        new TextRun({
-          text: 'Official Academy Class Schedule & Student Roster Overview',
-          italics: true,
-          size: 24, // 12pt
-          color: '475569',
-        }),
-      ],
-    })
-  );
-
-  // For each day that has schedules (e.g. Saturday = 6, Sunday = 0, etc.)
-  const dayOrder = [6, 0, 1, 2, 3, 4, 5]; // Weekend first
-
-  for (const dayIdx of dayOrder) {
-    const daySchedules = schedulesByDay.get(dayIdx) || [];
-    if (daySchedules.length === 0) continue;
-
-    const dayName = daysOfWeek[dayIdx].toUpperCase();
-
-    docChildren.push(
-      new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        spacing: { before: 300, after: 150 },
-        children: [
-          new TextRun({
-            text: `DAY: ${dayName}`,
-            bold: true,
-            size: 28,
-            color: '1E293B',
-          }),
-        ],
-      })
-    );
-
-    // Build table rows
-    const tableRows: TableRow[] = [
-      new TableRow({
-        children: [
-          new TableCell({
-            width: { size: 25, type: WidthType.PERCENTAGE },
-            children: [new Paragraph({ children: [new TextRun({ text: 'Time / Room', bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            width: { size: 30, type: WidthType.PERCENTAGE },
-            children: [new Paragraph({ children: [new TextRun({ text: 'Class & Type', bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            width: { size: 20, type: WidthType.PERCENTAGE },
-            children: [new Paragraph({ children: [new TextRun({ text: 'Assigned Coach', bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            width: { size: 25, type: WidthType.PERCENTAGE },
-            children: [new Paragraph({ children: [new TextRun({ text: 'Enrolled Students', bold: true, size: 20 })] })],
-          }),
-        ],
-      }),
-    ];
-
-    daySchedules.sort((a, b) => a.start_time.localeCompare(b.start_time));
-
-    daySchedules.forEach((s) => {
-      const cls = db.classes.get(s.class_id);
-      const coach = db.coaches.get(s.coach_id);
-      const enrolled = Array.from(db.memberships.values())
-        .filter((m) => (m.schedule_id === s.id || m.schedule_id === s.class_id) && m.status === 'ACTIVE')
-        .map((m) => db.students.get(m.student_id)?.full_name)
-        .filter(Boolean);
-
-      const enrolledText = enrolled.length > 0 ? enrolled.join(', ') : 'None currently enrolled';
-
-      tableRows.push(
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: `${s.start_time} – ${s.end_time}`, bold: true, size: 18 }),
-                    new TextRun({ text: s.room_location ? `\nRoom: ${s.room_location}` : '', size: 16, color: '64748B' }),
-                  ],
-                }),
-              ],
-            }),
-            new TableCell({
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: cls?.name || 'Class', bold: true, size: 18 }),
-                    new TextRun({ text: `\n(${cls?.class_type || 'GROUP'})`, size: 16, color: '64748B' }),
-                  ],
-                }),
-              ],
-            }),
-            new TableCell({
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: coach ? `Coach ${coach.name}` : 'Unassigned', size: 18 }),
-                  ],
-                }),
-              ],
-            }),
-            new TableCell({
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: `${enrolled.length} Student(s):\n`, bold: true, size: 16 }),
-                    new TextRun({ text: enrolledText, size: 16, color: '334155' }),
-                  ],
-                }),
-              ],
-            }),
-          ],
-        })
-      );
-    });
-
-    const table = new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: tableRows,
-    });
-
-    docChildren.push(table);
-  }
-
-  const doc = new Document({
-    sections: [
-      {
-        properties: {},
-        children: docChildren,
-      },
-    ],
-  });
-
-  const { Packer } = await import('docx');
-  const buffer = await Packer.toBuffer(doc);
-  return buffer;
+  return Packer.toBuffer(new Document({ sections: [{ properties: { page: { size: { width: 16840, height: 11900 }, margin: { top: 600, right: 600, bottom: 600, left: 600 } } }, children }] }));
 }

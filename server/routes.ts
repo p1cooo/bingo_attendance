@@ -27,6 +27,7 @@ import { dispatchTelegramNotification } from './telegram.js';
 import { notificationService } from './notifications/NotificationService.js';
 import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
+import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
 import { syncDocToFirestore, deleteDocFromFirestore } from './firestoreSync.js';
 
 export const router = Router();
@@ -2315,6 +2316,24 @@ router.get('/export/class-schedules-docx', authenticateUser, requireAdmin, async
   }
 });
 
+router.get('/export/accountant-report.xlsx', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const month = typeof req.query.month === 'string' ? req.query.month : new Date().toISOString().slice(0, 7);
+    const buffer = await generateAccountantWorkbook(month, typeof req.query.coach_id === 'string' ? req.query.coach_id : undefined, typeof req.query.class_id === 'string' ? req.query.class_id : undefined);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Academy_Accountant_${month}.xlsx"`);
+    return res.send(buffer);
+  } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to generate Excel report' }); }
+});
+
+router.get('/export/accountant-report.pdf', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const month = typeof req.query.month === 'string' ? req.query.month : new Date().toISOString().slice(0, 7);
+    const buffer = await generateAccountantPdf(month, typeof req.query.coach_id === 'string' ? req.query.coach_id : undefined, typeof req.query.class_id === 'string' ? req.query.class_id : undefined);
+    res.setHeader('Content-Type', 'application/pdf'); res.setHeader('Content-Disposition', `attachment; filename="Academy_Accountant_${month}.pdf"`); return res.send(buffer);
+  } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to generate PDF report' }); }
+});
+
 router.get('/export/attendance-csv', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
   const { month, coach_id, class_id } = req.query;
   const targetMonth = month ? String(month) : '2026-08';
@@ -2499,7 +2518,7 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 
   // 1. Get all sessions for this month
   let monthSessions = Array.from(db.sessions.values()).filter((s) =>
-    s.session_date.startsWith(targetMonth)
+    s.session_date.startsWith(targetMonth) && Array.from(db.attendance.values()).some((a) => a.session_id === s.id)
   );
 
   if (coach_id) {

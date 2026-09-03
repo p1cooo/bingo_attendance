@@ -572,6 +572,16 @@ class ApiClient {
     return response.blob();
   }
 
+  async exportAccountantReport(format: 'xlsx' | 'pdf', params: { month: string; coach_id?: string; class_id?: string }): Promise<Blob> {
+    const headers: Record<string, string> = this.token ? { Authorization: `Bearer ${this.token}` } : {};
+    const query = new URLSearchParams({ month: params.month });
+    if (params.coach_id) query.append('coach_id', params.coach_id);
+    if (params.class_id) query.append('class_id', params.class_id);
+    const response = await fetch(`${API_BASE}/export/accountant-report.${format}?${query.toString()}`, { headers });
+    if (!response.ok) throw new Error(`Failed to export accountant ${format.toUpperCase()} (HTTP ${response.status})`);
+    return response.blob();
+  }
+
   async getAttendanceRecords(params?: {
     session_id?: string;
     month?: string;

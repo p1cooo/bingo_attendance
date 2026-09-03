@@ -163,6 +163,27 @@ export const MonthlyReportsView: React.FC = () => {
     showToast('✓ Report exported as CSV', 'success');
   };
 
+  const handleExportAccountantReport = async (format: 'xlsx' | 'pdf') => {
+    try {
+      const blob = await api.exportAccountantReport(format, {
+        month,
+        coach_id: coachId || undefined,
+        class_id: classId || undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Academy_Accountant_${month}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showToast(`✓ Accountant ${format.toUpperCase()} downloaded`, 'success');
+    } catch (err: any) {
+      showToast(err.message || `Failed to export accountant ${format.toUpperCase()}`, 'error');
+    }
+  };
+
   const handleOpenAuditModal = async () => {
     try {
       setLoadingAudit(true);
@@ -217,6 +238,20 @@ export const MonthlyReportsView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            onClick={() => handleExportAccountantReport('xlsx')}
+            className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-2xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white border-2 border-emerald-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Accountant Excel</span>
+          </button>
+          <button
+            onClick={() => handleExportAccountantReport('pdf')}
+            className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-2xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white border-2 border-rose-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Accountant PDF</span>
+          </button>
           <button
             onClick={handleOpenAuditModal}
             className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-2xl text-xs font-black bg-white dark:bg-neutral-900 hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-900 dark:text-white border-2 border-slate-900 dark:border-neutral-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
