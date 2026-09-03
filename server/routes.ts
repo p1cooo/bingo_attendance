@@ -7,7 +7,6 @@ import {
   requireSuperAdmin,
   requireCoachOrAdmin,
   verifySessionAttendanceAccess,
-  createTokenForUser,
   AuthenticatedRequest,
 } from './auth.js';
 import {
@@ -85,6 +84,16 @@ router.post('/auth/resolve-account', (req, res) => {
  * Synchronizes client-side Firebase Auth sessions with backend database profile.
  * Verifies the Firebase ID Token using Firebase Admin SDK.
  */
+router.use('/auth/firebase-session', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
+  const user = req.user!;
+  return res.json({
+    token: req.headers.authorization!.slice(7).trim(),
+    user,
+    coach_profile: user.coach_id ? db.coaches.get(user.coach_id) : undefined,
+    student_profile: user.student_id ? db.getPopulatedStudent(user.student_id) : undefined,
+  });
+});
+
 router.post('/auth/firebase-session', async (req, res) => {
   const authHeader = req.headers.authorization;
   const bodyToken = req.body?.idToken;
@@ -402,35 +411,26 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req: Authenti
 
     let finalUid = existingUser ? existingUser.id : `user-${Date.now()}`;
 
-    // 1. If admin credentials available, try Firebase Auth sync
-    if (hasAdminCredentials && adminAuth) {
+    // Firebase Auth creation is authoritative. Never report a local-only
+    // account as created when the Admin SDK operation failed.
+    if (!hasAdminCredentials || !adminAuth) {
+      return res.status(503).json({ error: 'Firebase Admin is not configured.', code: 'FIREBASE_ADMIN_UNAVAILABLE' });
+    }
+    let fbUser;
+    try {
       try {
-        let fbUser;
-        try {
-          fbUser = await adminAuth.getUserByEmail(cleanEmail);
-          finalUid = fbUser.uid;
-          await adminAuth.updateUser(fbUser.uid, {
-            password,
-            displayName,
-            disabled: false,
-          });
-        } catch {
-          fbUser = await adminAuth.createUser({
-            email: cleanEmail,
-            password,
-            displayName,
-          });
-          finalUid = fbUser.uid;
-        }
-
-        try {
-          await adminAuth.setCustomUserClaims(finalUid, { role });
-        } catch (claimErr) {
-          console.warn('[Admin Create User] Custom claims note:', claimErr);
-        }
-      } catch (fbErr: any) {
-        console.warn('[Admin Create User] Firebase Admin note (proceeding):', fbErr?.message || fbErr);
+        fbUser = await adminAuth.getUserByEmail(cleanEmail);
+        finalUid = fbUser.uid;
+        await adminAuth.updateUser(fbUser.uid, { password, displayName, disabled: false });
+      } catch (lookupError: any) {
+        if (lookupError?.code !== 'auth/user-not-found') throw lookupError;
+        fbUser = await adminAuth.createUser({ email: cleanEmail, password, displayName });
+        finalUid = fbUser.uid;
       }
+      await adminAuth.setCustomUserClaims(finalUid, { role });
+    } catch (fbErr: any) {
+      console.error('[Admin Create User] Firebase Auth operation failed:', fbErr?.code || fbErr?.message);
+      return res.status(502).json({ error: 'Firebase Authentication could not create this account. No Academy profile was saved.', code: 'FIREBASE_AUTH_WRITE_FAILED' });
     }
 
     // 2. Create or update database record
@@ -446,9 +446,9 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req: Authenti
       created_at: existingUser ? existingUser.created_at : new Date().toISOString(),
     };
 
+    await syncDocToFirestore('users', newUser.id, newUser);
     db.users.set(newUser.id, newUser);
     db.saveToDisk();
-    syncDocToFirestore('users', newUser.id, newUser).catch(console.error);
 
     return res.status(201).json({
       success: true,
@@ -637,39 +637,10 @@ router.delete('/admin/users/:id', authenticateUser, requireAdmin, async (req: Au
   }
 });
 
-router.post('/auth/login', (req, res) => {
-  const { email, username, password } = req.body;
-  const loginInput = String(username || email || '').trim();
-
-  if (!loginInput || !password) {
-    return res.status(400).json({ error: 'Username or email and password are required' });
-  }
-
-  // Find user by email, username, or coach alias
-  const user = db.findUserByLogin(loginInput);
-
-  if (!user) {
-    return res.status(401).json({
-      error: `Account "${loginInput}" not found. Please verify your username or contact your administrator.`,
-    });
-  }
-
-  if (!user.is_active) {
-    return res.status(403).json({ error: 'This user account is inactive or disabled' });
-  }
-
-  const pwd = String(password).trim();
-  if (pwd.length < 6) {
-    return res.status(401).json({ error: 'Invalid password. Password must be at least 6 characters long.' });
-  }
-
-  const token = createTokenForUser(user.id);
-  const coachProfile = user.coach_id ? db.coaches.get(user.coach_id) : undefined;
-
-  return res.json({
-    token,
-    user,
-    coach_profile: coachProfile,
+router.post('/auth/login', (_req, res) => {
+  return res.status(410).json({
+    error: 'Password login is handled by Firebase Authentication. Please update the client configuration if this endpoint is being called.',
+    code: 'FIREBASE_AUTH_REQUIRED',
   });
 });
 

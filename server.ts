@@ -8,8 +8,14 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Initialize Firestore synchronization
-  await initializeFirestoreSync();
+  // Production state is Firestore. Local development can still start without
+  // credentials, but it must never be deployed as a substitute for Firestore.
+  try {
+    await initializeFirestoreSync();
+  } catch (error: any) {
+    if (process.env.NODE_ENV === 'production') throw error;
+    console.warn('[Server] Firebase Admin is unavailable; running local-only development mode.');
+  }
 
   // JSON Body parsing
   app.use(express.json());

@@ -6,10 +6,9 @@ import {
   onIdTokenChanged,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { User, Coach } from '../types.js';
 import { api } from '../lib/api.js';
-import { clientAuth, clientDb, isFirebaseAuthAvailable } from '../lib/firebase.js';
+import { clientAuth, isFirebaseAuthAvailable } from '../lib/firebase.js';
 
 interface AuthContextType {
   user: User | null;
@@ -80,15 +79,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     setUser(res.user);
                     setCoachProfile(res.coach_profile || null);
                   }
-                } catch (syncErr) {
-                  // Fallback: read directly from Firestore client doc
-                  try {
-                    const userDoc = await getDoc(doc(clientDb, 'users', fbUser.uid));
-                    if (userDoc.exists() && isMounted) {
-                      setUser(userDoc.data() as User);
-                    }
-                  } catch (docErr) {
-                    console.warn('[AuthContext] Firestore direct read note:', docErr);
+                } catch {
+                  // Roles are assigned and verified by the API only. A client
+                  // Firestore read must never become an authorization fallback.
+                  api.setToken(null);
+                  if (isMounted) {
+                    setUser(null);
+                    setCoachProfile(null);
                   }
                 }
               } catch (err) {
@@ -139,22 +136,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('[Auth] Account resolution fallback for input:', input);
       }
 
-      // Try Firestore client lookup by username
-      if (targetEmail === input && isFirebaseAuthAvailable) {
-        try {
-          const q = query(collection(clientDb, 'users'), where('username', '==', input.toLowerCase()));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            const foundData = snap.docs[0].data();
-            if (foundData.email) {
-              targetEmail = foundData.email;
-            }
-          }
-        } catch (queryErr) {
-          console.warn('[Auth] Firestore username query fallback note:', queryErr);
-        }
-      }
-
       // If still unresolved without an @, default to standard email domain
       if (!targetEmail.includes('@')) {
         targetEmail = `${input.toLowerCase()}@academy.com`;
@@ -179,37 +160,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(session.user);
             setCoachProfile(session.coach_profile || null);
             firebaseSuccess = true;
-          } catch (syncErr) {
-            console.warn('[Auth] Backend sync failed, loading from Firestore client directly:', syncErr);
-            // Direct Firestore fallback
-            try {
-              const userSnap = await getDoc(doc(clientDb, 'users', userCredential.user.uid));
-              if (userSnap.exists()) {
-                const userData = userSnap.data() as User;
-                setUser(userData);
-                firebaseSuccess = true;
-              } else {
-                const isSuperAdmin =
-                  targetEmail.includes('weihao') ||
-                  targetEmail === 'twyuan07@gmail.com' ||
-                  targetEmail === 'whcagallery@gmail.com' ||
-                  targetEmail === 'weihaosuper@academy.com' ||
-                  targetEmail.includes('super');
-                const directUser: User = {
-                  id: userCredential.user.uid,
-                  username: input.includes('@') ? input.split('@')[0] : input,
-                  email: targetEmail,
-                  name: userCredential.user.displayName || (isSuperAdmin ? 'Wei Hao (Super Admin)' : 'Academy User'),
-                  role: isSuperAdmin ? 'SUPER_ADMIN' : 'COACH',
-                  is_active: true,
-                  created_at: new Date().toISOString(),
-                };
-                setUser(directUser);
-                firebaseSuccess = true;
-              }
-            } catch (fsErr) {
-              console.error('[Auth] Firestore client profile load error:', fsErr);
-            }
+          } catch {
+            api.setToken(null);
+            firebaseAuthErrorMsg = 'Your sign-in succeeded, but the Academy profile could not be verified. Please contact an administrator.';
           }
         }
       } catch (fbAuthError: any) {
@@ -222,6 +175,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           firebaseAuthErrorMsg = 'Too many failed attempts. Access temporarily locked. Please try again in a few minutes.';
         } else if (fbAuthError.code === 'auth/network-request-failed') {
           firebaseAuthErrorMsg = 'Network error connecting to Firebase. Please check your internet connection.';
+        } else if (!firebaseAuthErrorMsg) {
+          firebaseAuthErrorMsg = 'Your sign-in could not be verified by the Academy system. Please try again later.';
         }
       }
     }
@@ -290,4 +245,3 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
-

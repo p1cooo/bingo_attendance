@@ -1,6 +1,7 @@
 import express from 'express';
 import { router as apiRouter } from '../server/routes.js';
 import { initializeFirestoreSync } from '../server/firestoreSync.js';
+import { hasAdminCredentials, firebaseAdminConfigurationError } from '../server/firebaseAdmin.js';
 
 const app = express();
 
@@ -18,16 +19,26 @@ app.use((req, res, next) => {
   next();
 });
 
-// Safe background Firestore sync initialization in serverless environment
-let firestoreSyncInitialized = false;
-app.use((req, res, next) => {
-  if (!firestoreSyncInitialized) {
-    firestoreSyncInitialized = true;
-    initializeFirestoreSync().catch((err) => {
-      console.warn('[Serverless] Non-blocking Firestore sync note:', err?.message || err);
+// A request must not run against an empty cold-start map.  Vercel's /tmp is
+// ephemeral, so Admin credentials and Firestore are mandatory in production.
+app.use(async (req, res, next) => {
+  if (req.path === '/health' || req.path === '/api/health') return next();
+  if (!hasAdminCredentials) {
+    return res.status(503).json({
+      error: 'Server configuration error: Firebase Admin is unavailable.',
+      code: 'FIREBASE_ADMIN_UNAVAILABLE',
     });
   }
-  next();
+  try {
+    await initializeFirestoreSync();
+    next();
+  } catch (error: any) {
+    console.error('[Serverless] Firestore sync failed:', error?.message || error);
+    return res.status(503).json({
+      error: 'Database is temporarily unavailable. Please retry.',
+      code: 'FIRESTORE_UNAVAILABLE',
+    });
+  }
 });
 
 // Normalize req.url so Express router always matches under various Vercel rewrite modes
@@ -42,7 +53,13 @@ app.use((req, res, next) => {
 
 // Health check endpoints
 app.get(['/health', '/api/health'], (req, res) => {
-  res.json({ status: 'ok', serverless: true, time: new Date().toISOString() });
+  res.status(hasAdminCredentials ? 200 : 503).json({
+    status: hasAdminCredentials ? 'ok' : 'misconfigured',
+    serverless: true,
+    firebaseAdminConfigured: hasAdminCredentials,
+    ...(hasAdminCredentials ? {} : { code: 'FIREBASE_ADMIN_UNAVAILABLE' }),
+    time: new Date().toISOString(),
+  });
 });
 
 // Mount API router on both '/api' (for standard path) and '/' (when Vercel rewrites strip /api)
@@ -70,6 +87,5 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 export default app;
-
 
 
