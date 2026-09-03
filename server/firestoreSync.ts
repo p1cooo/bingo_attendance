@@ -16,7 +16,11 @@ function removeUndefinedValues(value: unknown): unknown {
   return value;
 }
 
-/** Load durable Firestore state once per serverless instance before serving requests. */
+/**
+ * Refresh durable Firestore state before every request. Vercel keeps several
+ * warm instances alive; caching this map indefinitely made each instance show
+ * a different, stale view after another instance performed a write.
+ */
 export function initializeFirestoreSync(): Promise<void> {
   if (!hasAdminCredentials) return Promise.reject(new Error(firebaseAdminConfigurationError()));
   if (syncPromise) return syncPromise;
@@ -37,7 +41,7 @@ export function initializeFirestoreSync(): Promise<void> {
     db.auditLogs = auditSnapshot.docs.map((document) => document.data() as never);
     db.notificationLogs = notificationSnapshot.docs.map((document) => document.data() as never);
     console.log(`[Firestore] Sync complete: ${db.users.size} users, ${db.coaches.size} coaches, ${db.students.size} students.`);
-  })().catch((error) => { syncPromise = null; throw error; });
+  })().finally(() => { syncPromise = null; });
   return syncPromise;
 }
 
