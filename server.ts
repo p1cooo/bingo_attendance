@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { router as apiRouter } from './server/routes.js';
-import { initializeFirestoreSync } from './server/firestoreSync.js';
+import { initializeFirestoreSync, mergeConfirmedWeiYuanDuplicateCoaches } from './server/firestoreSync.js';
 
 async function startServer() {
   const app = express();
@@ -12,6 +12,9 @@ async function startServer() {
   // credentials, but it must never be deployed as a substitute for Firestore.
   try {
     await initializeFirestoreSync();
+    if (process.env.NODE_ENV === 'production') {
+      await mergeConfirmedWeiYuanDuplicateCoaches();
+    }
   } catch (error: any) {
     if (process.env.NODE_ENV === 'production') throw error;
     console.warn('[Server] Firebase Admin is unavailable; running local-only development mode.');
