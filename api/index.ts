@@ -1,6 +1,6 @@
 import express from 'express';
 import { router as apiRouter } from '../server/routes.js';
-import { initializeFirestoreSync } from '../server/firestoreSync.js';
+import { initializeFirestoreSync, mergeConfirmedWeiYuanDuplicateCoaches } from '../server/firestoreSync.js';
 import { hasAdminCredentials, firebaseAdminConfigurationError } from '../server/firebaseAdmin.js';
 
 const app = express();
@@ -31,6 +31,7 @@ app.use(async (req, res, next) => {
   }
   try {
     await initializeFirestoreSync();
+    await mergeConfirmedWeiYuanDuplicateCoaches();
     next();
   } catch (error: any) {
     console.error('[Serverless] Firestore sync failed:', error?.message || error);
