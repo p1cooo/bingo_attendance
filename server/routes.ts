@@ -1740,6 +1740,16 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, async (req: Authenti
     session.actual_coach_id = defaultCoachId;
   } else if (session_type === 'REPLACEMENT_COACH' || (replacement_coach_id && session_type !== 'NORMAL')) {
     const replCoach = replacement_coach_id || actual_coach_id;
+    if (!replCoach || replCoach === defaultCoachId) {
+      return res.status(400).json({
+        error: 'Select a different active coach as the replacement. The default coach cannot replace themselves.',
+        code: 'INVALID_REPLACEMENT_COACH',
+      });
+    }
+    const replacementCoach = db.coaches.get(replCoach);
+    if (!replacementCoach || !replacementCoach.is_active) {
+      return res.status(400).json({ error: 'Select an active Academy coach as the replacement.', code: 'INVALID_REPLACEMENT_COACH' });
+    }
     session.actual_coach_id = replCoach;
     session.replacement_coach_id = replCoach;
     session.session_type = 'REPLACEMENT_COACH';
