@@ -1589,9 +1589,12 @@ router.get('/sessions', authenticateUser, async (req: AuthenticatedRequest, res:
     );
   }
 
-  if (coach_id && user.role === 'ADMIN') {
+  if (coach_id && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN')) {
     list = list.filter(
-      (s) => s.scheduled_coach_id === coach_id || s.actual_coach_id === coach_id
+      (s) =>
+        s.scheduled_coach_id === coach_id ||
+        s.actual_coach_id === coach_id ||
+        s.replacement_coach_id === coach_id
     );
   }
 
@@ -2205,7 +2208,12 @@ router.get('/attendance', authenticateUser, (req: AuthenticatedRequest, res: Res
       if (!sess) return false;
       if (month && !sess.session_date.startsWith(String(month))) return false;
       if (date && sess.session_date !== String(date)) return false;
-      if (coach_id && sess.actual_coach_id !== coach_id && sess.scheduled_coach_id !== coach_id) return false;
+      if (
+        coach_id &&
+        sess.actual_coach_id !== coach_id &&
+        sess.scheduled_coach_id !== coach_id &&
+        sess.replacement_coach_id !== coach_id
+      ) return false;
       if (class_id && sess.class_id !== class_id) return false;
       return true;
     });

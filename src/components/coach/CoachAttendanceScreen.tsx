@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext.js';
 import { useToast } from '../common/Toast.js';
 import { api } from '../../lib/api.js';
 import { getTodayDateString } from '../../lib/dateUtils.js';
+import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import { ClassSession, Student, AttendanceRecord, AttendanceStatus } from '../../types.js';
 import {
   ArrowLeft,
@@ -152,6 +153,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     e.preventDefault();
     if (!unregFullName.trim()) {
       showToast('Student full name is required', 'error');
+      return;
+    }
+    if (unregParentPhone && !isValidMalaysianMobile(unregParentPhone)) {
+      showToast('Enter a valid Malaysian mobile number, e.g. 012-345 6789', 'error');
       return;
     }
 
@@ -648,9 +653,11 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               </label>
               <input
                 type="text"
+                inputMode="tel"
+                maxLength={12}
                 value={unregParentPhone}
-                onChange={(e) => setUnregParentPhone(e.target.value)}
-                placeholder="e.g. +65 9123 4567"
+                onChange={(e) => setUnregParentPhone(formatMalaysianPhone(e.target.value))}
+                placeholder="e.g. 012-345 6789"
                 className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white"
               />
             </div>
@@ -790,4 +797,3 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     </div>
   );
 };
-

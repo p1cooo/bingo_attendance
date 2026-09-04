@@ -193,7 +193,10 @@ class DatabaseStore {
     const enrolledMemberships = Array.from(this.memberships.values()).filter(
       (m) => (m.schedule_id === session.schedule_id || m.schedule_id === session.class_id) && m.status === 'ACTIVE'
     );
-    const expectedStudentsCount = enrolledMemberships.length;
+    // A replacement or trial student is enrolled for this occurrence only.
+    // Include each such attendee in the session denominator so roll call never
+    // shows impossible totals such as 5/4 after additional students are added.
+    const enrolledStudentIds = new Set(enrolledMemberships.map((membership) => membership.student_id));
     const enrolledStudents = enrolledMemberships
       .map((m) => this.getPopulatedStudent(m.student_id))
       .filter((s): s is Student => !!s);
@@ -202,6 +205,12 @@ class DatabaseStore {
     const records = Array.from(this.attendance.values()).filter(
       (a) => a.session_id === id
     );
+    const additionalSessionStudentIds = new Set(
+      records
+        .map((record) => record.student_id)
+        .filter((studentId) => !enrolledStudentIds.has(studentId))
+    );
+    const expectedStudentsCount = enrolledMemberships.length + additionalSessionStudentIds.size;
 
     const populatedRecords = records.map((r) => {
       const student = this.getPopulatedStudent(r.student_id);

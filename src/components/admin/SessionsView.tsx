@@ -1002,9 +1002,9 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                   onChange={(e) => setEditForm({ ...editForm, replacement_coach_id: e.target.value })}
                   className="w-full px-3.5 py-2.5 text-xs font-bold bg-white dark:bg-neutral-800 border-2 border-indigo-300 dark:border-indigo-700 rounded-xl text-slate-900 dark:text-white"
                 >
-                  {coaches.map((c) => (
+                  {coaches.filter((c) => c.id !== defaultCoachForEditing?.id).map((c) => (
                     <option key={c.id} value={c.id}>
-                      Coach {c.name} {c.id === defaultCoachForEditing?.id ? '(Default Coach)' : ''}
+                      Coach {c.name.replace(/^Coach\s+/i, '')}
                     </option>
                   ))}
                 </select>
