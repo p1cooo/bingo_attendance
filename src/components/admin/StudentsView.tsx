@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
+import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import { useToast } from '../common/Toast.js';
 import { Student, Coach, AcademyClass, ClassSchedule } from '../../types.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
@@ -161,6 +162,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     e.preventDefault();
     if (!formData.full_name.trim()) {
       showToast('Student name is required', 'error');
+      return;
+    }
+    if (formData.parent_phone && !isValidMalaysianMobile(formData.parent_phone)) {
+      showToast('Enter a valid Malaysian mobile number, e.g. 012-345 6789', 'error');
       return;
     }
 
@@ -553,9 +558,11 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                 </label>
                 <input
                   type="text"
+                  inputMode="tel"
+                  maxLength={12}
                   value={formData.parent_phone}
-                  onChange={(e) => setFormData({ ...formData, parent_phone: e.target.value })}
-                  placeholder="+60 12-345 6789"
+                  onChange={(e) => setFormData({ ...formData, parent_phone: formatMalaysianPhone(e.target.value) })}
+                  placeholder="e.g. 012-345 6789"
                   className="w-full px-3 py-1.5 text-xs rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none"
                 />
               </div>

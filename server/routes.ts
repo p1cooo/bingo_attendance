@@ -1697,13 +1697,16 @@ router.post('/sessions', authenticateUser, requireAdmin, (req: AuthenticatedRequ
   return res.status(201).json(db.getPopulatedSession(sessId));
 });
 
-router.put('/sessions/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.put('/sessions/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
-  const session = db.sessions.get(id);
+  const existingSession = db.sessions.get(id);
 
-  if (!session) {
+  if (!existingSession) {
     return res.status(404).json({ error: 'Session not found' });
   }
+  // Vercel instances load sessions from Firestore, so a replacement assignment
+  // must be durable before the substitute coach can reliably see it.
+  const session: ClassSession = { ...existingSession };
 
   const {
     session_type,
@@ -1760,9 +1763,15 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, (req: AuthenticatedR
   if (start_time !== undefined) session.start_time = start_time;
   if (end_time !== undefined) session.end_time = end_time;
 
-  db.sessions.set(id, session);
-  db.saveToDisk();
-  return res.json(db.getPopulatedSession(id));
+  try {
+    await syncDocToFirestore('sessions', id, session);
+    db.sessions.set(id, session);
+    db.saveToDisk();
+    return res.json(db.getPopulatedSession(id));
+  } catch (error: any) {
+    console.error('[Update Session] Firestore write failed:', error?.message || error);
+    return res.status(503).json({ error: 'Session update could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 });
 
 // ============================================================

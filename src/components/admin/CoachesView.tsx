@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
+import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import { useToast } from '../common/Toast.js';
 import { Coach } from '../../types.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
@@ -100,6 +101,10 @@ export const CoachesView: React.FC<CoachesViewProps> = ({
     e.preventDefault();
     if (!formData.name.trim() || !formData.email.trim()) {
       showToast('Name and email are required', 'error');
+      return;
+    }
+    if (formData.phone && !isValidMalaysianMobile(formData.phone)) {
+      showToast('Enter a valid Malaysian mobile number, e.g. 012-345 6789', 'error');
       return;
     }
 
@@ -290,9 +295,11 @@ export const CoachesView: React.FC<CoachesViewProps> = ({
               </label>
               <input
                 type="text"
+                inputMode="tel"
+                maxLength={12}
                 value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                placeholder="+60 12-345 6789"
+                onChange={(e) => setFormData({ ...formData, phone: formatMalaysianPhone(e.target.value) })}
+                placeholder="e.g. 012-345 6789"
                 className="w-full px-3.5 py-2 text-xs rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-white focus:border-transparent transition-all"
               />
             </div>

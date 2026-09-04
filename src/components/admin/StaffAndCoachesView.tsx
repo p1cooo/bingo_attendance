@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { User, Coach, Student, UserRole } from '../../types.js';
 import { api } from '../../lib/api.js';
+import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { useToast } from '../common/Toast.js';
 import { Modal } from '../common/Modal.js';
@@ -176,6 +177,10 @@ export const StaffAndCoachesView: React.FC<StaffAndCoachesViewProps> = ({
     }
     if (!createFormData.password || createFormData.password.length < 6) {
       showToast('Password must be at least 6 characters', 'error');
+      return;
+    }
+    if (createFormData.role === 'COACH' && !isValidMalaysianMobile(createFormData.phone)) {
+      showToast('Enter a valid Malaysian mobile number, e.g. 012-345 6789', 'error');
       return;
     }
 
@@ -769,9 +774,11 @@ export const StaffAndCoachesView: React.FC<StaffAndCoachesViewProps> = ({
                   <input
                     id="new-member-phone"
                     type="tel"
-                    placeholder="+65 9123 4567"
+                    inputMode="tel"
+                    maxLength={12}
+                    placeholder="e.g. 012-345 6789"
                     value={createFormData.phone}
-                    onChange={(e) => setCreateFormData({ ...createFormData, phone: e.target.value })}
+                    onChange={(e) => setCreateFormData({ ...createFormData, phone: formatMalaysianPhone(e.target.value) })}
                     className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 rounded-2xl text-xs font-bold text-slate-900 dark:text-white"
                   />
                 </div>
