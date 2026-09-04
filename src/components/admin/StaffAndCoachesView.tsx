@@ -181,11 +181,18 @@ export const StaffAndCoachesView: React.FC<StaffAndCoachesViewProps> = ({
 
     setIsSubmitting(true);
     try {
-      let linkedCoachId: string | undefined = undefined;
+      // Provision the Firebase-backed user first. The coach profile endpoint links to
+      // this account by email, so creating the profile before the account is invalid.
+      await api.createUser({
+        displayName: createFormData.displayName.trim(),
+        username: createFormData.username.trim().toLowerCase(),
+        email: createFormData.email.trim(),
+        role: createFormData.role,
+        password: createFormData.password,
+      });
 
-      // If creating a COACH role, create coach profile first to ensure seamless timetable linking
       if (createFormData.role === 'COACH') {
-        const createdCoach = await api.createCoach({
+        await api.createCoach({
           name: createFormData.displayName.trim(),
           email: createFormData.email.trim(),
           phone: createFormData.phone.trim(),
@@ -194,18 +201,7 @@ export const StaffAndCoachesView: React.FC<StaffAndCoachesViewProps> = ({
           bio: createFormData.bio.trim(),
           is_active: createFormData.is_active,
         });
-        linkedCoachId = createdCoach.id;
       }
-
-      // Create User Account
-      await api.createUser({
-        displayName: createFormData.displayName.trim(),
-        username: createFormData.username.trim().toLowerCase(),
-        email: createFormData.email.trim(),
-        role: createFormData.role,
-        password: createFormData.password,
-        coach_id: linkedCoachId,
-      });
 
       showToast(`✓ Created account for ${createFormData.displayName} successfully!`, 'success');
       setIsCreateModalOpen(false);
