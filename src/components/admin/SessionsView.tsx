@@ -86,6 +86,9 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
     status: 'SCHEDULED' as SessionStatus,
     cancellation_reason: '',
     notes: '',
+    session_date: '',
+    start_time: '',
+    end_time: '',
   });
 
   const loadData = async () => {
@@ -138,6 +141,9 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
       status: session.status,
       cancellation_reason: session.cancellation_reason || '',
       notes: session.notes || '',
+      session_date: session.session_date,
+      start_time: session.start_time,
+      end_time: session.end_time,
     });
   };
 
@@ -163,6 +169,13 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
             : editForm.status,
         cancellation_reason: editForm.cancellation_reason,
         notes: editForm.notes,
+        ...(isEditingIndividualLesson
+          ? {
+              session_date: editForm.session_date,
+              start_time: editForm.start_time,
+              end_time: editForm.end_time,
+            }
+          : {}),
       });
 
       showToast('✓ Session schedule updated successfully', 'success');
@@ -176,6 +189,8 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
   };
 
   const defaultCoachForEditing = editingSession?.default_coach || editingSession?.scheduled_coach;
+  const isEditingIndividualLesson = !!editingSession &&
+    (editingSession.class_item?.class_type || classes.find((item) => item.id === editingSession.class_id)?.class_type) === 'INDIVIDUAL';
 
   // Fixed 7-day strip (Sunday to Saturday) containing the current weekAnchorDate
   const dayStrip = getFixedWeekDays(weekAnchorDate, 'SUN');
@@ -838,7 +853,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
       <Modal
         isOpen={!!editingSession}
         onClose={() => setEditingSession(null)}
-        title={`Session Substitution & Status: ${editingSession?.session_date}`}
+        title={`${isEditingIndividualLesson ? 'Individual Lesson Reschedule' : 'Session Substitution & Status'}: ${editingSession?.session_date}`}
         size="lg"
       >
         {editingSession && (
@@ -853,6 +868,49 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                 <span>Venue: <strong>{editingSession.room_location || editingSession.class_item?.room_location || 'Main Hall'}</strong></span>
               </div>
             </div>
+
+            {isEditingIndividualLesson && (
+              <div className="p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/60 space-y-3">
+                <div>
+                  <div className="text-xs font-black uppercase text-sky-900 dark:text-sky-200">Reschedule this individual lesson</div>
+                  <p className="mt-1 text-[11px] text-sky-700 dark:text-sky-300">
+                    This changes this occurrence only. The recurring Sunday class remains unchanged; group classes cannot be moved here.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label className="block text-[11px] font-bold text-sky-900 dark:text-sky-200">
+                    New date
+                    <input
+                      type="date"
+                      required
+                      value={editForm.session_date}
+                      onChange={(e) => setEditForm({ ...editForm, session_date: e.target.value })}
+                      className="mt-1 w-full px-3 py-2 text-xs font-bold bg-white dark:bg-neutral-800 border border-sky-300 dark:border-sky-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </label>
+                  <label className="block text-[11px] font-bold text-sky-900 dark:text-sky-200">
+                    Start time
+                    <input
+                      type="time"
+                      required
+                      value={editForm.start_time}
+                      onChange={(e) => setEditForm({ ...editForm, start_time: e.target.value })}
+                      className="mt-1 w-full px-3 py-2 text-xs font-bold bg-white dark:bg-neutral-800 border border-sky-300 dark:border-sky-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </label>
+                  <label className="block text-[11px] font-bold text-sky-900 dark:text-sky-200">
+                    End time
+                    <input
+                      type="time"
+                      required
+                      value={editForm.end_time}
+                      onChange={(e) => setEditForm({ ...editForm, end_time: e.target.value })}
+                      className="mt-1 w-full px-3 py-2 text-xs font-bold bg-white dark:bg-neutral-800 border border-sky-300 dark:border-sky-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
 
             {/* Session Type Picker */}
             <div className="space-y-2">

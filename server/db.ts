@@ -279,7 +279,11 @@ class DatabaseStore {
           
           // Check if session exists
           const existingSession = Array.from(this.sessions.values()).find(
-            (s) => (s.class_id === cls.id || s.schedule_id === cls.id) && s.session_date === dateString
+            (s) =>
+              (s.class_id === cls.id || s.schedule_id === cls.id) &&
+              // A rescheduled individual lesson still occupies its original
+              // recurring slot, so do not recreate the Sunday occurrence.
+              (s.session_date === dateString || s.original_session_date === dateString)
           );
 
           if (!existingSession) {

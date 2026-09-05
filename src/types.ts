@@ -136,6 +136,8 @@ export interface ClassSession {
   schedule_id: string;
   class_id: string;
   session_date: string; // YYYY-MM-DD
+  /** The recurring timetable date when this individual occurrence was moved. */
+  original_session_date?: string;
   start_time: string;
   end_time: string;
   default_coach_id?: string; // The permanent Default Coach from Class

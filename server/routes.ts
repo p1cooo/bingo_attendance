@@ -1751,6 +1751,39 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, async (req: Authenti
   } = req.body;
 
   const defaultCoachId = session.default_coach_id || session.scheduled_coach_id;
+  const sessionClass = db.classes.get(session.class_id);
+  const isChangingAppointmentTime = session_date !== undefined || start_time !== undefined || end_time !== undefined;
+
+  // A group session is a shared appointment: moving it would silently change
+  // every enrolled student's timetable. Individual lessons may be rescheduled
+  // before attendance is recorded, while retaining their class and coach.
+  if (isChangingAppointmentTime) {
+    if (sessionClass?.class_type !== 'INDIVIDUAL') {
+      return res.status(400).json({
+        error: 'Only individual lessons can be rescheduled. Group class sessions stay on their published timetable.',
+        code: 'GROUP_SESSION_RESCHEDULE_NOT_ALLOWED',
+      });
+    }
+    const hasAttendance = Array.from(db.attendance.values()).some((record) => record.session_id === id);
+    if (hasAttendance) {
+      return res.status(400).json({
+        error: 'This individual lesson already has attendance recorded and cannot be rescheduled. Correct the attendance record first if necessary.',
+        code: 'SESSION_WITH_ATTENDANCE_CANNOT_BE_RESCHEDULED',
+      });
+    }
+    if (session_date && session_date !== session.session_date) {
+      const conflictingSession = Array.from(db.sessions.values()).find(
+        (candidate) => candidate.id !== id && candidate.class_id === session.class_id && candidate.session_date === session_date
+      );
+      if (conflictingSession) {
+        return res.status(400).json({
+          error: `This class already has a session on ${session_date}. Choose a different date or update that session instead.`,
+          code: 'SESSION_DATE_CONFLICT',
+        });
+      }
+      session.original_session_date ||= session.session_date;
+    }
+  }
 
   // Handle Session Type transitions
   if (session_type === 'COACH_CANCELLED' || status === 'COACH_CANCELLED' || status === 'CANCELLED') {
