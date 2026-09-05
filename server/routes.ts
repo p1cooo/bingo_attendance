@@ -28,7 +28,7 @@ import { notificationService } from './notifications/NotificationService.js';
 import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
-import { syncDocToFirestore, deleteDocFromFirestore } from './firestoreSync.js';
+import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged } from './firestoreSync.js';
 
 export const router = Router();
 
@@ -855,7 +855,7 @@ router.post('/students', authenticateUser, requireAdmin, async (req: Authenticat
   }
 });
 
-router.post('/students/bulk', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/students/bulk', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { students } = req.body;
   if (!Array.isArray(students) || students.length === 0) {
     return res.status(400).json({ error: 'Array of students is required.' });
@@ -863,6 +863,11 @@ router.post('/students/bulk', authenticateUser, requireAdmin, (req: Authenticate
 
   const created: any[] = [];
   const errors: { row: number; full_name?: string; feedback: string }[] = [];
+  // Keep the response open until every record reaches Firestore. Vercel ends
+  // background work when the handler returns, so the old in-memory-only loop
+  // could report a successful import while persisting nothing at all.
+  const recordsToPersist: Array<[string, string, unknown]> = [];
+  const localRecordsToRollback: Array<[Map<string, any>, string]> = [];
 
   students.forEach((item: any, idx: number) => {
     const rowNum = idx + 1;
@@ -935,6 +940,8 @@ router.post('/students/bulk', authenticateUser, requireAdmin, (req: Authenticate
         email: parent_email ? String(parent_email).trim() : undefined,
         created_at: new Date().toISOString(),
       });
+      recordsToPersist.push(['parents', parentId, db.parents.get(parentId)!]);
+      localRecordsToRollback.push([db.parents, parentId]);
     }
 
     const stuId = `stu-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -951,24 +958,44 @@ router.post('/students/bulk', authenticateUser, requireAdmin, (req: Authenticate
     };
 
     db.students.set(stuId, newStudent);
+    recordsToPersist.push(['students', stuId, newStudent]);
+    localRecordsToRollback.push([db.students, stuId]);
 
     // Enroll in schedules
     validScheduleIds.forEach((schedId) => {
       const memId = `m-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-      db.memberships.set(memId, {
+      const membership = {
         id: memId,
         student_id: stuId,
         schedule_id: schedId,
         joined_date: new Date().toISOString().split('T')[0],
-        status: 'ACTIVE',
-      });
+        status: 'ACTIVE' as const,
+      };
+      db.memberships.set(memId, membership);
+      recordsToPersist.push(['memberships', memId, membership]);
+      localRecordsToRollback.push([db.memberships, memId]);
     });
 
     const populated = db.getPopulatedStudent(stuId);
     created.push(populated);
   });
 
-  db.saveToDisk();
+  try {
+    // Avoid writing the revision once per row; it is the signal that makes all
+    // Vercel instances reload the durable records on their next API request.
+    await Promise.all(
+      recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record, false))
+    );
+    await markFirestoreStateChanged();
+    db.saveToDisk();
+  } catch (error: any) {
+    localRecordsToRollback.forEach(([collection, id]) => collection.delete(id));
+    console.error('[Bulk Student Import] Firestore write failed:', error?.message || error);
+    return res.status(503).json({
+      error: 'Students could not be saved to Firestore. No successful import has been reported; please retry after the issue is resolved.',
+      code: 'FIRESTORE_WRITE_FAILED',
+    });
+  }
 
   return res.status(200).json({
     success: true,
