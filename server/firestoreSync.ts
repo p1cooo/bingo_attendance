@@ -19,7 +19,7 @@ const DUPLICATE_WEI_YUAN_COACH_IDS = new Set([
 ]);
 let weiYuanMergePromise: Promise<void> | null = null;
 
-async function markDurableStateChanged(): Promise<void> {
+export async function markFirestoreStateChanged(): Promise<void> {
   await getFirestoreDb().collection(STATE_COLLECTION).doc(STATE_DOCUMENT).set({
     revision: new Date().toISOString(),
   }, { merge: true });
@@ -147,14 +147,14 @@ export function mergeConfirmedWeiYuanDuplicateCoaches(): Promise<void> {
   return weiYuanMergePromise;
 }
 
-export async function syncDocToFirestore(collectionName: string, docId: string, data: unknown) {
+export async function syncDocToFirestore(collectionName: string, docId: string, data: unknown, markRevision = true) {
   if (!hasAdminCredentials) throw new Error(firebaseAdminConfigurationError());
   await getFirestoreDb().collection(collectionName).doc(docId).set(removeUndefinedValues(data), { merge: true });
-  await markDurableStateChanged();
+  if (markRevision) await markFirestoreStateChanged();
 }
 
 export async function deleteDocFromFirestore(collectionName: string, docId: string) {
   if (!hasAdminCredentials) throw new Error(firebaseAdminConfigurationError());
   await getFirestoreDb().collection(collectionName).doc(docId).delete();
-  await markDurableStateChanged();
+  await markFirestoreStateChanged();
 }

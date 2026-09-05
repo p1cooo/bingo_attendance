@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { syncDocToFirestore } from './firestoreSync.js';
+import { markFirestoreStateChanged, syncDocToFirestore } from './firestoreSync.js';
 import { Student, Coach, Parent, AcademyClass, ClassSchedule } from '../src/types.js';
 
 export interface BulkImportItemResult {
@@ -222,6 +222,7 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
   const readyItems = validatedItems.filter((i) => i.isValid && i.previewData);
   let importedCount = 0;
   const errors: string[] = [];
+  const persistenceTasks: Promise<void>[] = [];
 
   for (const item of readyItems) {
     const data = item.previewData;
@@ -239,7 +240,7 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
             created_at: new Date().toISOString(),
           };
           db.parents.set(parentId, newParent);
-          syncDocToFirestore('parents', parentId, newParent).catch(console.error);
+          persistenceTasks.push(syncDocToFirestore('parents', parentId, newParent, false));
         }
 
         const newStudent: Student = {
@@ -255,7 +256,7 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
         };
 
         db.students.set(studentId, newStudent);
-        syncDocToFirestore('students', studentId, newStudent).catch(console.error);
+        persistenceTasks.push(syncDocToFirestore('students', studentId, newStudent, false));
         importedCount++;
       } else if (type === 'coaches') {
         const coachId = `coach-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -270,7 +271,7 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
           created_at: new Date().toISOString(),
         };
         db.coaches.set(coachId, newCoach);
-        syncDocToFirestore('coaches', coachId, newCoach).catch(console.error);
+        persistenceTasks.push(syncDocToFirestore('coaches', coachId, newCoach, false));
 
         // Create User login account for coach
         const userId = `user-${coachId}`;
@@ -284,7 +285,7 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
           created_at: new Date().toISOString(),
         };
         db.users.set(userId, newUser);
-        syncDocToFirestore('users', userId, newUser).catch(console.error);
+        persistenceTasks.push(syncDocToFirestore('users', userId, newUser, false));
 
         importedCount++;
       } else if (type === 'classes') {
@@ -300,7 +301,7 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
           created_at: new Date().toISOString(),
         };
         db.classes.set(classId, newClass);
-        syncDocToFirestore('classes', classId, newClass).catch(console.error);
+        persistenceTasks.push(syncDocToFirestore('classes', classId, newClass, false));
         importedCount++;
       } else if (type === 'schedules') {
         const schedId = `sched-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -316,7 +317,7 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
           created_at: new Date().toISOString(),
         };
         db.schedules.set(schedId, newSched);
-        syncDocToFirestore('schedules', schedId, newSched).catch(console.error);
+        persistenceTasks.push(syncDocToFirestore('schedules', schedId, newSched, false));
         importedCount++;
       }
     } catch (err: any) {
@@ -324,6 +325,11 @@ export async function commitBulkImport(type: string, validatedItems: BulkImportI
     }
   }
 
+  // In a serverless function, background promises can be terminated once the
+  // response is sent. Do not report a successful import until every document
+  // has been written to Firestore and the durable revision is updated.
+  await Promise.all(persistenceTasks);
+  await markFirestoreStateChanged();
   db.saveToDisk();
   return { importedCount, errors };
 }
