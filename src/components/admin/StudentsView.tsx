@@ -36,6 +36,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const { showToast } = useToast();
 
   const [students, setStudents] = useState<Student[]>([]);
+  const [totalStudentCount, setTotalStudentCount] = useState(0);
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [classes, setClasses] = useState<AcademyClass[]>([]);
   const [schedules, setSchedules] = useState<ClassSchedule[]>([]);
@@ -46,7 +47,6 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [search, setSearch] = useState('');
   const [selectedCoachId, setSelectedCoachId] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('ACTIVE');
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(initialAddModalOpen);
@@ -77,18 +77,19 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const loadData = async () => {
     try {
       setLoading(true);
-      const [stuRes, coachRes, classRes, schedRes] = await Promise.all([
+      const [stuRes, allStudentsRes, coachRes, classRes, schedRes] = await Promise.all([
         api.getStudents({
           search,
           coach_id: selectedCoachId,
           class_id: selectedClassId,
-          status: selectedStatus,
         }),
+        api.getStudents(),
         api.getCoaches(),
         api.getClasses(),
         api.getSchedules(),
       ]);
       setStudents(stuRes);
+      setTotalStudentCount(allStudentsRes.length);
       setCoaches(coachRes);
       setClasses(classRes);
       setSchedules(schedRes);
@@ -101,7 +102,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
   useEffect(() => {
     loadData();
-  }, [search, selectedCoachId, selectedClassId, selectedStatus]);
+  }, [search, selectedCoachId, selectedClassId]);
 
   useEffect(() => {
     if (initialAddModalOpen) {
@@ -225,7 +226,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
               Students Directory
             </h2>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-slate-100 dark:bg-neutral-800 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-neutral-700">
-              {students.length} Enrolled
+              {totalStudentCount} Total Students
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -257,7 +258,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
       {/* Filter Bar (Search + Global Class Filtering) */}
       <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border-2 border-slate-900/10 dark:border-neutral-800 shadow-2xs space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {/* Search by Name or ID */}
           <div className="sm:col-span-1 relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
@@ -305,19 +306,6 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             </select>
           </div>
 
-          {/* Filter Status */}
-          <div>
-            <select
-              id="student-filter-status"
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white focus:outline-none"
-            >
-              <option value="">All Statuses</option>
-              <option value="ACTIVE">Active Students</option>
-              <option value="INACTIVE">Inactive</option>
-            </select>
-          </div>
         </div>
       </div>
 
