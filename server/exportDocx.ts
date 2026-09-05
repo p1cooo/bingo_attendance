@@ -4,9 +4,13 @@ import { db } from './db.js';
 const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const dayColours = ['22C55E', '06B6D4', '06B6D4', '06B6D4', '06B6D4', '06B6D4', '22C55E'];
 
+// JavaScript stores Sunday as 0. Rotate the value only for presentation so
+// weekly timetables read Monday through Sunday without changing stored data.
+const mondayFirstDayOrder = (dayOfWeek: number) => (dayOfWeek + 6) % 7;
+
 function coachColumn(coachId: string): Paragraph[] {
   const coach = db.coaches.get(coachId);
-  const schedules = Array.from(db.schedules.values()).filter((s) => s.status === 'ACTIVE' && (s.coach_id === coachId || s.default_coach_id === coachId)).sort((a, b) => a.day_of_week - b.day_of_week || a.start_time.localeCompare(b.start_time));
+  const schedules = Array.from(db.schedules.values()).filter((s) => s.status === 'ACTIVE' && (s.coach_id === coachId || s.default_coach_id === coachId)).sort((a, b) => mondayFirstDayOrder(a.day_of_week) - mondayFirstDayOrder(b.day_of_week) || a.start_time.localeCompare(b.start_time));
   const paragraphs: Paragraph[] = [new Paragraph({ children: [new TextRun({ text: coach?.name || 'Unassigned coach', bold: true, size: 28, color: '111827' })], spacing: { after: 150 } })];
   let currentDay = -1;
   for (const schedule of schedules) {
