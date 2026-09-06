@@ -517,7 +517,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     : 'bg-white dark:bg-neutral-900'
                 }`}
               >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex flex-col gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-3">
                   {/* Student Details */}
                   <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-xs flex items-center justify-center border-2 border-slate-900 flex-shrink-0">
@@ -586,7 +586,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   </div>
 
                   {/* 2 Direct 1-Tap Attendance Actions: [ ✓ Present ] [ ✕ Absent ] */}
-                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                  <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
                     {/* PRESENT */}
                     <button
                       type="button"
@@ -636,7 +636,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
 
                   {/* Stars follow attendance in the action flow. The portal
                       remains the source of truth for pet bonuses. */}
-                  <div className="flex h-9 items-center self-end sm:self-center shrink-0 overflow-hidden rounded-xl border-2 border-slate-900 bg-amber-50 dark:bg-amber-950/20 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.08)]">
+                  <div className="flex h-9 shrink-0 items-center self-end overflow-hidden rounded-xl border-2 border-slate-900 bg-amber-50 dark:bg-amber-950/20 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.08)] sm:self-auto">
                     <Sparkles className="ml-2.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
                     <input
                       type="number"
