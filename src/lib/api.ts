@@ -265,6 +265,14 @@ class ApiClient {
     });
   }
 
+  async bulkAssignStudentsToSchedule(studentIds: string[], scheduleId: string): Promise<{ success: boolean; assigned_count: number; already_enrolled: number }> {
+    return this.request('/students/bulk-assign-schedule', { method: 'POST', body: JSON.stringify({ student_ids: studentIds, schedule_id: scheduleId }) });
+  }
+
+  async bulkDeleteStudents(studentIds: string[]): Promise<{ success: boolean; deleted_count: number }> {
+    return this.request('/students/bulk-delete', { method: 'POST', body: JSON.stringify({ student_ids: studentIds }) });
+  }
+
   // --- Classes ---
   async getClasses(params?: {
     search?: string;

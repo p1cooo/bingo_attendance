@@ -53,6 +53,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [deletingStudent, setDeletingStudent] = useState<Student | null>(null);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [bulkScheduleId, setBulkScheduleId] = useState('');
   const [profileStudent, setProfileStudent] = useState<(Student & { attendance_history?: any[] }) | null>(null);
 
   // Form states
@@ -102,6 +106,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
   useEffect(() => {
     loadData();
+  }, [search, selectedCoachId, selectedClassId]);
+
+  useEffect(() => {
+    setSelectedStudentIds([]);
   }, [search, selectedCoachId, selectedClassId]);
 
   useEffect(() => {
@@ -202,6 +210,45 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const toggleSelectedStudent = (studentId: string) => {
+    setSelectedStudentIds((current) => current.includes(studentId) ? current.filter((id) => id !== studentId) : [...current, studentId]);
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelectedStudentIds((current) => current.length === students.length ? [] : students.map((student) => student.id));
+  };
+
+  const handleBulkAssign = async () => {
+    if (!bulkScheduleId) { showToast('Choose a class schedule first.', 'error'); return; }
+    try {
+      setIsSubmitting(true);
+      const result = await api.bulkAssignStudentsToSchedule(selectedStudentIds, bulkScheduleId);
+      showToast(`✓ ${result.assigned_count} student${result.assigned_count === 1 ? '' : 's'} assigned${result.already_enrolled ? `; ${result.already_enrolled} already enrolled` : ''}.`, 'success');
+      setSelectedStudentIds([]);
+      setIsBulkAssignOpen(false);
+      setBulkScheduleId('');
+      await loadData();
+    } catch (err: any) { showToast(err.message || 'Failed to assign selected students', 'error'); }
+    finally { setIsSubmitting(false); }
+  };
+
+  const handleBulkDelete = async () => {
+    try {
+      setIsSubmitting(true);
+      const result = await api.bulkDeleteStudents(selectedStudentIds);
+      showToast(`✓ ${result.deleted_count} student${result.deleted_count === 1 ? '' : 's'} deleted.`, 'success');
+      setSelectedStudentIds([]);
+      setIsBulkDeleteOpen(false);
+      await loadData();
+    } catch (err: any) { showToast(err.message || 'Failed to delete selected students', 'error'); }
+    finally { setIsSubmitting(false); }
+  };
+
+  const scheduleLabel = (schedule: ClassSchedule) => {
+    const cls = classes.find((item) => item.id === schedule.class_id);
+    return `${cls?.name || 'Unnamed class'} · ${schedule.start_time}–${schedule.end_time}`;
   };
 
   const toggleScheduleEnrollment = (schedId: string) => {
@@ -310,6 +357,16 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       </div>
 
       {/* Students Table */}
+      {selectedStudentIds.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-2xl border-2 border-slate-900 bg-amber-50 p-3 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] sm:flex-row sm:items-center sm:justify-between dark:bg-amber-950/30">
+          <span className="text-xs font-black text-slate-900 dark:text-white">{selectedStudentIds.length} student{selectedStudentIds.length === 1 ? '' : 's'} selected</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setIsBulkAssignOpen(true)} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-1.5 text-xs font-black text-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">Assign to class</button>
+            <button type="button" onClick={() => setIsBulkDeleteOpen(true)} className="rounded-xl border-2 border-slate-900 bg-rose-600 px-3 py-1.5 text-xs font-black text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">Delete selected</button>
+            <button type="button" onClick={() => setSelectedStudentIds([])} className="px-2 py-1.5 text-xs font-bold text-slate-600 underline dark:text-slate-300">Clear</button>
+          </div>
+        </div>
+      )}
       <div className="bg-white dark:bg-neutral-900 rounded-3xl border-2 border-slate-900 dark:border-neutral-700 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] overflow-hidden">
         {loading ? (
           <div className="p-6">
@@ -330,6 +387,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-900 text-white dark:bg-neutral-800 border-b border-slate-800 dark:border-neutral-700">
                 <tr>
+                  <th className="w-12 py-3 px-4 text-center"><input type="checkbox" checked={students.length > 0 && selectedStudentIds.length === students.length} onChange={toggleSelectAllVisible} aria-label="Select all visible students" className="h-4 w-4 cursor-pointer accent-amber-400" /></th>
                   <th className="py-3 px-4 font-black uppercase text-[10px]">Student</th>
                   <th className="py-3 px-4 font-black uppercase text-[10px]">ID / School</th>
                   <th className="py-3 px-4 font-black uppercase text-[10px]">Parent / Contact</th>
@@ -346,6 +404,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                       key={stu.id}
                       className="hover:bg-slate-50/70 dark:hover:bg-neutral-800/40 transition-colors"
                     >
+                      <td className="py-3 px-4 text-center"><input type="checkbox" checked={selectedStudentIds.includes(stu.id)} onChange={() => toggleSelectedStudent(stu.id)} aria-label={`Select ${stu.full_name}`} className="h-4 w-4 cursor-pointer accent-amber-500" /></td>
                       {/* Name */}
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-900 dark:text-white">
@@ -453,6 +512,20 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           </div>
         )}
       </div>
+
+      <Modal isOpen={isBulkAssignOpen} onClose={() => setIsBulkAssignOpen(false)} title="Assign selected students to a class" subtitle={`${selectedStudentIds.length} selected student${selectedStudentIds.length === 1 ? '' : 's'} will be added without removing their existing class memberships.`}>
+        <div className="space-y-4">
+          <select value={bulkScheduleId} onChange={(event) => setBulkScheduleId(event.target.value)} className="w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-bold text-slate-900 dark:bg-neutral-800 dark:text-white">
+            <option value="">Choose a class schedule…</option>
+            {schedules.filter((schedule) => schedule.status === 'ACTIVE').map((schedule) => <option key={schedule.id} value={schedule.id}>{scheduleLabel(schedule)}</option>)}
+          </select>
+          <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsBulkAssignOpen(false)} className="rounded-xl px-3 py-2 text-xs font-bold">Cancel</button><button type="button" disabled={isSubmitting || !bulkScheduleId} onClick={handleBulkAssign} className="rounded-xl border-2 border-slate-900 bg-slate-900 px-3 py-2 text-xs font-black text-white disabled:opacity-50">Assign students</button></div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={isBulkDeleteOpen} onClose={() => setIsBulkDeleteOpen(false)} title="Delete selected students?" subtitle={`This permanently deletes ${selectedStudentIds.length} student record${selectedStudentIds.length === 1 ? '' : 's'} and their class memberships. This cannot be undone.`}>
+        <div className="space-y-4"><div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs font-bold text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">Attendance history is retained for audit purposes, but these students will no longer appear in the directory or class rosters.</div><div className="flex justify-end gap-2"><button type="button" onClick={() => setIsBulkDeleteOpen(false)} className="rounded-xl px-3 py-2 text-xs font-bold">Cancel</button><button type="button" disabled={isSubmitting} onClick={handleBulkDelete} className="rounded-xl border-2 border-slate-900 bg-rose-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50">Delete {selectedStudentIds.length} student{selectedStudentIds.length === 1 ? '' : 's'}</button></div></div>
+      </Modal>
 
       {/* Add / Edit Student Modal */}
       <Modal

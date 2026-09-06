@@ -1339,6 +1339,61 @@ router.post('/classes/bulk', authenticateUser, requireAdmin, async (req: Authent
   }
 });
 
+// Bulk actions are deliberately durable: the Firestore operation completes
+// before the UI reports success, so a refresh cannot bring old rows back.
+router.post('/students/bulk-assign-schedule', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { student_ids, schedule_id } = req.body;
+  if (!Array.isArray(student_ids) || student_ids.length === 0 || !schedule_id) {
+    return res.status(400).json({ error: 'Select at least one student and one class schedule.' });
+  }
+  if (student_ids.length > 500) return res.status(400).json({ error: 'A bulk action is limited to 500 students.' });
+  if (!db.schedules.has(schedule_id)) return res.status(404).json({ error: 'Class schedule not found.' });
+
+  const uniqueStudentIds = [...new Set(student_ids)].filter((studentId): studentId is string => typeof studentId === 'string' && db.students.has(studentId));
+  if (uniqueStudentIds.length === 0) return res.status(400).json({ error: 'None of the selected students still exist.' });
+  const writes: Array<[string, string, unknown]> = [];
+  let alreadyEnrolled = 0;
+  uniqueStudentIds.forEach((studentId) => {
+    const exists = Array.from(db.memberships.values()).some((membership) => membership.student_id === studentId && membership.schedule_id === schedule_id && membership.status === 'ACTIVE');
+    if (exists) { alreadyEnrolled += 1; return; }
+    const membership = { id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, student_id: studentId, schedule_id, joined_date: new Date().toISOString().slice(0, 10), status: 'ACTIVE' as const };
+    db.memberships.set(membership.id, membership);
+    writes.push(['memberships', membership.id, membership]);
+  });
+  try {
+    await Promise.all(writes.map(([collection, id, record]) => syncDocToFirestore(collection, id, record, false)));
+    await markFirestoreStateChanged();
+    await Promise.all(uniqueStudentIds.map((studentId) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
+    return res.json({ success: true, assigned_count: writes.length, already_enrolled: alreadyEnrolled });
+  } catch (error: any) {
+    writes.forEach(([, membershipId]) => db.memberships.delete(membershipId));
+    console.error('[Bulk Assign Students] Firestore write failed:', error?.message || error);
+    return res.status(503).json({ error: 'Class assignment could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
+});
+
+router.post('/students/bulk-delete', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { student_ids } = req.body;
+  if (!Array.isArray(student_ids) || student_ids.length === 0) return res.status(400).json({ error: 'Select at least one student to delete.' });
+  if (student_ids.length > 500) return res.status(400).json({ error: 'A bulk action is limited to 500 students.' });
+  const ids = [...new Set(student_ids)].filter((studentId): studentId is string => typeof studentId === 'string' && db.students.has(studentId));
+  if (ids.length === 0) return res.status(400).json({ error: 'None of the selected students still exist.' });
+  const membershipIds = Array.from(db.memberships.values()).filter((membership) => ids.includes(membership.student_id)).map((membership) => membership.id);
+  try {
+    await Promise.all([
+      ...ids.map((studentId) => deleteDocFromFirestore('students', studentId)),
+      ...membershipIds.map((membershipId) => deleteDocFromFirestore('memberships', membershipId)),
+    ]);
+    membershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
+    ids.forEach((studentId) => db.students.delete(studentId));
+    db.saveToDisk();
+    return res.json({ success: true, deleted_count: ids.length });
+  } catch (error: any) {
+    console.error('[Bulk Delete Students] Firestore delete failed:', error?.message || error);
+    return res.status(503).json({ error: 'Student deletion could not be completed. Please retry.', code: 'FIRESTORE_DELETE_FAILED' });
+  }
+});
+
 router.put('/classes/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.classes.get(id);
