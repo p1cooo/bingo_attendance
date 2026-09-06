@@ -64,6 +64,10 @@ const DUPLICATE_WEI_YUAN_COACH_IDS = new Set([
   'coach-1788407563025',
 ]);
 let weiYuanMergePromise: Promise<void> | null = null;
+// This is a one-off data repair. Once an instance has verified that the
+// duplicate records are gone, do not spend three Firestore reads on every API
+// request just to re-check the same condition.
+let hasVerifiedWeiYuanMerge = false;
 
 export async function markFirestoreStateChanged(): Promise<void> {
   const revision = new Date().toISOString();
@@ -137,6 +141,7 @@ export function initializeFirestoreSync(): Promise<void> {
  */
 export function mergeConfirmedWeiYuanDuplicateCoaches(): Promise<void> {
   if (!hasAdminCredentials) return Promise.reject(new Error(firebaseAdminConfigurationError()));
+  if (hasVerifiedWeiYuanMerge) return Promise.resolve();
   if (weiYuanMergePromise) return weiYuanMergePromise;
 
   weiYuanMergePromise = (async () => {
@@ -152,7 +157,10 @@ export function mergeConfirmedWeiYuanDuplicateCoaches(): Promise<void> {
     );
     const existingDuplicates = duplicateSnapshots.filter((snapshot) => snapshot.exists);
     const needsNameNormalization = retainedSnapshot.data()?.name !== 'Wei Yuan';
-    if (existingDuplicates.length === 0 && !needsNameNormalization) return;
+    if (existingDuplicates.length === 0 && !needsNameNormalization) {
+      hasVerifiedWeiYuanMerge = true;
+      return;
+    }
 
     // The user-facing title supplies "Coach" itself. Store the name once to
     // avoid displays such as "Coach Coach Wei Yuan" after the merge.
@@ -199,6 +207,7 @@ export function mergeConfirmedWeiYuanDuplicateCoaches(): Promise<void> {
     hasLoadedDurableState = false;
     lastDurableRevision = null;
     await initializeFirestoreSync();
+    hasVerifiedWeiYuanMerge = true;
   })().finally(() => { weiYuanMergePromise = null; });
 
   return weiYuanMergePromise;
