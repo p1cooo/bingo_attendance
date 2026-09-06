@@ -7,6 +7,52 @@ let lastDurableRevision: string | null = null;
 
 const STATE_COLLECTION = '_system';
 const STATE_DOCUMENT = 'academy';
+const SNAPSHOT_COLLECTION = '_academy_state';
+const SNAPSHOT_DOCUMENTS = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance', 'auditLogs', 'notificationLogs'] as const;
+
+type SnapshotDocument = typeof SNAPSHOT_DOCUMENTS[number];
+
+function snapshotValue(name: SnapshotDocument): unknown {
+  switch (name) {
+    case 'users': return Array.from(db.users.entries());
+    case 'coaches': return Array.from(db.coaches.entries());
+    case 'parents': return Array.from(db.parents.entries());
+    case 'students': return Array.from(db.students.entries());
+    case 'classes': return Array.from(db.classes.entries());
+    case 'schedules': return Array.from(db.schedules.entries());
+    case 'memberships': return Array.from(db.memberships.entries());
+    case 'sessions': return Array.from(db.sessions.entries());
+    case 'attendance': return Array.from(db.attendance.entries());
+    case 'auditLogs': return db.auditLogs;
+    case 'notificationLogs': return db.notificationLogs;
+  }
+}
+
+function restoreSnapshot(name: SnapshotDocument, value: unknown): void {
+  if (!Array.isArray(value)) throw new Error(`Invalid ${name} snapshot.`);
+  switch (name) {
+    case 'users': db.users = new Map(value as never); break;
+    case 'coaches': db.coaches = new Map(value as never); break;
+    case 'parents': db.parents = new Map(value as never); break;
+    case 'students': db.students = new Map(value as never); break;
+    case 'classes': db.classes = new Map(value as never); break;
+    case 'schedules': db.schedules = new Map(value as never); break;
+    case 'memberships': db.memberships = new Map(value as never); break;
+    case 'sessions': db.sessions = new Map(value as never); break;
+    case 'attendance': db.attendance = new Map(value as never); break;
+    case 'auditLogs': db.auditLogs = value as never; break;
+    case 'notificationLogs': db.notificationLogs = value as never; break;
+  }
+}
+
+async function writeStateSnapshots(revision: string): Promise<void> {
+  const firestore = getFirestoreDb();
+  const writer = firestore.bulkWriter();
+  SNAPSHOT_DOCUMENTS.forEach((name) => {
+    writer.set(firestore.collection(SNAPSHOT_COLLECTION).doc(name), removeUndefinedValues({ revision, value: snapshotValue(name) }));
+  });
+  await writer.close();
+}
 
 // The academy administrator confirmed that these are accidental duplicates of
 // the retained Wei Yuan coach record. Keeping this migration here makes the
@@ -20,9 +66,9 @@ const DUPLICATE_WEI_YUAN_COACH_IDS = new Set([
 let weiYuanMergePromise: Promise<void> | null = null;
 
 export async function markFirestoreStateChanged(): Promise<void> {
-  await getFirestoreDb().collection(STATE_COLLECTION).doc(STATE_DOCUMENT).set({
-    revision: new Date().toISOString(),
-  }, { merge: true });
+  const revision = new Date().toISOString();
+  await writeStateSnapshots(revision);
+  await getFirestoreDb().collection(STATE_COLLECTION).doc(STATE_DOCUMENT).set({ revision }, { merge: true });
 }
 
 /** Firestore rejects undefined values; optional fields are omitted instead. */
@@ -52,6 +98,14 @@ export function initializeFirestoreSync(): Promise<void> {
     const stateSnapshot = await firestore.collection(STATE_COLLECTION).doc(STATE_DOCUMENT).get();
     const revision = stateSnapshot.exists ? String(stateSnapshot.data()?.revision || '') : null;
     if (hasLoadedDurableState && revision === lastDurableRevision) return;
+    const snapshotDocuments = await Promise.all(SNAPSHOT_DOCUMENTS.map((name) => firestore.collection(SNAPSHOT_COLLECTION).doc(name).get()));
+    if (snapshotDocuments.every((snapshot) => snapshot.exists && snapshot.data()?.revision === revision)) {
+      snapshotDocuments.forEach((snapshot, index) => restoreSnapshot(SNAPSHOT_DOCUMENTS[index], snapshot.data()?.value));
+      hasLoadedDurableState = true;
+      lastDurableRevision = revision;
+      console.log(`[Firestore] Snapshot restored: ${db.students.size} students.`);
+      return;
+    }
     const collections = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance'] as const;
     const targets = [db.users, db.coaches, db.parents, db.students, db.classes, db.schedules, db.memberships, db.sessions, db.attendance] as const;
     await Promise.all(collections.map(async (name, index) => {
@@ -68,6 +122,9 @@ export function initializeFirestoreSync(): Promise<void> {
     db.notificationLogs = notificationSnapshot.docs.map((document) => document.data() as never);
     hasLoadedDurableState = true;
     lastDurableRevision = revision;
+    // The first legacy read upgrades the project. Subsequent Vercel cold
+    // starts need only 12 small document reads instead of every collection.
+    await writeStateSnapshots(revision || new Date().toISOString());
     console.log(`[Firestore] Sync complete: ${db.users.size} users, ${db.coaches.size} coaches, ${db.students.size} students.`);
   })().finally(() => { syncPromise = null; });
   return syncPromise;
