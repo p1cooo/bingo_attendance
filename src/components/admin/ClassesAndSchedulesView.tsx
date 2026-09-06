@@ -26,7 +26,9 @@ import {
   LayoutGrid,
   List,
   Download,
+  FileSpreadsheet,
 } from 'lucide-react';
+import { BulkAddClassesModal } from './BulkAddClassesModal.js';
 
 const DAYS_OF_WEEK = [
   { value: 1, label: 'Monday' },
@@ -69,6 +71,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
 
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(initialCreateModalOpen);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<AcademyClass | null>(null);
   const [rosterClass, setRosterClass] = useState<AcademyClass | null>(null);
@@ -297,6 +300,14 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
           >
             <Download className="w-4 h-4" />
             <span>Export Word Timetable</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsBulkModalOpen(true)}
+            className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-2xl text-xs font-black bg-white dark:bg-neutral-900 hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-900 dark:text-white border-2 border-slate-900 dark:border-neutral-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span>Bulk Add Classes</span>
           </button>
           {/* Unified View Toggle */}
           <div className="flex items-center bg-slate-100 dark:bg-neutral-800 p-1 rounded-2xl border-2 border-slate-900 dark:border-neutral-700 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.06)]">
@@ -965,6 +976,12 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
           </div>
         </Modal>
       )}
+
+      <BulkAddClassesModal
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        onSuccess={loadData}
+      />
     </div>
   );
 };

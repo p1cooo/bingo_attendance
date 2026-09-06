@@ -293,6 +293,19 @@ class ApiClient {
     });
   }
 
+  async bulkCreateClasses(classes: any[]): Promise<{
+    success: boolean;
+    importedCount: number;
+    errorCount: number;
+    created: AcademyClass[];
+    errors: { row: number; class_name?: string; feedback: string }[];
+  }> {
+    return this.request('/classes/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ classes }),
+    });
+  }
+
   async updateClass(id: string, data: Partial<AcademyClass>): Promise<AcademyClass> {
     return this.request(`/classes/${id}`, {
       method: 'PUT',

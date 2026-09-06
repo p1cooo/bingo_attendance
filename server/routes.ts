@@ -1256,6 +1256,84 @@ router.post('/classes', authenticateUser, requireAdmin, async (req: Authenticate
   }
 });
 
+router.post('/classes/bulk', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const { classes } = req.body;
+  if (!Array.isArray(classes) || classes.length === 0) {
+    return res.status(400).json({ error: 'A non-empty classes array is required.' });
+  }
+
+  const days: Record<string, number> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+  const normalise = (value: unknown) => String(value || '').trim().toLowerCase().replace(/^coach\s+/, '');
+  const isTime = (value: unknown) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || '').trim());
+  const errors: { row: number; class_name?: string; feedback: string }[] = [];
+  const ready: Array<{ name: string; classType: 'GROUP' | 'INDIVIDUAL'; day: number; start: string; end: string; coachId: string; room: string; capacity: number; studentIds: string[] }> = [];
+  const batchSlots = new Set<string>();
+
+  classes.forEach((raw: any, index: number) => {
+    const row = index + 1;
+    const name = String(raw.name || raw.class_name || '').trim();
+    const classType = String(raw.class_type || 'GROUP').trim().toUpperCase();
+    const dayValue = String(raw.day_of_week ?? raw.day ?? '').trim().toLowerCase();
+    const day = dayValue in days ? days[dayValue] : Number(dayValue);
+    const start = String(raw.start_time || '').trim();
+    const end = String(raw.end_time || '').trim();
+    const coachName = normalise(raw.coach_name || raw.coach || raw.default_coach);
+    const coach = Array.from(db.coaches.values()).find((candidate) => normalise(candidate.name) === coachName);
+    const studentCodes = Array.isArray(raw.student_ids) ? raw.student_ids : String(raw.student_ids || '').split(/[;|]/).map((value) => value.trim()).filter(Boolean);
+    const matchedStudents = studentCodes.map((code: string) => Array.from(db.students.values()).find((student) => student.student_id.toUpperCase() === code.toUpperCase()));
+
+    let feedback = '';
+    if (!name) feedback = 'Class name is required.';
+    else if (classType !== 'GROUP' && classType !== 'INDIVIDUAL') feedback = 'Class type must be GROUP or INDIVIDUAL.';
+    else if (!Number.isInteger(day) || day < 0 || day > 6) feedback = 'Day must be Monday–Sunday or a number from 0–6.';
+    else if (!isTime(start) || !isTime(end) || start >= end) feedback = 'Use valid 24-hour start and end times (for example 18:30 and 20:00).';
+    else if (!coachName || !coach) feedback = 'Coach was not found. Use the coach name exactly as it appears in Staff & Coaches.';
+    else if (matchedStudents.some((student) => !student)) feedback = `Student ID(s) not found: ${studentCodes.filter((_: string, itemIndex: number) => !matchedStudents[itemIndex]).join(', ')}.`;
+
+    const slot = `${name.toLowerCase()}|${day}|${start}|${coach?.id || ''}`;
+    if (!feedback && (batchSlots.has(slot) || Array.from(db.classes.values()).some((item) => item.name.toLowerCase() === name.toLowerCase() && item.day_of_week === day && item.start_time === start && item.default_coach_id === coach!.id))) {
+      feedback = 'A matching class already exists for this coach, day, and time.';
+    }
+    if (feedback) {
+      errors.push({ row, class_name: name, feedback });
+      return;
+    }
+    batchSlots.add(slot);
+    ready.push({ name, classType: classType as 'GROUP' | 'INDIVIDUAL', day, start, end, coachId: coach!.id, room: String(raw.room_location || '').trim() || 'Chess Hall A', capacity: Number(raw.default_capacity || raw.capacity) || 12, studentIds: matchedStudents.map((student) => student!.id) });
+  });
+
+  const writes: Array<[string, string, unknown]> = [];
+  const rollback: Array<[Map<string, any>, string]> = [];
+  const created: AcademyClass[] = [];
+  ready.forEach((item) => {
+    const classId = `class-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const createdAt = new Date().toISOString();
+    const duration = (Number(item.end.slice(0, 2)) * 60 + Number(item.end.slice(3))) - (Number(item.start.slice(0, 2)) * 60 + Number(item.start.slice(3)));
+    const newClass: AcademyClass = { id: classId, name: item.name, class_type: item.classType, day_of_week: item.day, start_time: item.start, end_time: item.end, default_coach_id: item.coachId, room_location: item.room, default_duration_mins: duration, default_capacity: item.classType === 'INDIVIDUAL' ? 1 : item.capacity, is_active: true, created_at: createdAt };
+    const schedule: ClassSchedule = { id: classId, class_id: classId, coach_id: item.coachId, default_coach_id: item.coachId, day_of_week: item.day, start_time: item.start, end_time: item.end, room_location: item.room, status: 'ACTIVE', is_active: true, created_at: createdAt };
+    db.classes.set(classId, newClass); db.schedules.set(classId, schedule);
+    rollback.push([db.classes, classId], [db.schedules, classId]);
+    writes.push(['classes', classId, newClass], ['schedules', classId, schedule]);
+    item.studentIds.forEach((studentId) => {
+      const membershipId = `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const membership = { id: membershipId, student_id: studentId, schedule_id: classId, joined_date: createdAt.slice(0, 10), status: 'ACTIVE' as const };
+      db.memberships.set(membershipId, membership); rollback.push([db.memberships, membershipId]); writes.push(['memberships', membershipId, membership]);
+    });
+    created.push(newClass);
+  });
+
+  try {
+    await Promise.all(writes.map(([collection, id, record]) => syncDocToFirestore(collection, id, record, false)));
+    await markFirestoreStateChanged();
+    db.saveToDisk();
+    return res.json({ success: true, importedCount: created.length, errorCount: errors.length, created: created.map((item) => db.getPopulatedClass(item.id)), errors });
+  } catch (error: any) {
+    rollback.forEach(([collection, id]) => collection.delete(id));
+    console.error('[Bulk Class Import] Firestore write failed:', error?.message || error);
+    return res.status(503).json({ error: 'Classes could not be saved to Firestore. No successful import has been reported; please retry after the issue is resolved.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
+});
+
 router.put('/classes/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.classes.get(id);
