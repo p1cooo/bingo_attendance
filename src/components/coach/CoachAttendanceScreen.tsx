@@ -572,6 +572,11 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           Portal sync pending — attendance is saved. {record.portal_sync_message}
                         </p>
                       )}
+                      {record?.portal_sync_status === 'DISABLED' && (
+                        <p className="text-[11px] text-slate-500 font-bold mt-1">
+                          Portal sync is not configured yet — attendance is saved and no stars were sent.
+                        </p>
+                      )}
                       {record?.portal_sync_status === 'SYNCED' && (
                         <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-bold mt-1">
                           ⭐ Portal: +{record.portal_awarded_stars} ({record.base_stars} × {record.portal_multiplier})
