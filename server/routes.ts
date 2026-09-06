@@ -29,7 +29,7 @@ import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
 import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged } from './firestoreSync.js';
-import { awardPortalStars, createPortalInvite } from './portalBridge.js';
+import { awardPortalStars, createPortalInvite, syncPortalCoachLinksForStudent } from './portalBridge.js';
 
 export const router = Router();
 
@@ -843,6 +843,7 @@ router.post('/students', authenticateUser, requireAdmin, async (req: Authenticat
 
   try {
     await Promise.all(recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record)));
+    await syncPortalCoachLinksForStudent(stuId).catch(console.error);
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedStudent(stuId));
   } catch (error: any) {
@@ -988,6 +989,7 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
       recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record, false))
     );
     await markFirestoreStateChanged();
+    await Promise.all(created.map((student) => syncPortalCoachLinksForStudent(student.id).catch(console.error)));
     db.saveToDisk();
   } catch (error: any) {
     localRecordsToRollback.forEach(([collection, id]) => collection.delete(id));
@@ -1244,6 +1246,7 @@ router.post('/classes', authenticateUser, requireAdmin, async (req: Authenticate
 
   try {
     await Promise.all(recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record)));
+    await Promise.all((Array.isArray(student_ids) ? student_ids : []).map((studentId: string) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedClass(classId));
   } catch (error: any) {
@@ -1326,6 +1329,7 @@ router.post('/classes/bulk', authenticateUser, requireAdmin, async (req: Authent
   try {
     await Promise.all(writes.map(([collection, id, record]) => syncDocToFirestore(collection, id, record, false)));
     await markFirestoreStateChanged();
+    await Promise.all(Array.from(new Set(ready.flatMap((item) => item.studentIds))).map((studentId) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
     db.saveToDisk();
     return res.json({ success: true, importedCount: created.length, errorCount: errors.length, created: created.map((item) => db.getPopulatedClass(item.id)), errors });
   } catch (error: any) {
@@ -1463,6 +1467,10 @@ router.put('/classes/:id', authenticateUser, requireAdmin, async (req: Authentic
       ...membershipWrites,
       ...sessionWrites,
     ]);
+    if (Array.isArray(student_ids)) {
+      const affected = new Set<string>([...student_ids, ...Array.from(db.memberships.values()).filter((membership) => membership.schedule_id === id).map((membership) => membership.student_id)]);
+      await Promise.all(Array.from(affected).map((studentId) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
+    }
     db.saveToDisk();
     return res.json(db.getPopulatedClass(id));
   } catch (error: any) {
@@ -1485,6 +1493,7 @@ router.delete('/classes/:id', authenticateUser, requireAdmin, async (req: Authen
     }
     return [];
   });
+  const affectedStudentIds = membershipIds.map((membershipId) => db.memberships.get(membershipId)?.student_id).filter((studentId): studentId is string => Boolean(studentId));
   try {
     await Promise.all([
       deleteDocFromFirestore('classes', id),
@@ -1494,6 +1503,7 @@ router.delete('/classes/:id', authenticateUser, requireAdmin, async (req: Authen
     membershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
     db.classes.delete(id);
     db.schedules.delete(id);
+    await Promise.all(affectedStudentIds.map((studentId) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
     db.saveToDisk();
     return res.json({ success: true, message: `Class ${cls.name} deleted successfully` });
   } catch (error: any) {

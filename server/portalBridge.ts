@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { AttendanceRecord, ClassSession, Student } from '../src/types.js';
+import { db } from './db.js';
+import { syncDocToFirestore } from './firestoreSync.js';
 
 type AwardResult = {
   status: 'SYNCED' | 'NOT_LINKED' | 'PENDING' | 'DISABLED';
@@ -74,4 +76,34 @@ export async function createPortalInvite(student: Student) {
   if (!result) throw new Error('Portal connection is not configured yet.');
   if (!result.response.ok) throw new Error(result.data?.message || 'Could not create portal invite.');
   return result.data as { invite_url: string; expires_at: string };
+}
+
+/**
+ * Mirrors recurring attendance enrolments only. One-off replacement sessions
+ * deliberately do not enter this list, so they never grant permanent access.
+ */
+export async function syncPortalCoachLinksForStudent(studentId: string): Promise<void> {
+  const student = db.students.get(studentId);
+  if (!student || !configuration()) return;
+  const coachNames = Array.from(new Set(
+    Array.from(db.memberships.values())
+      .filter((membership) => membership.student_id === studentId && membership.status === 'ACTIVE')
+      .map((membership) => db.schedules.get(membership.schedule_id))
+      .filter((schedule): schedule is NonNullable<typeof schedule> => Boolean(schedule && schedule.status === 'ACTIVE'))
+      .map((schedule) => db.coaches.get(schedule.default_coach_id || schedule.coach_id)?.name)
+      .filter((name): name is string => Boolean(name))
+  ));
+  const previous = student.portal_coach_sync_names || [];
+  const allNames = Array.from(new Set([...previous, ...coachNames]));
+  for (const coachName of allNames) {
+    const result = await signedPost('/integration/attendance/coach-assignment', {
+      student_id: student.student_id,
+      coach_name: coachName,
+      assigned: coachNames.includes(coachName),
+    });
+    if (!result?.response.ok) throw new Error(result?.data?.message || `Could not sync portal coach ${coachName}.`);
+  }
+  student.portal_coach_sync_names = coachNames;
+  db.students.set(student.id, student);
+  await syncDocToFirestore('students', student.id, student);
 }

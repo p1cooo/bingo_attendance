@@ -52,6 +52,7 @@ export interface Parent {
 export interface Student {
   id: string;
   student_id: string; // e.g. STU-0101 or UNREG-XXXX
+  portal_coach_sync_names?: string[];
   full_name: string;
   nick_name?: string;
   school?: string;
