@@ -43,6 +43,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [savingStudentId, setSavingStudentId] = useState<string | null>(null);
+  const [starsByStudent, setStarsByStudent] = useState<Record<string, string>>({});
+  const [tshirtByStudent, setTshirtByStudent] = useState<Record<string, boolean>>({});
 
   // Replacement student modal
   const [isReplacementModalOpen, setIsReplacementModalOpen] = useState(false);
@@ -92,7 +94,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     studentId: string,
     studentName: string,
     status: 'PRESENT' | 'ABSENT',
-    attendanceType: 'REGULAR' | 'REPLACEMENT' = 'REGULAR'
+    attendanceType: 'REGULAR' | 'REPLACEMENT' = 'REGULAR',
+    baseStars?: number,
+    luckyTshirtWorn?: boolean,
   ) => {
     if (!session) return;
     setSavingStudentId(studentId);
@@ -102,6 +106,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         student_id: studentId,
         status,
         attendance_type: attendanceType,
+        ...(baseStars !== undefined ? { base_stars: baseStars } : {}),
+        ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
       });
 
       if (status === 'PRESENT') {
@@ -488,6 +494,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             const isSaving = savingStudentId === student.id;
             const studentFullName = student?.full_name || 'Student';
             const studentId = student?.student_id || '';
+            const starsValue = starsByStudent[student.id] ?? (record?.base_stars?.toString() || '');
+            const shirtWorn = tshirtByStudent[student.id] ?? Boolean(record?.lucky_tshirt_worn);
+            const parsedStars = starsValue.trim() === '' ? undefined : Number(starsValue);
             const initials = studentFullName
               .trim()
               .split(/\s+/)
@@ -553,7 +562,50 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           Note: {record.replacement_note}
                         </p>
                       )}
+                      {record?.portal_sync_status === 'NOT_LINKED' && (
+                        <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold mt-1">
+                          Portal not registered yet — attendance is saved, but stars could not be added.
+                        </p>
+                      )}
+                      {record?.portal_sync_status === 'PENDING' && (
+                        <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold mt-1">
+                          Portal sync pending — attendance is saved. {record.portal_sync_message}
+                        </p>
+                      )}
+                      {record?.portal_sync_status === 'SYNCED' && (
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-bold mt-1">
+                          ⭐ Portal: +{record.portal_awarded_stars} ({record.base_stars} × {record.portal_multiplier})
+                        </p>
+                      )}
                     </div>
+                  </div>
+
+                  {/* Stars are entered before marking present. Pet bonuses stay in
+                      the portal, which is the source of truth for rewards. */}
+                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-2 py-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-600" aria-hidden="true" />
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      inputMode="decimal"
+                      value={starsValue}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
+                      placeholder="Stars"
+                      aria-label={`Base stars for ${studentFullName}`}
+                      className="w-16 bg-transparent text-center text-xs font-black text-slate-900 dark:text-white outline-none disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
+                      title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
+                      aria-pressed={shirtWorn}
+                      className={`rounded-xl px-2 py-1 text-sm transition-colors disabled:opacity-50 ${shirtWorn ? 'bg-amber-400 ring-2 ring-amber-700' : 'bg-white dark:bg-neutral-800'}`}
+                    >
+                      👕
+                    </button>
                   </div>
 
                   {/* 2 Direct 1-Tap Attendance Actions: [ ✓ Present ] [ ✕ Absent ] */}
@@ -567,7 +619,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           student.id,
                           studentFullName,
                           'PRESENT',
-                          isReplacement ? 'REPLACEMENT' : 'REGULAR'
+                          isReplacement ? 'REPLACEMENT' : 'REGULAR',
+                          parsedStars,
+                          shirtWorn,
                         )
                       }
                       className={`h-9 px-4 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${

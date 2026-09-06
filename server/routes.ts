@@ -29,6 +29,7 @@ import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
 import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged } from './firestoreSync.js';
+import { awardPortalStars, createPortalInvite } from './portalBridge.js';
 
 export const router = Router();
 
@@ -1932,7 +1933,7 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, async (req: Authenti
 router.post('/sessions/:id/attendance', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
-  const { student_id, status, attendance_type, replacement_note } = req.body;
+  const { student_id, status, attendance_type, replacement_note, base_stars, lucky_tshirt_worn } = req.body;
 
   if (!student_id || !status) {
     return res.status(400).json({ error: 'Student ID and attendance status are required' });
@@ -1966,6 +1967,19 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
   const prevStatus: AttendanceStatus | 'NOT_MARKED' = existingRecord ? existingRecord.status : 'NOT_MARKED';
   const newStatus = status as AttendanceStatus;
   const attType = (attendance_type as AttendanceType) || (existingRecord ? existingRecord.attendance_type : 'REGULAR');
+  const suppliedStars = base_stars === undefined || base_stars === '' ? undefined : Number(base_stars);
+  if (suppliedStars !== undefined && (!Number.isFinite(suppliedStars) || suppliedStars < 0 || suppliedStars > 10000)) {
+    return res.status(400).json({ error: 'Stars must be a number from 0 to 10,000.' });
+  }
+  if (newStatus === 'ABSENT' && suppliedStars && suppliedStars > 0) {
+    return res.status(400).json({ error: 'Absent students cannot receive stars.' });
+  }
+  if (existingRecord?.portal_sync_status === 'SYNCED' && suppliedStars !== undefined && suppliedStars !== existingRecord.base_stars) {
+    return res.status(400).json({ error: 'This star award has already synced. Use the future star-correction action so the portal audit remains accurate.' });
+  }
+  if (existingRecord?.portal_sync_status === 'SYNCED' && newStatus !== 'PRESENT' && newStatus !== 'LATE') {
+    return res.status(400).json({ error: 'This attendance already awarded stars. Use the future star-correction action before changing it to absent or excused.' });
+  }
 
   let recordId: string;
   if (existingRecord) {
@@ -1976,6 +1990,8 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
     existingRecord.marked_at = new Date().toISOString();
     existingRecord.marked_by_user_id = user.id;
     existingRecord.notification_status = 'SENT';
+    if (suppliedStars !== undefined) existingRecord.base_stars = suppliedStars;
+    if (lucky_tshirt_worn !== undefined) existingRecord.lucky_tshirt_worn = Boolean(lucky_tshirt_worn);
     db.attendance.set(recordId, existingRecord);
     syncDocToFirestore('attendance', recordId, existingRecord).catch(console.error);
   } else {
@@ -1990,6 +2006,8 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
       marked_at: new Date().toISOString(),
       marked_by_user_id: user.id,
       notification_status: 'SENT',
+      ...(suppliedStars !== undefined ? { base_stars: suppliedStars } : {}),
+      lucky_tshirt_worn: Boolean(lucky_tshirt_worn),
     };
     db.attendance.set(recordId, newRecord);
     syncDocToFirestore('attendance', recordId, newRecord).catch(console.error);
@@ -2042,6 +2060,28 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
       coachName: coach?.name || 'Coach',
       replacementNote: req.body.replacement_note,
     }).catch((err) => console.error('[Routes] Attendance notification alert error:', err));
+  }
+
+  // Attendance always wins: the record above is created first. A portal outage
+  // only makes the reward pending; it can never undo or block roll-call.
+  const record = db.attendance.get(recordId)!;
+  if ((newStatus === 'PRESENT' || newStatus === 'LATE') && suppliedStars !== undefined && suppliedStars > 0 && student) {
+    const teachingCoach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
+    const portalResult = await awardPortalStars({
+      attendance: record,
+      student,
+      session: session as ClassSession,
+      coachName: teachingCoach?.name,
+      baseStars: suppliedStars,
+      luckyTshirtWorn: Boolean(record.lucky_tshirt_worn),
+    });
+    record.portal_sync_status = portalResult.status;
+    record.portal_transaction_id = portalResult.transactionId;
+    record.portal_awarded_stars = portalResult.awardedStars;
+    record.portal_multiplier = portalResult.multiplier;
+    record.portal_sync_message = portalResult.message;
+    db.attendance.set(recordId, record);
+    await syncDocToFirestore('attendance', recordId, record).catch(console.error);
   }
 
   return res.json({
@@ -2478,6 +2518,18 @@ router.get('/export/class-schedules-docx', authenticateUser, requireAdmin, async
     return res.send(docBuffer);
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Failed to generate Word document' });
+  }
+});
+
+// Admin creates a one-time portal registration URL. The portal receives the
+// immutable STU code and locked name; parents never type or choose either.
+router.post('/students/:id/portal-invite', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const student = db.students.get(req.params.id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  try {
+    return res.json(await createPortalInvite(student));
+  } catch (error: any) {
+    return res.status(502).json({ error: error.message || 'Could not create portal invite' });
   }
 });
 

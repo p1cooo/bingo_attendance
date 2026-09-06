@@ -428,12 +428,18 @@ class ApiClient {
       attendance_type?: string;
       replacement_note?: string;
       audit_reason?: string;
+      base_stars?: number;
+      lucky_tshirt_worn?: boolean;
     }
   ): Promise<{ success: boolean; attendance_record: AttendanceRecord; session: ClassSession }> {
     return this.request(`/sessions/${sessionId}/attendance`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  async createPortalInvite(studentId: string): Promise<{ invite_url: string; expires_at: string }> {
+    return this.request(`/students/${studentId}/portal-invite`, { method: 'POST' });
   }
 
   async addReplacementStudent(

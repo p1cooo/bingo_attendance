@@ -173,6 +173,13 @@ export interface AttendanceRecord {
   marked_by_user_name?: string;
   student?: Student;
   notification_status?: NotificationStatus;
+  base_stars?: number;
+  lucky_tshirt_worn?: boolean;
+  portal_sync_status?: 'SYNCED' | 'NOT_LINKED' | 'PENDING' | 'DISABLED';
+  portal_transaction_id?: string;
+  portal_awarded_stars?: number;
+  portal_multiplier?: number;
+  portal_sync_message?: string;
 }
 
 export interface AttendanceAuditLog {
