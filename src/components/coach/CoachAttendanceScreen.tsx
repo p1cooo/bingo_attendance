@@ -585,34 +585,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Stars are entered before marking present. Pet bonuses stay in
-                      the portal, which is the source of truth for rewards. */}
-                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-2 py-1.5">
-                    <Sparkles className="w-4 h-4 text-amber-600" aria-hidden="true" />
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      inputMode="decimal"
-                      value={starsValue}
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
-                      onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
-                      placeholder="Stars"
-                      aria-label={`Base stars for ${studentFullName}`}
-                      className="w-16 bg-transparent text-center text-xs font-black text-slate-900 dark:text-white outline-none disabled:opacity-50"
-                    />
-                    <button
-                      type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
-                      onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
-                      title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
-                      aria-pressed={shirtWorn}
-                      className={`rounded-xl px-2 py-1 text-sm transition-colors disabled:opacity-50 ${shirtWorn ? 'bg-amber-400 ring-2 ring-amber-700' : 'bg-white dark:bg-neutral-800'}`}
-                    >
-                      👕
-                    </button>
-                  </div>
-
                   {/* 2 Direct 1-Tap Attendance Actions: [ ✓ Present ] [ ✕ Absent ] */}
                   <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                     {/* PRESENT */}
@@ -660,6 +632,32 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       <X className="w-3.5 h-3.5 stroke-[3]" />
                       <span>Absent</span>
                     </button>
+                  </div>
+
+                  {/* Stars follow attendance in the action flow. The portal
+                      remains the source of truth for pet bonuses. */}
+                  <div className="flex h-9 items-center self-end sm:self-center shrink-0 overflow-hidden rounded-xl border-2 border-slate-900 bg-amber-50 dark:bg-amber-950/20 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.08)]">
+                    <Sparkles className="ml-2.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      inputMode="decimal"
+                      value={starsValue}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
+                      placeholder="Stars"
+                      aria-label={`Base stars for ${studentFullName}`}
+                      className="w-14 bg-transparent px-1 text-center text-xs font-black text-slate-900 outline-none placeholder:text-slate-400 dark:text-white disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
+                      title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
+                      aria-pressed={shirtWorn}
+                      className={`flex h-full w-9 items-center justify-center border-l-2 border-slate-900 text-sm transition-colors disabled:opacity-50 ${shirtWorn ? 'bg-amber-400' : 'bg-white hover:bg-amber-100 dark:bg-neutral-800 dark:hover:bg-neutral-700'}`}
+                    >👕</button>
                   </div>
                 </div>
               </div>
