@@ -324,9 +324,21 @@ router.post('/admin/users', authenticateUser, requireAdmin, async (req: Authenti
       created_at: existingUser ? existingUser.created_at : new Date().toISOString(),
     };
 
-    await syncDocToFirestore('users', newUser.id, newUser);
+    // Keep the in-memory state ahead of the durable write. syncDocToFirestore()
+    // publishes a full state snapshot, so adding this only afterwards lets a
+    // second serverless request restore a snapshot that cannot see the account
+    // which Firebase Auth has just created.
+    const previousUser = existingUser ? { ...existingUser } : undefined;
+    if (existingUser && existingUser.id !== newUser.id) db.users.delete(existingUser.id);
     db.users.set(newUser.id, newUser);
-    db.saveToDisk();
+    try {
+      await syncDocToFirestore('users', newUser.id, newUser);
+      db.saveToDisk();
+    } catch (persistErr) {
+      db.users.delete(newUser.id);
+      if (previousUser) db.users.set(previousUser.id, previousUser);
+      throw persistErr;
+    }
 
     return res.status(201).json({
       success: true,
@@ -605,16 +617,25 @@ router.post('/coaches', authenticateUser, requireAdmin, async (req: Authenticate
     if (!existingUser) {
       return res.status(400).json({ error: 'Create the Firebase account before creating the coach profile.' });
     }
+    const previousUser = { ...existingUser };
     existingUser.coach_id = coachId;
     existingUser.role = 'COACH';
-
-    await Promise.all([
-      syncDocToFirestore('users', existingUser.id, existingUser),
-      syncDocToFirestore('coaches', coachId, newCoach),
-    ]);
+    // Both documents must already be present in the in-memory state before
+    // either write publishes its snapshot. Otherwise a subsequent request can
+    // reload a coachless user/profile pair from a partial snapshot.
     db.users.set(existingUser.id, existingUser);
     db.coaches.set(coachId, newCoach);
-    db.saveToDisk();
+    try {
+      await Promise.all([
+        syncDocToFirestore('users', existingUser.id, existingUser),
+        syncDocToFirestore('coaches', coachId, newCoach),
+      ]);
+      db.saveToDisk();
+    } catch (persistErr) {
+      db.users.set(previousUser.id, previousUser);
+      db.coaches.delete(coachId);
+      throw persistErr;
+    }
     return res.status(201).json(newCoach);
   } catch (error: any) {
     console.error('[Create Coach] Firestore write failed:', error?.message || error);
