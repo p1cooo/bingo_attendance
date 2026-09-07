@@ -15,6 +15,8 @@ import {
   MessageSquare,
   Phone,
   User,
+  DatabaseZap,
+  Trash2,
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
@@ -22,6 +24,9 @@ export const SettingsView: React.FC = () => {
 
   const [logs, setLogs] = useState<NotificationLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resetText, setResetText] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   const loadLogs = async () => {
     try {
@@ -38,6 +43,22 @@ export const SettingsView: React.FC = () => {
   useEffect(() => {
     loadLogs();
   }, []);
+
+  const resetOperationalData = async () => {
+    if (resetText !== 'RESET TEST DATA') return;
+    try {
+      setResetting(true);
+      const result = await api.resetOperationalData();
+      showToast(`${result.message} ${result.deleted.students || 0} student records removed.`, 'success');
+      setShowResetDialog(false);
+      setResetText('');
+      setLogs([]);
+    } catch (err: any) {
+      showToast(err.message || 'The reset did not complete.', 'error');
+    } finally {
+      setResetting(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -282,6 +303,57 @@ export const SettingsView: React.FC = () => {
           </div>
         )}
       </div>
+
+      <div className="bg-rose-50 dark:bg-rose-950/20 border-2 border-rose-700 rounded-3xl p-5 sm:p-6 shadow-[4px_4px_0px_0px_rgba(159,18,57,1)] dark:shadow-[4px_4px_0px_0px_rgba(251,113,133,0.12)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center border-2 border-slate-900 flex-shrink-0">
+              <DatabaseZap className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-rose-950 dark:text-rose-200">Pre-launch Test Data Reset</h3>
+              <p className="text-xs text-rose-900/80 dark:text-rose-200/80 mt-1 max-w-2xl">
+                Permanently removes all students, coaches, classes, schedules, sessions, attendance, logs, and non-super-admin accounts. Super-admin access is retained.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowResetDialog(true)}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 border-slate-900 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-colors"
+          >
+            <Trash2 className="w-4 h-4" /> Reset Test Data
+          </button>
+        </div>
+      </div>
+
+      {showResetDialog && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/55 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Confirm test data reset">
+          <div className="w-full max-w-lg bg-white dark:bg-neutral-900 rounded-3xl border-2 border-slate-900 dark:border-neutral-700 p-6 shadow-[6px_6px_0px_0px_rgba(15,23,42,1)]">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center border-2 border-slate-900 flex-shrink-0"><AlertTriangle className="w-5 h-5" /></div>
+              <div>
+                <h3 className="font-black text-slate-900 dark:text-white">Permanently reset test data?</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">This cannot be undone. The super-admin account remains; all other operational and Firebase coach/admin accounts are deleted.</p>
+              </div>
+            </div>
+            <label className="block mt-5 text-[11px] font-black text-slate-700 dark:text-slate-200 uppercase tracking-wide">
+              Type <code className="normal-case bg-slate-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded">RESET TEST DATA</code> to continue
+              <input
+                value={resetText}
+                onChange={(event) => setResetText(event.target.value)}
+                className="mt-2 w-full px-3 py-2.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-sm font-bold outline-none focus:ring-2 focus:ring-rose-400"
+                autoFocus
+              />
+            </label>
+            <div className="flex justify-end gap-3 mt-6">
+              <button onClick={() => { setShowResetDialog(false); setResetText(''); }} disabled={resetting} className="px-4 py-2.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 text-xs font-black text-slate-700 dark:text-slate-200">Cancel</button>
+              <button onClick={resetOperationalData} disabled={resetText !== 'RESET TEST DATA' || resetting} className="px-4 py-2.5 rounded-xl border-2 border-slate-900 bg-rose-600 disabled:bg-rose-300 disabled:text-rose-100 text-white text-xs font-black shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
+                {resetting ? 'Resetting…' : 'Permanently Reset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -740,6 +740,13 @@ class ApiClient {
     });
   }
 
+  async resetOperationalData(): Promise<{ success: boolean; message: string; deleted: Record<string, number>; preserved_super_admins: number; firebase_auth_failures: string[] }> {
+    return this.request('/admin/reset-operational-data', {
+      method: 'POST',
+      body: JSON.stringify({ confirmation: 'RESET TEST DATA' }),
+    });
+  }
+
   async getUsers(): Promise<{ users: (User & { coach_profile?: Coach; student_profile?: Student })[] }> {
     return this.request<{ users: (User & { coach_profile?: Coach; student_profile?: Student })[] }>('/admin/users');
   }

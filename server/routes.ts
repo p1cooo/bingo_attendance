@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { db } from './db.js';
-import { adminAuth, hasAdminCredentials } from './firebaseAdmin.js';
+import { adminAuth, getFirestoreDb, hasAdminCredentials } from './firebaseAdmin.js';
 import {
   authenticateUser,
   requireAdmin,
@@ -1336,6 +1336,77 @@ router.post('/classes/bulk', authenticateUser, requireAdmin, async (req: Authent
     rollback.forEach(([collection, id]) => collection.delete(id));
     console.error('[Bulk Class Import] Firestore write failed:', error?.message || error);
     return res.status(503).json({ error: 'Classes could not be saved to Firestore. No successful import has been reported; please retry after the issue is resolved.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
+});
+
+/**
+ * One-time operational reset for the academy's pre-launch test data. The
+ * route intentionally retains every SUPER_ADMIN profile and Firebase account
+ * so the caller cannot lock the academy out of its own portal.
+ */
+router.post('/admin/reset-operational-data', authenticateUser, requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  if (req.body?.confirmation !== 'RESET TEST DATA') {
+    return res.status(400).json({ error: 'Type RESET TEST DATA to confirm this irreversible reset.' });
+  }
+
+  const preservedAdmins = Array.from(db.users.values()).filter((user) => user.role === 'SUPER_ADMIN');
+  if (preservedAdmins.length === 0) {
+    return res.status(409).json({ error: 'Reset stopped: no SUPER_ADMIN account was found to preserve.' });
+  }
+
+  const preservedIds = new Set(preservedAdmins.map((user) => user.id));
+  const removableFirebaseUserIds = Array.from(db.users.values())
+    .filter((user) => !preservedIds.has(user.id))
+    .map((user) => user.id);
+  const collections = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance', 'auditLogs', 'notificationLogs'];
+
+  try {
+    const firestore = getFirestoreDb();
+    const writer = firestore.bulkWriter();
+    const deleted: Record<string, number> = {};
+
+    for (const collectionName of collections) {
+      const documents = await firestore.collection(collectionName).listDocuments();
+      const removals = collectionName === 'users'
+        ? documents.filter((document) => !preservedIds.has(document.id))
+        : documents;
+      removals.forEach((document) => writer.delete(document));
+      deleted[collectionName] = removals.length;
+    }
+    await writer.close();
+
+    const authFailures: string[] = [];
+    if (adminAuth && removableFirebaseUserIds.length > 0) {
+      for (let offset = 0; offset < removableFirebaseUserIds.length; offset += 1000) {
+        const result = await adminAuth.deleteUsers(removableFirebaseUserIds.slice(offset, offset + 1000));
+        result.errors.forEach((error) => authFailures.push(error.error.uid));
+      }
+    }
+
+    db.users = new Map(preservedAdmins.map((user) => [user.id, user]));
+    db.coaches.clear();
+    db.parents.clear();
+    db.students.clear();
+    db.classes.clear();
+    db.schedules.clear();
+    db.memberships.clear();
+    db.sessions.clear();
+    db.attendance.clear();
+    db.auditLogs = [];
+    db.notificationLogs = [];
+    await markFirestoreStateChanged();
+    db.saveToDisk();
+
+    return res.json({
+      success: true,
+      message: 'Operational test data was reset. Super-admin access was preserved.',
+      deleted,
+      preserved_super_admins: preservedAdmins.length,
+      firebase_auth_failures: authFailures,
+    });
+  } catch (error: any) {
+    console.error('[Reset] Operational data reset failed:', error?.message || error);
+    return res.status(500).json({ error: 'Reset did not complete. No further reset attempts were made.', code: 'RESET_FAILED' });
   }
 });
 
