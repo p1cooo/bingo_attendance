@@ -149,7 +149,12 @@ export function mergeConfirmedWeiYuanDuplicateCoaches(): Promise<void> {
     const retainedRef = firestore.collection('coaches').doc(RETAINED_WEI_YUAN_COACH_ID);
     const retainedSnapshot = await retainedRef.get();
     if (!retainedSnapshot.exists) {
-      throw new Error('The retained Wei Yuan coach profile was not found; duplicate merge was not applied.');
+      // A clean pre-launch reset intentionally removes every coach. This
+      // historical, one-time repair is no longer relevant in that state and
+      // must never prevent the freshly reset academy from loading.
+      hasVerifiedWeiYuanMerge = true;
+      console.log('[Firestore] Wei Yuan duplicate repair skipped: retained coach is absent after reset.');
+      return;
     }
 
     const duplicateSnapshots = await Promise.all(
