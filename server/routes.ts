@@ -2073,8 +2073,9 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, async (req: Authenti
   if (end_time !== undefined) session.end_time = end_time;
 
   try {
-    await syncDocToFirestore('sessions', id, session);
+    // syncDocToFirestore publishes the full snapshot, so it must see the new session.
     db.sessions.set(id, session);
+    await syncDocToFirestore('sessions', id, session);
     db.saveToDisk();
     return res.json(db.getPopulatedSession(id));
   } catch (error: any) {
