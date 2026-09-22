@@ -97,6 +97,7 @@ class ApiClient {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
+      signal: options.signal ?? AbortSignal.timeout(20_000),
     });
 
     // If 401 Unauthorized occurs and Firebase Auth user is signed in, force refresh and retry once

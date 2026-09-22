@@ -6,7 +6,7 @@ import { initializeFirestoreSync, mergeConfirmedWeiYuanDuplicateCoaches } from '
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3001;
 
   // Production state is Firestore. Local development can still start without
   // credentials, but it must never be deployed as a substitute for Firestore.
@@ -46,7 +46,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '127.0.0.1', () => {
     console.log(`Academy Management System server running on http://localhost:${PORT}`);
   });
 }
