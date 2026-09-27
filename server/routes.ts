@@ -1399,8 +1399,9 @@ router.post('/admin/reset-operational-data', authenticateUser, requireSuperAdmin
     const authFailures: string[] = [];
     if (adminAuth && removableFirebaseUserIds.length > 0) {
       for (let offset = 0; offset < removableFirebaseUserIds.length; offset += 1000) {
-        const result = await adminAuth.deleteUsers(removableFirebaseUserIds.slice(offset, offset + 1000));
-        result.errors.forEach((error) => authFailures.push(error.error.uid));
+        const batchIds = removableFirebaseUserIds.slice(offset, offset + 1000);
+        const result = await adminAuth.deleteUsers(batchIds);
+        result.errors.forEach((error) => authFailures.push(batchIds[error.index]));
       }
     }
 
