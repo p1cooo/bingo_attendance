@@ -29,7 +29,7 @@ import { notificationService } from './notifications/NotificationService.js';
 import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
-import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged } from './firestoreSync.js';
+import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged, publishFirestoreRevision } from './firestoreSync.js';
 import { awardPortalStars, getPortalLink, portalAccountStatuses, syncPortalCoachLinksForStudent } from './portalBridge.js';
 import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from './studentIds.js';
 import { academyMonth, academyToday } from './academyDate.js';
@@ -47,9 +47,9 @@ export const canManageStudent = (user: User, studentId: string) => isAdmin(user)
   const schedule = db.schedules.get(membership.schedule_id);
   return membership.student_id === studentId && membership.status === 'ACTIVE' && Boolean(schedule && db.classes.get(schedule.class_id)?.is_active && canManageClass(user, schedule.class_id));
 });
-async function persistMutation(records: Array<[string, string, unknown]>) {
+async function persistMutation(records: Array<[string, string, unknown]>, revisionOnly = false) {
   await Promise.all(records.map(([collection, id, value]) => syncDocToFirestore(collection, id, value, false)));
-  await markFirestoreStateChanged();
+  await (revisionOnly ? publishFirestoreRevision() : markFirestoreStateChanged());
 }
 
 async function occupiedStudentCodes(): Promise<Set<string>> {
@@ -1409,7 +1409,7 @@ router.post('/classes', authenticateUser, requireCoachOrAdmin, async (req: Authe
 
   try {
     await recordActivity(user, 'CLASS_CREATED', 'class', classId, { classId, summary: newClass.name });
-    await persistMutation(recordsToPersist);
+    await persistMutation(recordsToPersist, true);
     await Promise.all((Array.isArray(student_ids) ? student_ids : []).map((studentId: string) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedClass(classId));
@@ -1717,7 +1717,7 @@ router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: Au
     currentMemberships.forEach((m) => {
       if (!targetStudentIds.has(m.student_id)) {
         db.memberships.delete(m.id);
-        membershipWrites.push(deleteDocFromFirestore('memberships', m.id));
+        membershipWrites.push(deleteDocFromFirestore('memberships', m.id, false));
       }
     });
 
@@ -1733,7 +1733,7 @@ router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: Au
           status: 'ACTIVE' as const,
         };
         db.memberships.set(memId, membership);
-        membershipWrites.push(syncDocToFirestore('memberships', memId, membership));
+        membershipWrites.push(syncDocToFirestore('memberships', memId, membership, false));
       }
     });
   }
@@ -1749,17 +1749,18 @@ router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: Au
       }
       if (cls.start_time) sess.start_time = cls.start_time;
       if (cls.end_time) sess.end_time = cls.end_time;
-      sessionWrites.push(syncDocToFirestore('sessions', sess.id, sess));
+      sessionWrites.push(syncDocToFirestore('sessions', sess.id, sess, false));
     }
   });
 
   try {
     await Promise.all([
-      syncDocToFirestore('classes', id, cls),
-      syncDocToFirestore('schedules', sched.id, sched),
+      syncDocToFirestore('classes', id, cls, false),
+      syncDocToFirestore('schedules', sched.id, sched, false),
       ...membershipWrites,
       ...sessionWrites,
     ]);
+    await publishFirestoreRevision();
     if (Array.isArray(student_ids)) {
       const affected = new Set<string>([...student_ids, ...Array.from(db.memberships.values()).filter((membership) => membership.schedule_id === id).map((membership) => membership.student_id)]);
       await Promise.all(Array.from(affected).map((studentId) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
@@ -1788,7 +1789,7 @@ router.delete('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req:
   cls.is_active = false;
   schedules.forEach((schedule) => { schedule.is_active = false; schedule.status = 'INACTIVE'; });
   try {
-    await persistMutation([['classes', id, cls], ...schedules.map((schedule): [string, string, unknown] => ['schedules', schedule.id, schedule])]);
+    await persistMutation([['classes', id, cls], ...schedules.map((schedule): [string, string, unknown] => ['schedules', schedule.id, schedule])], true);
     return res.json({ success: true, message: 'Class archived; attendance history preserved.' });
   } catch {
     db.classes.set(id, before);
@@ -2349,7 +2350,8 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
       timestamp: new Date().toISOString(),
     };
     db.auditLogs.unshift(auditEntry);
-    syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
+    syncDocToFirestore('auditLogs', auditEntry.id, auditEntry, false)
+      .then(publishFirestoreRevision).catch(console.error);
   }
 
   // Parent Attendance Notification Trigger (via NotificationService)
@@ -2402,7 +2404,8 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     record.portal_sync_message = portalResult.message;
     db.attendance.set(recordId, record);
     const portalPersistStartedAt = performance.now();
-    await syncDocToFirestore('attendance', recordId, record).catch(console.error);
+    await syncDocToFirestore('attendance', recordId, record, false)
+      .then(publishFirestoreRevision).catch(console.error);
     attendanceTiming('portal_result_persist', portalPersistStartedAt);
   }
 
@@ -2824,7 +2827,8 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, async (req: Authen
     timestamp: new Date().toISOString(),
   };
   db.auditLogs.unshift(auditEntry);
-  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
+  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry, false)
+    .then(publishFirestoreRevision).catch(console.error);
 
   return res.json({
     success: true,

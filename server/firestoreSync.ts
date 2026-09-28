@@ -1,6 +1,7 @@
 import { getFirestoreDb, hasAdminCredentials, firebaseAdminConfigurationError } from './firebaseAdmin.js';
 import { db } from './db.js';
 import { attendanceTiming } from './attendanceTiming.js';
+import crypto from 'node:crypto';
 
 let syncPromise: Promise<void> | null = null;
 let hasLoadedDurableState = false;
@@ -84,6 +85,19 @@ export async function markFirestoreStateChanged(): Promise<void> {
   const revisionStartedAt = performance.now();
   await getFirestoreDb().collection(STATE_COLLECTION).doc(STATE_DOCUMENT).set({ revision }, { merge: true });
   attendanceTiming('revision', revisionStartedAt);
+}
+
+/**
+ * Attendance and its credit ledger are already durable in their Firestore
+ * transaction. Publish a new revision without rebuilding all 14 boot-cache
+ * snapshots. A cold instance sees the revision mismatch and reloads canonical
+ * collections, then refreshes the cache during initialization.
+ */
+export async function publishFirestoreRevision(): Promise<void> {
+  const startedAt = performance.now();
+  await getFirestoreDb().collection(STATE_COLLECTION).doc(STATE_DOCUMENT)
+    .set({ revision: `${new Date().toISOString()}:${crypto.randomUUID()}` }, { merge: true });
+  attendanceTiming('revision_only', startedAt);
 }
 
 /** Firestore rejects undefined values; optional fields are omitted instead. */
@@ -237,8 +251,8 @@ export async function syncDocToFirestore(collectionName: string, docId: string, 
   if (markRevision) await markFirestoreStateChanged();
 }
 
-export async function deleteDocFromFirestore(collectionName: string, docId: string) {
+export async function deleteDocFromFirestore(collectionName: string, docId: string, markRevision = true) {
   if (!hasAdminCredentials) throw new Error(firebaseAdminConfigurationError());
   await getFirestoreDb().collection(collectionName).doc(docId).delete();
-  await markFirestoreStateChanged();
+  if (markRevision) await markFirestoreStateChanged();
 }

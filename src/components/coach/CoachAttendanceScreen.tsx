@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useToast } from '../common/Toast.js';
 import { api } from '../../lib/api.js';
 import { getTodayDateString } from '../../lib/dateUtils.js';
 import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
+import { runAttendanceMark, withAttendanceRecord } from '../../lib/attendanceMark.js';
 import { ClassSession, Student, AttendanceRecord, AttendanceStatus } from '../../types.js';
 import {
   ArrowLeft,
@@ -42,7 +43,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [session, setSession] = useState<(ClassSession & { enrolled_students?: Student[] }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [savingStudentId, setSavingStudentId] = useState<string | null>(null);
+  const pendingMarks = useRef(new Set<string>());
+  const [savingStudentIds, setSavingStudentIds] = useState<Set<string>>(() => new Set());
   const [starsByStudent, setStarsByStudent] = useState<Record<string, string>>({});
   const [tshirtByStudent, setTshirtByStudent] = useState<Record<string, boolean>>({});
   const [creatingPortalInviteFor, setCreatingPortalInviteFor] = useState<string | null>(null);
@@ -102,16 +104,41 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     luckyTshirtWorn?: boolean,
   ) => {
     if (!session) return;
-    setSavingStudentId(studentId);
-
+    const priorRecord = session.attendance_records?.find((item) => item.student_id === studentId);
+    const optimisticRecord: AttendanceRecord = {
+      ...(priorRecord || {}),
+      id: priorRecord?.id || `pending-${studentId}`,
+      session_id: sessionId,
+      student_id: studentId,
+      status,
+      attendance_type: attendanceType,
+      marked_at: new Date().toISOString(),
+      marked_by_user_id: user?.id || '',
+      ...(baseStars !== undefined ? { base_stars: baseStars } : {}),
+      ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
+    };
     try {
-      await api.markAttendance(sessionId, {
-        student_id: studentId,
-        status,
-        attendance_type: attendanceType,
-        ...(baseStars !== undefined ? { base_stars: baseStars } : {}),
-        ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
+      const saved = await runAttendanceMark(pendingMarks.current, studentId, {
+        optimistic: () => {
+          setSavingStudentIds(new Set(pendingMarks.current));
+          setSession((current) => current?.id === sessionId ? withAttendanceRecord(current, studentId, optimisticRecord) : current);
+        },
+        save: () => api.markAttendance(sessionId, {
+          student_id: studentId,
+          status,
+          attendance_type: attendanceType,
+          ...(baseStars !== undefined ? { base_stars: baseStars } : {}),
+          ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
+        }),
+        commit: ({ attendance_record }) => {
+          const record = { ...attendance_record, student: priorRecord?.student || attendance_record.student };
+          setSession((current) => current?.id === sessionId ? withAttendanceRecord(current, studentId, record) : current);
+        },
+        rollback: () => {
+          setSession((current) => current?.id === sessionId ? withAttendanceRecord(current, studentId, priorRecord) : current);
+        },
       });
+      if (!saved) return;
 
       if (status === 'PRESENT') {
         showToast(`✓ ${studentName}: PRESENT (Attendance recorded)`, 'success', 2000);
@@ -119,13 +146,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         showToast(`✕ ${studentName}: ABSENT (Attendance recorded)`, 'info', 2000);
       }
 
-      // Reload session
-      const updated = await api.getSession(sessionId);
-      setSession(updated);
     } catch (err: any) {
-      showToast(err.message || 'Unable to save attendance', 'error');
+      showToast(`${studentName}: ${err.message || 'Unable to save attendance'}. Status reverted; please retry.`, 'error');
     } finally {
-      setSavingStudentId(null);
+      setSavingStudentIds(new Set(pendingMarks.current));
     }
   };
 
@@ -514,7 +538,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         ) : (
           filteredRoll.map(({ student, record, isReplacement, isUnregistered }) => {
             const status = record?.status;
-            const isSaving = savingStudentId === student.id;
+            const isSaving = savingStudentIds.has(student.id);
             const studentFullName = student?.full_name || 'Student';
             const studentId = student?.student_id || '';
             const starsValue = starsByStudent[student.id] ?? (record?.base_stars?.toString() || '');

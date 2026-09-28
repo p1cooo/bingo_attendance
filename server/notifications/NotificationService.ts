@@ -1,6 +1,6 @@
 import { db } from '../db.js';
 import { NotificationLog } from '../../src/types.js';
-import { syncDocToFirestore } from '../firestoreSync.js';
+import { syncDocToFirestore, publishFirestoreRevision } from '../firestoreSync.js';
 import {
   AttendanceNotificationPayload,
   NotificationProvider,
@@ -82,7 +82,7 @@ export class NotificationService {
       }
 
       // Sync to Firestore
-      syncDocToFirestore('notificationLogs', notifId, notifLog).catch((err) => {
+      syncDocToFirestore('notificationLogs', notifId, notifLog, false).then(publishFirestoreRevision).catch((err) => {
         console.error('[NotificationService] Firestore sync error:', err?.message);
       });
     } catch (dbErr: any) {
