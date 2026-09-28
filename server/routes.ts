@@ -1978,8 +1978,16 @@ router.get('/sessions', authenticateUser, async (req: AuthenticatedRequest, res:
     const createdSessions = db.ensureSessionsForMonth(requestedMonth);
     if (createdSessions.length > 0) {
       try {
-        await Promise.all(createdSessions.map((session) => syncDocToFirestore('sessions', session.id, session)));
+        await Promise.all(createdSessions.map((session) => syncDocToFirestore('sessions', session.id, session, false)));
+        await publishFirestoreRevision();
       } catch (error: any) {
+        // Let the next request retry any unsaved generated occurrence. Keep a
+        // session if roll call has already referenced it concurrently.
+        createdSessions.forEach((session) => {
+          if (!Array.from(db.attendance.values()).some((record) => record.session_id === session.id)) {
+            db.sessions.delete(session.id);
+          }
+        });
         console.error('[Generate Sessions] Firestore write failed:', error?.message || error);
         return res.status(503).json({ error: 'Sessions could not be generated safely. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
       }
