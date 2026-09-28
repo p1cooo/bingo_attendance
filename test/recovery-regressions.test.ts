@@ -5,6 +5,7 @@ import express from 'express';
 import { db } from '../server/db.js';
 import { router, canManageStudent } from '../server/routes.js';
 import { replacementCreditImpact, replacementCreditChange } from '../server/replacementCredits.js';
+import { legacyAbsenceRepair } from '../server/legacyAbsenceCredits.js';
 
 test('coach scope uses active normal class membership, not replacement attendance', () => {
   const original = [db.classes, db.schedules, db.memberships, db.attendance] as const;
@@ -34,6 +35,20 @@ test('booking does not debit; present debits once in impact model and negative b
   assert.equal(replacementCreditChange(undefined, booked, 'GROUP').delta, 0);
   assert.deepEqual(replacementCreditChange(booked, present, 'GROUP'), { nextImpact: -1, changed: true, revision: 1, delta: -1 });
   assert.deepEqual(replacementCreditChange({ ...present, replacement_credit_impact: -1, replacement_credit_revision: 1 }, present, 'GROUP'), { nextImpact: -1, changed: false, revision: 1, delta: 0 });
+});
+
+test('legacy regular group absences earn one repair credit and never double credit on re-save', () => {
+  const absent = { id: 'old-absence', student_id: 'student-1', session_id: 'session-1', status: 'ABSENT', attendance_type: 'REGULAR' } as any;
+  const earned = { id: 'old-absence:replacement-credit:1', attendance_id: absent.id, student_id: absent.student_id, amount: 1, reason: 'GROUP_ABSENCE_CREDIT' } as any;
+  assert.equal(legacyAbsenceRepair(absent, 'GROUP', []), 'CREATE_CREDIT');
+  assert.equal(legacyAbsenceRepair(absent, 'GROUP', [earned]), 'STAMP_IMPACT');
+  assert.equal(legacyAbsenceRepair({ ...absent, replacement_credit_impact: 1, replacement_credit_revision: 1 }, 'GROUP', [earned]), 'NONE');
+  assert.equal(legacyAbsenceRepair(absent, 'INDIVIDUAL', []), 'NONE');
+  assert.equal(legacyAbsenceRepair({ ...absent, attendance_type: 'REPLACEMENT' }, 'GROUP', []), 'NONE');
+  assert.equal(legacyAbsenceRepair({ ...absent, status: 'EXCUSED' }, 'GROUP', []), 'NONE');
+  assert.equal(legacyAbsenceRepair(absent, 'GROUP', [{ ...earned, amount: -1 }]), 'CONFLICT');
+  assert.deepEqual(replacementCreditChange(undefined, absent, 'GROUP'), { nextImpact: 1, changed: true, revision: 1, delta: 1 });
+  assert.deepEqual(replacementCreditChange({ ...absent, replacement_credit_impact: 1, replacement_credit_revision: 1 }, absent, 'GROUP'), { nextImpact: 1, changed: false, revision: 1, delta: 0 });
 });
 
 test('signed portal progress is JSON, rejects invalid requests, and preserves archived class history', async () => {
