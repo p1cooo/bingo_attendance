@@ -1,5 +1,6 @@
 import { getFirestoreDb, hasAdminCredentials, firebaseAdminConfigurationError } from './firebaseAdmin.js';
 import { db } from './db.js';
+import { attendanceTiming } from './attendanceTiming.js';
 
 let syncPromise: Promise<void> | null = null;
 let hasLoadedDurableState = false;
@@ -76,9 +77,13 @@ let weiYuanMergePromise: Promise<void> | null = null;
 let hasVerifiedWeiYuanMerge = false;
 
 export async function markFirestoreStateChanged(): Promise<void> {
+  const snapshotStartedAt = performance.now();
   const revision = new Date().toISOString();
   await writeStateSnapshots(revision);
+  attendanceTiming('snapshot_14_docs', snapshotStartedAt);
+  const revisionStartedAt = performance.now();
   await getFirestoreDb().collection(STATE_COLLECTION).doc(STATE_DOCUMENT).set({ revision }, { merge: true });
+  attendanceTiming('revision', revisionStartedAt);
 }
 
 /** Firestore rejects undefined values; optional fields are omitted instead. */

@@ -2,6 +2,7 @@ import { getFirestoreDb } from './firebaseAdmin.js';
 import { db } from './db.js';
 import { AttendanceRecord, ClassType, ReplacementAdvanceCommitment, ReplacementCredit, ReplacementCreditReason } from '../src/types.js';
 import { markFirestoreStateChanged } from './firestoreSync.js';
+import { attendanceTiming } from './attendanceTiming.js';
 
 export function replacementCreditBalance(studentId: string): number {
   return [...db.replacementCredits.values()].filter(x => x.student_id === studentId).reduce((sum, x) => sum + x.amount, 0);
@@ -75,6 +76,7 @@ export async function persistAttendanceWithReplacementReconciliation(
 ): Promise<AttendanceReconciliationResult> {
   const firestore = getFirestoreDb();
   const attendanceRef = firestore.collection('attendance').doc(input.attendance.id);
+  const transactionStartedAt = performance.now();
   const result = await firestore.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(attendanceRef);
     const previous = snapshot.exists ? snapshot.data() as AttendanceRecord : undefined;
@@ -144,12 +146,15 @@ export async function persistAttendanceWithReplacementReconciliation(
     transaction.set(attendanceRef, attendance);
     return { attendance, credit, commitments };
   });
+  attendanceTiming('transaction', transactionStartedAt);
 
   db.attendance.set(result.attendance.id, result.attendance);
   if (result.credit) db.replacementCredits.set(result.credit.id, result.credit);
   result.commitments.forEach((commitment) => db.replacementAdvanceCommitments.set(commitment.id, commitment));
   // Snapshots are a cache/boot optimisation; the transaction above remains
   // authoritative.  Await the revision update before reporting success.
+  const publishStartedAt = performance.now();
   await markFirestoreStateChanged();
+  attendanceTiming('transaction_publish', publishStartedAt);
   return result;
 }

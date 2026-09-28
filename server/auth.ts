@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { db } from './db.js';
 import { User, Coach } from '../src/types.js';
 import { adminAuth, hasAdminCredentials, firebaseAdminConfigurationError } from './firebaseAdmin.js';
+import { attendanceTiming } from './attendanceTiming.js';
 
 export interface AuthenticatedRequest extends Request { user?: User; coachProfile?: Coach; }
 
@@ -10,8 +11,10 @@ export async function authenticateUser(req: AuthenticatedRequest, res: Response,
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized: Firebase ID token required' });
   if (!hasAdminCredentials || !adminAuth) return res.status(503).json({ error: firebaseAdminConfigurationError(), code: 'FIREBASE_ADMIN_UNAVAILABLE' });
+  const authStartedAt = performance.now();
   try {
     const decoded = await adminAuth.verifyIdToken(authHeader.slice(7).trim());
+    if (req.path.endsWith('/attendance')) attendanceTiming('auth', authStartedAt);
     const email = decoded.email?.toLowerCase().trim();
     const user = Array.from(db.users.values()).find((candidate) => candidate.id === decoded.uid || Boolean(email && candidate.email.toLowerCase() === email));
     if (!user) return res.status(403).json({ error: 'No Academy profile is assigned to this Firebase account.' });

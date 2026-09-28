@@ -35,6 +35,7 @@ import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from
 import { academyMonth, academyToday } from './academyDate.js';
 import { recordActivity } from './activity.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError } from './replacementCredits.js';
+import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 
 export const router = Router();
@@ -2240,7 +2241,11 @@ router.put('/sessions/:id', authenticateUser, requireCoachOrAdmin, async (req: A
 // 7. ATTENDANCE & REPLACEMENT ATTENDANCE
 // ============================================================
 
-router.post('/sessions/:id/attendance', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/sessions/:id/attendance', (_req, res, next) => {
+  const requestStartedAt = performance.now();
+  res.once('finish', () => attendanceTiming('request_total', requestStartedAt));
+  next();
+}, authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
   const { student_id, status, attendance_type, replacement_note, base_stars, lucky_tshirt_worn } = req.body;
@@ -2314,6 +2319,7 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
   };
   const attendanceClass = db.classes.get(session.class_id);
   if (!attendanceClass) return res.status(409).json({ error: 'The session class is unavailable. Attendance was not changed.' });
+  const persistStartedAt = performance.now();
   try {
     await persistAttendanceWithReplacementReconciliation({
       attendance: attendanceToPersist,
@@ -2323,6 +2329,7 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
     console.error('[Attendance] Durable attendance/credit transaction failed:', error?.message || error);
     return res.status(503).json({ error: 'Attendance could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
+  attendanceTiming('attendance_persist', persistStartedAt);
 
   // Create Audit Log if status changed
   if (prevStatus !== newStatus) {
@@ -2377,6 +2384,7 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
   // only makes the reward pending; it can never undo or block roll-call.
   const record = db.attendance.get(recordId)!;
   if (!portalAwardLocked && (newStatus === 'PRESENT' || newStatus === 'LATE') && suppliedStars !== undefined && suppliedStars > 0 && student) {
+    const portalStartedAt = performance.now();
     const teachingCoach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
     const portalResult = await awardPortalStars({
       attendance: record,
@@ -2386,13 +2394,16 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
       baseStars: suppliedStars,
       luckyTshirtWorn: Boolean(record.lucky_tshirt_worn),
     });
+    attendanceTiming('portal_award', portalStartedAt);
     record.portal_sync_status = portalResult.status;
     record.portal_transaction_id = portalResult.transactionId;
     record.portal_awarded_stars = portalResult.awardedStars;
     record.portal_multiplier = portalResult.multiplier;
     record.portal_sync_message = portalResult.message;
     db.attendance.set(recordId, record);
+    const portalPersistStartedAt = performance.now();
     await syncDocToFirestore('attendance', recordId, record).catch(console.error);
+    attendanceTiming('portal_result_persist', portalPersistStartedAt);
   }
 
   return res.json({
