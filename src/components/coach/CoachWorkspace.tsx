@@ -39,14 +39,14 @@ export const CoachWorkspace: React.FC = () => {
   // Default to dynamic today date
   const todayStr = getTodayDateString();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => getWeekStart(todayStr, 'SUN'));
+  const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => getWeekStart(todayStr, 'MON'));
   const [sessions, setSessions] = useState<ClassSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [showStudents, setShowStudents] = useState(false);
   const [showClasses, setShowClasses] = useState(false);
 
-  // Fixed 7-day strip (Sunday to Saturday) containing the current weekAnchorDate
-  const weekDays = getFixedWeekDays(weekAnchorDate, 'SUN');
+  // Fixed Monday-to-Sunday strip containing the current weekAnchorDate
+  const weekDays = getFixedWeekDays(weekAnchorDate, 'MON');
 
   const handleSelectDay = (dateStr: string) => {
     setSelectedDate(dateStr);
@@ -55,7 +55,7 @@ export const CoachWorkspace: React.FC = () => {
   const handleShiftDay = (offset: number) => {
     const newDate = shiftDate(selectedDate, offset);
     setSelectedDate(newDate);
-    const newWeekStart = getWeekStart(newDate, 'SUN');
+    const newWeekStart = getWeekStart(newDate, 'MON');
     if (newWeekStart !== weekAnchorDate) {
       setWeekAnchorDate(newWeekStart);
     }
@@ -63,12 +63,12 @@ export const CoachWorkspace: React.FC = () => {
 
   const handleJumpToday = () => {
     setSelectedDate(todayStr);
-    setWeekAnchorDate(getWeekStart(todayStr, 'SUN'));
+    setWeekAnchorDate(getWeekStart(todayStr, 'MON'));
   };
 
   const handleCustomDateSelect = (newDate: string) => {
     setSelectedDate(newDate);
-    setWeekAnchorDate(getWeekStart(newDate, 'SUN'));
+    setWeekAnchorDate(getWeekStart(newDate, 'MON'));
   };
 
   const fetchTodaySessions = async () => {

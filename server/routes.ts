@@ -828,9 +828,21 @@ router.get('/students', authenticateUser, async (req: AuthenticatedRequest, res:
 
   if (user.role === 'COACH') {
     const portalStatuses = await portalAccountStatuses(list.map((student) => student.student_id));
+    const normalClassDays = new Map<string, Set<number>>();
+    for (const membership of db.memberships.values()) {
+      if (membership.status !== 'ACTIVE') continue;
+      const schedule = db.schedules.get(membership.schedule_id);
+      const cls = db.classes.get(schedule?.class_id || membership.schedule_id);
+      if (!cls?.is_active || !canManageClass(user, cls.id)) continue;
+      const day = cls.day_of_week ?? schedule?.day_of_week;
+      if (day === undefined) continue;
+      if (!normalClassDays.has(membership.student_id)) normalClassDays.set(membership.student_id, new Set());
+      normalClassDays.get(membership.student_id)!.add(day);
+    }
     const scoped = list.map((student) => ({
       id: student.id, full_name: student.full_name, student_id: student.student_id,
       replacement_credits: replacementCreditBalance(student.id), portal_account_status: portalStatuses[student.student_id] || 'UNKNOWN',
+      normal_class_days: Array.from(normalClassDays.get(student.id) || []).sort((a, b) => (a + 6) % 7 - (b + 6) % 7),
     }));
     return res.json(scoped);
   }

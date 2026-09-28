@@ -68,7 +68,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
   // Active Date & View Mode
   const todayStr = getTodayDateString();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => getWeekStart(todayStr, 'SUN'));
+  const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => getWeekStart(todayStr, 'MON'));
   const [viewMode, setViewMode] = useState<'DAY' | 'MONTH'>('DAY');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => todayStr.substring(0, 7));
 
@@ -192,8 +192,8 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
   const isEditingIndividualLesson = !!editingSession &&
     (editingSession.class_item?.class_type || classes.find((item) => item.id === editingSession.class_id)?.class_type) === 'INDIVIDUAL';
 
-  // Fixed 7-day strip (Sunday to Saturday) containing the current weekAnchorDate
-  const dayStrip = getFixedWeekDays(weekAnchorDate, 'SUN');
+  // Fixed Monday-to-Sunday strip containing the current weekAnchorDate
+  const dayStrip = getFixedWeekDays(weekAnchorDate, 'MON');
 
   const handleSelectDay = (dateStr: string) => {
     setSelectedDate(dateStr);
@@ -203,7 +203,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
     const newDate = shiftDate(selectedDate, offset);
     setSelectedDate(newDate);
     // If the shifted day is outside current week strip, shift week anchor too
-    const newWeekStart = getWeekStart(newDate, 'SUN');
+    const newWeekStart = getWeekStart(newDate, 'MON');
     if (newWeekStart !== weekAnchorDate) {
       setWeekAnchorDate(newWeekStart);
     }
@@ -217,12 +217,12 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
 
   const handleJumpToday = () => {
     setSelectedDate(todayStr);
-    setWeekAnchorDate(getWeekStart(todayStr, 'SUN'));
+    setWeekAnchorDate(getWeekStart(todayStr, 'MON'));
   };
 
   const handleCustomDateSelect = (newDate: string) => {
     setSelectedDate(newDate);
-    setWeekAnchorDate(getWeekStart(newDate, 'SUN'));
+    setWeekAnchorDate(getWeekStart(newDate, 'MON'));
   };
 
   // If inspecting a specific session roll call, render dedicated inspector

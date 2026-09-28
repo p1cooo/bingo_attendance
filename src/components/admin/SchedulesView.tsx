@@ -24,6 +24,7 @@ interface SchedulesViewProps {
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WEEK_DAY_VALUES = [1, 2, 3, 4, 5, 6, 0];
 
 export const SchedulesView: React.FC<SchedulesViewProps> = ({
   initialCreateModalOpen = false,
@@ -301,9 +302,9 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
               className="w-full px-3 py-1.5 text-xs rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none"
             >
               <option value="">All Days</option>
-              {DAY_NAMES.map((name, idx) => (
-                <option key={idx} value={idx}>
-                  {name}
+              {WEEK_DAY_VALUES.map((day) => (
+                <option key={day} value={day}>
+                  {DAY_NAMES[day]}
                 </option>
               ))}
             </select>
@@ -489,9 +490,9 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
                 onChange={(e) => setFormData({ ...formData, day_of_week: Number(e.target.value) })}
                 className="w-full px-3 py-1.5 text-xs rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none"
               >
-                {DAY_NAMES.map((name, idx) => (
-                  <option key={idx} value={idx}>
-                    {name}
+                {WEEK_DAY_VALUES.map((day) => (
+                  <option key={day} value={day}>
+                    {DAY_NAMES[day]}
                   </option>
                 ))}
               </select>

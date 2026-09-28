@@ -112,8 +112,8 @@ test('coach API handlers scope students and classes and restrict academy search 
       ['other', { id: 'other', student_id: 'STU-0004', full_name: 'Other Student', status: 'ACTIVE' } as any],
     ]);
     db.classes = new Map([
-      ['own-class', { id: 'own-class', name: 'Own Class', default_coach_id: 'coach-1', is_active: true } as any],
-      ['other-class', { id: 'other-class', name: 'Other Class', default_coach_id: 'coach-2', is_active: true } as any],
+      ['own-class', { id: 'own-class', name: 'Own Class', default_coach_id: 'coach-1', day_of_week: 2, is_active: true } as any],
+      ['other-class', { id: 'other-class', name: 'Other Class', default_coach_id: 'coach-2', day_of_week: 0, is_active: true } as any],
     ]);
     db.schedules = new Map([
       ['own-class', { id: 'own-class', class_id: 'own-class', coach_id: 'coach-1' } as any],
@@ -122,11 +122,13 @@ test('coach API handlers scope students and classes and restrict academy search 
     db.memberships = new Map([
       ['m1', { id: 'm1', student_id: 'own', schedule_id: 'own-class', status: 'ACTIVE' } as any],
       ['m2', { id: 'm2', student_id: 'other', schedule_id: 'other-class', status: 'ACTIVE' } as any],
+      ['m3', { id: 'm3', student_id: 'own', schedule_id: 'other-class', status: 'ACTIVE' } as any],
     ]);
     db.attendance = new Map();
     const students = await call('/students');
     assert.equal(students.code, 200);
     assert.deepEqual(students.body.map((student: any) => student.student_id), ['STU-0003']);
+    assert.deepEqual(students.body[0].normal_class_days, [2]);
     assert.equal((await call('/students/:id', { id: 'other' })).code, 403);
     assert.deepEqual((await call('/classes')).body.map((cls: any) => cls.id), ['own-class']);
     assert.equal((await call('/classes/:id', { id: 'other-class' })).code, 403);
@@ -140,6 +142,9 @@ test('coach API handlers scope students and classes and restrict academy search 
     assert.equal(search.body.find((student: any) => student.id === 'own').already_in_class, true);
     assert.equal(search.body.find((student: any) => student.id === 'other').assigned_elsewhere, true);
     assert.equal((await call('/classes/:id/student-search', { id: 'other-class' }, { search: 'student' })).code, 403);
+    db.students.set('replacement-only', { id: 'replacement-only', student_id: 'STU-0005', full_name: 'Replacement Only', status: 'ACTIVE' } as any);
+    db.attendance.set('replacement', { id: 'replacement', student_id: 'replacement-only', session_id: 'own-session', status: 'PRESENT', attendance_type: 'REPLACEMENT' } as any);
+    assert.deepEqual((await call('/students')).body.map((student: any) => student.student_id), ['STU-0003']);
   } finally {
     [db.students, db.classes, db.schedules, db.memberships, db.attendance] = original;
   }

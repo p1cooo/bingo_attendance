@@ -60,7 +60,7 @@ export function formatShortDate(dateStr: string): string {
  */
 export function getFixedWeekDays(
   referenceDateStr: string,
-  startDay: 'SUN' | 'MON' = 'SUN'
+  startDay: 'SUN' | 'MON' = 'MON'
 ): Array<{
   dateStr: string;
   dayNum: string;
@@ -129,7 +129,7 @@ export function getFixedWeekDays(
 /**
  * Returns the anchor date (e.g. Sunday) for the week containing referenceDateStr.
  */
-export function getWeekStart(referenceDateStr: string, startDay: 'SUN' | 'MON' = 'SUN'): string {
+export function getWeekStart(referenceDateStr: string, startDay: 'SUN' | 'MON' = 'MON'): string {
   const [y, m, d] = (referenceDateStr || getTodayDateString()).split('-').map(Number);
   const refDate = new Date(y, m - 1, d);
   const dayOfWeek = refDate.getDay();
