@@ -153,9 +153,9 @@ export function initializeFirestoreSync(): Promise<void> {
     db.notificationLogs = notificationSnapshot.docs.map((document) => document.data() as never);
     hasLoadedDurableState = true;
     lastDurableRevision = revision;
-    // The first legacy read upgrades the project. Subsequent Vercel cold
-    // starts need only 12 small document reads instead of every collection.
-    await writeStateSnapshots(revision || new Date().toISOString());
+    // Canonical collections are ready to serve. A cache miss must never make
+    // startup depend on 14 optional writes (or fail when write quota is full).
+    // The next ordinary full-snapshot mutation may refresh this boot cache.
     console.log(`[Firestore] Sync complete: ${db.users.size} users, ${db.coaches.size} coaches, ${db.students.size} students.`);
   })().finally(() => { syncPromise = null; });
   return syncPromise;
