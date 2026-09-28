@@ -11,9 +11,12 @@ import {
   ClassSession,
   AttendanceRecord,
   AttendanceAuditLog,
+  ActivityLog,
   NotificationLog,
   AttendanceStatus,
   AttendanceType,
+  ReplacementCredit,
+  ReplacementAdvanceCommitment,
   SessionStatus,
   SessionType,
 } from '../src/types.js';
@@ -34,7 +37,10 @@ class DatabaseStore {
   memberships: Map<string, StudentClassMembership> = new Map();
   sessions: Map<string, ClassSession> = new Map();
   attendance: Map<string, AttendanceRecord> = new Map();
+  replacementCredits: Map<string, ReplacementCredit> = new Map();
+  replacementAdvanceCommitments: Map<string, ReplacementAdvanceCommitment> = new Map();
   auditLogs: AttendanceAuditLog[] = [];
+  activityLogs: ActivityLog[] = [];
   notificationLogs: NotificationLog[] = [];
 
   constructor() {
@@ -53,7 +59,10 @@ class DatabaseStore {
     this.memberships.clear();
     this.sessions.clear();
     this.attendance.clear();
+    this.replacementCredits.clear();
+    this.replacementAdvanceCommitments.clear();
     this.auditLogs = [];
+    this.activityLogs = [];
     this.notificationLogs = [];
   }
 
@@ -90,7 +99,7 @@ class DatabaseStore {
 
     // Attendance stats
     const studentAttendances = Array.from(this.attendance.values()).filter(
-      (a) => a.student_id === id
+      (a) => a.student_id === id && a.status !== 'BOOKED'
     );
     const presentCount = studentAttendances.filter((a) => a.status === 'PRESENT' || a.status === 'LATE').length;
     const replacementCount = studentAttendances.filter((a) => a.attendance_type === 'REPLACEMENT').length;
@@ -217,6 +226,7 @@ class DatabaseStore {
       const user = this.users.get(r.marked_by_user_id);
       return {
         ...r,
+        replacement_advance_commitment_id: Array.from(this.replacementAdvanceCommitments.values()).find((commitment) => commitment.replacement_attendance_id === r.id)?.id,
         student,
         marked_by_user_name: user?.name || 'Staff',
       };
@@ -249,7 +259,7 @@ class DatabaseStore {
       actual_coach: teachingCoach,
       expected_students_count: expectedStudentsCount,
       enrolled_students: enrolledStudents,
-      marked_attendance_count: records.length,
+      marked_attendance_count: records.filter((record) => record.status !== 'BOOKED').length,
       present_count: presentCount,
       attendance_records: populatedRecords,
     };
@@ -362,7 +372,10 @@ class DatabaseStore {
         memberships: Array.from(this.memberships.entries()),
         sessions: Array.from(this.sessions.entries()),
         attendance: Array.from(this.attendance.entries()),
+        replacementCredits: Array.from(this.replacementCredits.entries()),
+        replacementAdvanceCommitments: Array.from(this.replacementAdvanceCommitments.entries()),
         auditLogs: this.auditLogs,
+        activityLogs: this.activityLogs,
         notificationLogs: this.notificationLogs,
       };
       fs.writeFileSync(DB_FILE_PATH, JSON.stringify(state, null, 2), 'utf-8');
@@ -400,7 +413,10 @@ class DatabaseStore {
       if (state.memberships) this.memberships = new Map(state.memberships);
       if (state.sessions) this.sessions = new Map(state.sessions);
       if (state.attendance) this.attendance = new Map(state.attendance);
+      if (state.replacementCredits) this.replacementCredits = new Map(state.replacementCredits);
+      if (state.replacementAdvanceCommitments) this.replacementAdvanceCommitments = new Map(state.replacementAdvanceCommitments);
       if (state.auditLogs) this.auditLogs = state.auditLogs;
+      if (state.activityLogs) this.activityLogs = state.activityLogs;
       if (state.notificationLogs) this.notificationLogs = state.notificationLogs;
       console.log('[DB] Successfully restored academy database state from disk');
     } catch (err) {

@@ -45,6 +45,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [savingStudentId, setSavingStudentId] = useState<string | null>(null);
   const [starsByStudent, setStarsByStudent] = useState<Record<string, string>>({});
   const [tshirtByStudent, setTshirtByStudent] = useState<Record<string, boolean>>({});
+  const [creatingPortalInviteFor, setCreatingPortalInviteFor] = useState<string | null>(null);
 
   // Replacement student modal
   const [isReplacementModalOpen, setIsReplacementModalOpen] = useState(false);
@@ -53,6 +54,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [replacementNote, setReplacementNote] = useState('');
   const [isAddingReplacement, setIsAddingReplacement] = useState(false);
+  const [advanceSessions, setAdvanceSessions] = useState<Array<{ id: string; date: string; day: string; class_name: string; coach_name?: string }>>([]);
+  const [advanceFutureSessionId, setAdvanceFutureSessionId] = useState('');
 
   // Unregistered student modal
   const [isUnregModalOpen, setIsUnregModalOpen] = useState(false);
@@ -82,7 +85,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   // Load all students for replacement search when modal opens
   useEffect(() => {
     if (isReplacementModalOpen && allStudents.length === 0) {
-      api.getStudents({ status: 'ACTIVE' })
+      api.getReplacementCandidates(sessionId)
         .then((stus) => setAllStudents(stus || []))
         .catch(() => {
           showToast('Failed to load students list for replacement', 'error');
@@ -138,9 +141,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       await api.addReplacementStudent(sessionId, {
         student_id: selectedStudentId,
         replacement_note: replacementNote || 'Attending replacement chess session',
+        ...(advanceFutureSessionId ? { advance_future_session_id: advanceFutureSessionId } : {}),
       });
 
-      showToast('✓ Replacement student added and marked present', 'success');
+      showToast('✓ Replacement student booked', 'success');
       setIsReplacementModalOpen(false);
       setSelectedStudentId('');
       setReplacementNote('');
@@ -154,6 +158,12 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       setIsAddingReplacement(false);
     }
   };
+
+  useEffect(() => {
+    const selected = allStudents.find((student) => student.id === selectedStudentId) as (Student & { replacement_credits?: number }) | undefined;
+    setAdvanceFutureSessionId(''); setAdvanceSessions([]);
+    if (selected && Number(selected.replacement_credits || 0) <= 0) api.getReplacementFutureSessions(sessionId, selected.id).then(setAdvanceSessions).catch(() => setAdvanceSessions([]));
+  }, [selectedStudentId]);
 
   const handleAddUnregisteredStudent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -190,6 +200,19 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       showToast(err.message || 'Failed to record unregistered student', 'error');
     } finally {
       setIsAddingUnreg(false);
+    }
+  };
+
+  const handleCreatePortalInvite = async (student: Student) => {
+    try {
+      setCreatingPortalInviteFor(student.id);
+      const { invite_url } = await api.createPortalInvite(student.id);
+      await navigator.clipboard.writeText(invite_url);
+      showToast(`Registration link for ${student.full_name} copied`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Could not prepare the Bingo Space registration link', 'error');
+    } finally {
+      setCreatingPortalInviteFor(null);
     }
   };
 
@@ -472,7 +495,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         <button
           id="add-replacement-student-btn"
           onClick={() => setIsReplacementModalOpen(true)}
-          disabled={isCancelled || isOffDay || isFutureSession}
+          disabled={isCancelled || isOffDay}
           className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl text-xs font-black bg-white dark:bg-neutral-900 hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-900 dark:text-white border-2 border-slate-900 dark:border-neutral-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.06)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
         >
           <UserPlus className="w-4 h-4" />
@@ -541,9 +564,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                         )}
                         {isReplacement && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 border border-blue-300">
-                            Replacement
+                            Replacement Student
                           </span>
                         )}
+                        {isReplacement && record?.replacement_advance_commitment_id && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">Advance</span>}
                       </div>
 
                       <div className="flex items-center gap-2.5 text-xs text-slate-500 font-bold flex-wrap">
@@ -563,9 +587,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                         </p>
                       )}
                       {record?.portal_sync_status === 'NOT_LINKED' && (
-                        <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold mt-1">
-                          Portal not registered yet — attendance is saved, but stars could not be added.
-                        </p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold">Portal not registered yet — attendance is saved, but stars could not be added.</p>
+                          <button type="button" onClick={() => handleCreatePortalInvite(student)} disabled={creatingPortalInviteFor === student.id} className="shrink-0 rounded-lg border border-amber-500 px-2 py-1 text-[10px] font-black text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-950/40">{creatingPortalInviteFor === student.id ? 'Creating…' : 'Copy registration link'}</button>
+                        </div>
                       )}
                       {record?.portal_sync_status === 'PENDING' && (
                         <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold mt-1">
@@ -579,7 +604,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       )}
                       {record?.portal_sync_status === 'SYNCED' && (
                         <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-bold mt-1">
-                          ⭐ Portal: +{record.portal_awarded_stars} ({record.base_stars} × {record.portal_multiplier})
+                          ⭐ Portal: +{record.portal_awarded_stars} ({record.base_stars} × {record.portal_multiplier}) — correct star mistakes manually in Bingo Space.
                         </p>
                       )}
                     </div>
@@ -677,7 +702,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             💡 <b>Quick Roll-call Inclusion:</b> Creates a temporary <b>UNREGISTERED</b> record with a temporary ID. This student can immediately participate in roll call. Admin will be notified and can formally convert to an enrolled student with classes later.
           </div>
 
-          <div>
+          <p className="text-xs text-emerald-700">Booking uses no credit. Mark Present after attendance to use one credit.</p>
+          {advanceSessions.length > 0 && <label className="block text-xs font-bold">Optional future missed class
+            <select value={advanceFutureSessionId} onChange={(event) => setAdvanceFutureSessionId(event.target.value)} className="mt-1 w-full rounded-lg border p-2"><option value="">None</option>{advanceSessions.map((future) => <option key={future.id} value={future.id}>{future.date} · {future.class_name}</option>)}</select>
+          </label>}          <div>
             <label className="block text-xs font-black uppercase text-slate-700 dark:text-slate-300 mb-1">
               Student Full Name *
             </label>
@@ -811,7 +839,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     }`}
                   >
                     <span>
-                      {stu.full_name} ({stu.student_id})
+                      {stu.full_name} ({stu.student_id}) <span className="opacity-70">· {stu.replacement_credits} credit{stu.replacement_credits === 1 ? '' : 's'}</span>
                     </span>
                     {selectedStudentId === stu.id && <Check className="w-3.5 h-3.5" />}
                   </button>
@@ -846,7 +874,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               disabled={!selectedStudentId || isAddingReplacement}
               className="px-4 py-2 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white disabled:opacity-40 cursor-pointer"
             >
-              {isAddingReplacement ? 'Adding...' : 'Confirm & Mark Present'}
+              {isAddingReplacement ? 'Adding...' : 'Book Replacement'}
             </button>
           </div>
         </form>

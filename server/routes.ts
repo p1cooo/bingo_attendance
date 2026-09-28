@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import crypto from 'crypto';
 import { db } from './db.js';
 import { adminAuth, getFirestoreDb, hasAdminCredentials } from './firebaseAdmin.js';
 import {
@@ -29,9 +30,59 @@ import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
 import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged } from './firestoreSync.js';
-import { awardPortalStars, createPortalInvite, syncPortalCoachLinksForStudent } from './portalBridge.js';
+import { awardPortalStars, getPortalLink, portalAccountStatuses, syncPortalCoachLinksForStudent } from './portalBridge.js';
+import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from './studentIds.js';
+import { academyMonth, academyToday } from './academyDate.js';
+import { recordActivity } from './activity.js';
+import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError } from './replacementCredits.js';
+import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 
 export const router = Router();
+
+const isAdmin = (user: User) => user.role === 'ADMIN' || user.role === 'SUPER_ADMIN';
+const canManageClass = (user: User, classId: string) => isAdmin(user) || Boolean(user.coach_id && db.classes.get(classId)?.default_coach_id === user.coach_id);
+const canManageSchedule = (user: User, scheduleId: string) => isAdmin(user) || Boolean(user.coach_id && [db.schedules.get(scheduleId)?.coach_id, db.schedules.get(scheduleId)?.default_coach_id].includes(user.coach_id));
+export const canManageStudent = (user: User, studentId: string) => isAdmin(user) || Array.from(db.memberships.values()).some((membership) => {
+  const schedule = db.schedules.get(membership.schedule_id);
+  return membership.student_id === studentId && membership.status === 'ACTIVE' && Boolean(schedule && db.classes.get(schedule.class_id)?.is_active && canManageClass(user, schedule.class_id));
+});
+async function persistMutation(records: Array<[string, string, unknown]>) {
+  await Promise.all(records.map(([collection, id, value]) => syncDocToFirestore(collection, id, value, false)));
+  await markFirestoreStateChanged();
+}
+
+async function occupiedStudentCodes(): Promise<Set<string>> {
+  const used = new Set(Array.from(db.students.values(), (student) => normaliseStudentCode(student.student_id)));
+  const durableStudents = await getFirestoreDb().collection('students').get();
+  durableStudents.forEach((document) => used.add(normaliseStudentCode(document.data().student_id)));
+  return used;
+}
+
+/**
+ * A reservation is the durable uniqueness guard across simultaneous Vercel
+ * requests.  Existing students are included above because they predate this
+ * guard; newly allocated codes are reserved before their student is saved.
+ */
+async function reserveStudentCode(requestedCode: unknown, usedCodes: Set<string>): Promise<string> {
+  const requested = normaliseStudentCode(requestedCode);
+  if (requested && !isFormalStudentCode(requested)) throw new Error('Student ID must use the format STU-0001.');
+  const code = requested || nextUnusedStudentCode(usedCodes);
+  if (usedCodes.has(code)) throw new Error(`Student ID ${code} is already in use`);
+
+  const reservation = getFirestoreDb().collection('_student_code_reservations').doc(code);
+  try {
+    await getFirestoreDb().runTransaction(async (transaction) => {
+      if ((await transaction.get(reservation)).exists) throw new Error(`Student ID ${code} is already in use`);
+      transaction.set(reservation, { student_id: code, created_at: new Date().toISOString() });
+    });
+  } catch (error) {
+    if (requested) throw error;
+    usedCodes.add(code);
+    return reserveStudentCode('', usedCodes);
+  }
+  usedCodes.add(code);
+  return code;
+}
 
 // Auto-persist on successful mutating requests (POST, PUT, DELETE, PATCH)
 router.use((req, res, next) => {
@@ -43,6 +94,35 @@ router.use((req, res, next) => {
     });
   }
   next();
+});
+
+// Private, read-only portal endpoint. It deliberately accepts only the
+// immutable STU code and returns no profile, roster, or balance data.
+router.get('/integration/portal/progress/:studentCode', (req, res) => {
+  const secret = process.env.ATTENDANCE_BRIDGE_SECRET || '';
+  const timestamp = String(req.header('X-Attendance-Timestamp') || '');
+  const signature = String(req.header('X-Attendance-Signature') || '');
+  const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.`).digest('hex');
+  if (!secret || !/^\d+$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300 || signature.length !== expected.length) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return res.status(401).json({ error: 'Unauthorized' });
+  const student = Array.from(db.students.values()).find((item) => item.student_id === req.params.studentCode);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  const records = Array.from(db.attendance.values())
+    .filter((record) => record.student_id === student.id && record.status !== 'BOOKED')
+    .map((record) => {
+      const session = db.sessions.get(record.session_id);
+      const classItem = session ? db.classes.get(session.class_id) : undefined;
+      return session ? {
+        event_id: `attendance:${record.id}`,
+        date: session.session_date,
+        class_name: classItem?.name,
+        status: record.status === 'PRESENT' || record.status === 'LATE' ? 'present' : 'absent',
+        attendance_type: record.attendance_type,
+      } : null;
+    }).filter(Boolean).sort((a: any, b: any) => b.date.localeCompare(a.date));
+  return res.json({ records, replacement_credits: replacementCreditBalance(student.id) });
 });
 
 // ============================================================
@@ -704,10 +784,12 @@ router.delete('/coaches/:id', authenticateUser, requireAdmin, async (req: Authen
 // 3. STUDENTS & PARENTS MANAGEMENT
 // ============================================================
 
-router.get('/students', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
+router.get('/students', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const { search, coach_id, class_id, status } = req.query;
 
   let list = Array.from(db.students.values()).map((s) => db.getPopulatedStudent(s.id)!);
+  const user = req.user!;
+  if (user.role === 'COACH') list = list.filter((student) => canManageStudent(user, student.id));
 
   if (status) {
     list = list.filter((s) => s.status === status);
@@ -743,7 +825,48 @@ router.get('/students', authenticateUser, (req: AuthenticatedRequest, res: Respo
     );
   }
 
+  if (user.role === 'COACH') {
+    const portalStatuses = await portalAccountStatuses(list.map((student) => student.student_id));
+    const scoped = list.map((student) => ({
+      id: student.id, full_name: student.full_name, student_id: student.student_id,
+      replacement_credits: replacementCreditBalance(student.id), portal_account_status: portalStatuses[student.student_id] || 'UNKNOWN',
+    }));
+    return res.json(scoped);
+  }
   return res.json(list);
+});
+
+// This deliberately narrow academy-wide directory is only available while a
+// coach is adding a replacement attendee; normal coach student browsing stays
+// scoped by the route above.
+router.get('/sessions/:id/replacement-candidates', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const session = db.sessions.get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!verifySessionAttendanceAccess(session.id, req.user!)) return res.status(403).json({ error: 'Forbidden' });
+  const q = String(req.query.search || '').trim().toLowerCase();
+  const candidates = Array.from(db.students.values()).filter((student) => student.status === 'ACTIVE' && (!q || student.full_name.toLowerCase().includes(q) || student.student_id.toLowerCase().includes(q))).map((student) => ({
+    id: student.id, full_name: student.full_name, student_id: student.student_id,
+    replacement_credits: replacementCreditBalance(student.id),
+  }));
+  return res.json(candidates);
+});
+
+router.get('/sessions/:id/replacement-candidates/:studentId/future-sessions', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const replacementSession = db.sessions.get(req.params.id);
+  const student = db.students.get(req.params.studentId);
+  if (!replacementSession || !student || student.status !== 'ACTIVE') return res.status(404).json({ error: 'Replacement session or active student not found' });
+  if (!verifySessionAttendanceAccess(replacementSession.id, req.user!)) return res.status(403).json({ error: 'Forbidden' });
+  const today = academyToday();
+  const unresolved = new Set(Array.from(db.replacementAdvanceCommitments.values()).filter((c) => c.status === 'PENDING' || c.status === 'REVIEW_REQUIRED').map((c) => c.future_session_id));
+  const sessions = Array.from(db.sessions.values()).filter((session) => {
+    const cls = db.classes.get(session.class_id);
+    const membership = Array.from(db.memberships.values()).some((m) => m.student_id === student.id && m.status === 'ACTIVE' && (m.schedule_id === session.schedule_id || m.schedule_id === session.class_id));
+    return session.session_date > today && session.status === 'SCHEDULED' && cls?.class_type === 'GROUP' && membership && !unresolved.has(session.id);
+  }).sort((a, b) => a.session_date.localeCompare(b.session_date)).map((session) => ({
+    id: session.id, date: session.session_date, day: new Date(`${session.session_date}T00:00:00`).toLocaleDateString('en-MY', { weekday: 'short' }),
+    class_name: db.classes.get(session.class_id)?.name || 'Group class', coach_name: db.coaches.get(session.actual_coach_id || session.scheduled_coach_id)?.name,
+  }));
+  return res.json(sessions);
 });
 
 router.get('/students/:id', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
@@ -753,6 +876,8 @@ router.get('/students/:id', authenticateUser, (req: AuthenticatedRequest, res: R
   if (!student) {
     return res.status(404).json({ error: 'Student not found' });
   }
+
+  if (!canManageStudent(req.user!, id)) return res.status(403).json({ error: 'Forbidden' });
 
   // Get past attendance history for this student
   const studentAttendanceRecords = Array.from(db.attendance.values())
@@ -778,7 +903,7 @@ router.get('/students/:id', authenticateUser, (req: AuthenticatedRequest, res: R
   });
 });
 
-router.post('/students', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/students', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const {
     student_id,
     full_name,
@@ -795,20 +920,16 @@ router.post('/students', authenticateUser, requireAdmin, async (req: Authenticat
   if (!full_name) {
     return res.status(400).json({ error: 'Student full name is required' });
   }
-
-  // Generate unique student ID if not provided
-  let finalStudentId = student_id ? String(student_id).trim().toUpperCase() : '';
-  if (!finalStudentId) {
-    const count = db.students.size + 1;
-    finalStudentId = `STU-0${100 + count}`;
+  const user = req.user!;
+  if (user.role === 'COACH' && (!user.coach_id || (Array.isArray(schedule_ids) && schedule_ids.some((scheduleId) => !canManageSchedule(user, String(scheduleId)))))) {
+    return res.status(403).json({ error: 'Coaches may only add students to their own active classes.' });
   }
 
-  // Check student ID uniqueness
-  const existingWithId = Array.from(db.students.values()).find(
-    (s) => s.student_id === finalStudentId
-  );
-  if (existingWithId) {
-    return res.status(400).json({ error: `Student ID ${finalStudentId} is already in use` });
+  let finalStudentId: string;
+  try {
+    finalStudentId = await reserveStudentCode(student_id, await occupiedStudentCodes());
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message || 'Could not reserve a unique student ID.' });
   }
 
   // Create or link parent
@@ -826,7 +947,7 @@ router.post('/students', authenticateUser, requireAdmin, async (req: Authenticat
     });
   }
 
-  const stuId = `stu-${Date.now()}`;
+  const stuId = `stu-${crypto.randomUUID()}`;
   const newStudent: Student = {
     id: stuId,
     student_id: finalStudentId,
@@ -853,7 +974,7 @@ router.post('/students', authenticateUser, requireAdmin, async (req: Authenticat
           id: memId,
           student_id: stuId,
           schedule_id: schedId,
-          joined_date: new Date().toISOString().split('T')[0],
+        joined_date: academyToday(),
           status: 'ACTIVE' as const,
         };
         db.memberships.set(memId, membership);
@@ -863,7 +984,8 @@ router.post('/students', authenticateUser, requireAdmin, async (req: Authenticat
   }
 
   try {
-    await Promise.all(recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record)));
+    await recordActivity(user, 'STUDENT_CREATED', 'student', stuId, { summary: finalStudentId });
+    await persistMutation(recordsToPersist);
     await syncPortalCoachLinksForStudent(stuId).catch(console.error);
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedStudent(stuId));
@@ -891,8 +1013,14 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
   // could report a successful import while persisting nothing at all.
   const recordsToPersist: Array<[string, string, unknown]> = [];
   const localRecordsToRollback: Array<[Map<string, any>, string]> = [];
+  let usedStudentCodes: Set<string>;
+  try {
+    usedStudentCodes = await occupiedStudentCodes();
+  } catch (error: any) {
+    return res.status(503).json({ error: error.message || 'Student IDs could not be verified. Please retry.', code: 'FIRESTORE_READ_FAILED' });
+  }
 
-  students.forEach((item: any, idx: number) => {
+  for (const [idx, item] of students.entries()) {
     const rowNum = idx + 1;
     const {
       full_name,
@@ -909,25 +1037,10 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
 
     if (!full_name || !String(full_name).trim()) {
       errors.push({ row: rowNum, full_name, feedback: 'Student full name is required.' });
-      return;
+      continue;
     }
 
     const cleanFullName = String(full_name).trim();
-
-    // Check duplicate student name or student ID
-    let finalStudentId = student_id ? String(student_id).trim().toUpperCase() : '';
-    if (!finalStudentId) {
-      const count = db.students.size + created.length + 1;
-      finalStudentId = `STU-0${100 + count}`;
-    }
-
-    const existingWithId = Array.from(db.students.values()).find(
-      (s) => s.student_id === finalStudentId
-    );
-    if (existingWithId) {
-      errors.push({ row: rowNum, full_name: cleanFullName, feedback: `Student ID ${finalStudentId} is already in use.` });
-      return;
-    }
 
     // Verify schedule_ids if provided
     const validScheduleIds: string[] = [];
@@ -949,7 +1062,15 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
         full_name: cleanFullName,
         feedback: `Schedule ID(s) not found: ${invalidScheduleIds.join(', ')}.`,
       });
-      return;
+      continue;
+    }
+
+    let finalStudentId: string;
+    try {
+      finalStudentId = await reserveStudentCode(student_id, usedStudentCodes);
+    } catch (error: any) {
+      errors.push({ row: rowNum, full_name: cleanFullName, feedback: error.message || 'Could not reserve a unique student ID.' });
+      continue;
     }
 
     // Create or link parent
@@ -991,7 +1112,7 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
         id: memId,
         student_id: stuId,
         schedule_id: schedId,
-        joined_date: new Date().toISOString().split('T')[0],
+        joined_date: academyToday(),
         status: 'ACTIVE' as const,
       };
       db.memberships.set(memId, membership);
@@ -1001,7 +1122,7 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
 
     const populated = db.getPopulatedStudent(stuId);
     created.push(populated);
-  });
+  }
 
   try {
     // Avoid writing the revision once per row; it is the signal that makes all
@@ -1031,13 +1152,17 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
   });
 });
 
-router.put('/students/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.put('/students/:id', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const student = db.students.get(id);
+  const user = req.user!;
 
   if (!student) {
     return res.status(404).json({ error: 'Student not found' });
   }
+
+  if (!canManageStudent(user, id)) return res.status(403).json({ error: 'Forbidden' });
+  if (user.role === 'COACH' && ['student_id', 'status', 'schedule_ids'].some((field) => req.body[field] !== undefined)) return res.status(403).json({ error: 'Coaches cannot change student IDs, status, or class memberships here.' });
 
   const {
     student_id,
@@ -1083,32 +1208,25 @@ router.put('/students/:id', authenticateUser, requireAdmin, (req: AuthenticatedR
 
   db.students.set(id, student);
 
-  // Update schedule memberships if schedule_ids array provided
+  // Student edits only add memberships; existing coach/class links remain intact.
+  const addedMemberships: Array<[string, string, unknown]> = [];
   if (Array.isArray(schedule_ids)) {
-    // Remove existing memberships
-    Array.from(db.memberships.entries()).forEach(([mId, m]) => {
-      if (m.student_id === id) {
-        db.memberships.delete(mId);
-      }
-    });
-
-    // Add new memberships
-    schedule_ids.forEach((schedId) => {
-      if (db.schedules.has(schedId)) {
-        const memId = `m-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-        db.memberships.set(memId, {
-          id: memId,
-          student_id: id,
-          schedule_id: schedId,
-          joined_date: new Date().toISOString().split('T')[0],
-          status: 'ACTIVE',
-        });
-      }
-    });
+    for (const schedId of new Set<string>(schedule_ids)) {
+      if (!db.schedules.has(schedId)) continue;
+      const enrolled = Array.from(db.memberships.values()).some((membership) => membership.student_id === id && membership.schedule_id === schedId && membership.status === 'ACTIVE');
+      if (enrolled) continue;
+      const memId = 'm-' + crypto.randomUUID();
+      const membership = { id: memId, student_id: id, schedule_id: schedId, joined_date: academyToday(), status: 'ACTIVE' as const };
+      db.memberships.set(memId, membership);
+      addedMemberships.push(['memberships', memId, membership]);
+    }
   }
-
-  const populated = db.getPopulatedStudent(id);
-  return res.json(populated);
+  try {
+    const writes: Array<[string, string, unknown]> = [['students', id, student]];
+    if (student.parent_id && db.parents.has(student.parent_id)) writes.push(['parents', student.parent_id, db.parents.get(student.parent_id)!]);
+    await persistMutation([...writes, ...addedMemberships]);
+    return res.json(db.getPopulatedStudent(id));
+  } catch { return res.status(503).json({ error: 'Student update could not be saved.' }); }
 });
 
 router.delete('/students/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
@@ -1177,19 +1295,39 @@ router.get('/classes', authenticateUser, (req: AuthenticatedRequest, res: Respon
     );
   }
 
+  if (req.user!.role === 'COACH') list = list.filter((cls) => cls.is_active && canManageClass(req.user!, cls.id));
   return res.json(list);
 });
 
+router.get('/classes/:id/student-search', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const classId = req.params.id;
+  if (!canManageClass(req.user!, classId) || !db.classes.get(classId)?.is_active) return res.status(403).json({ error: 'Forbidden' });
+  const query = String(req.query.search || '').trim().toLowerCase();
+  if (query.length < 2) return res.json([]);
+  const results = Array.from(db.students.values())
+    .filter((student) => student.status === 'ACTIVE' && (student.full_name.toLowerCase().includes(query) || student.student_id.toLowerCase().includes(query)))
+    .slice(0, 20)
+    .map((student) => {
+      const memberships = Array.from(db.memberships.values()).filter((membership) => membership.student_id === student.id && membership.status === 'ACTIVE');
+      return {
+        id: student.id, full_name: student.full_name, student_id: student.student_id,
+        already_in_class: memberships.some((membership) => db.schedules.get(membership.schedule_id)?.class_id === classId),
+        assigned_elsewhere: memberships.some((membership) => db.schedules.get(membership.schedule_id)?.class_id !== classId),
+      };
+    });
+  return res.json(results);
+});
 router.get('/classes/:id', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.getPopulatedClass(id);
   if (!cls) {
     return res.status(404).json({ error: 'Class not found' });
   }
+  if (!canManageClass(req.user!, id)) return res.status(403).json({ error: 'Forbidden' });
   return res.json(cls);
 });
 
-router.post('/classes', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/classes', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const {
     name,
     class_type,
@@ -1209,8 +1347,11 @@ router.post('/classes', authenticateUser, requireAdmin, async (req: Authenticate
     return res.status(400).json({ error: 'Class name and class type are required' });
   }
 
-  const assignedCoachId = default_coach_id || coach_id || 'coach-1';
-  const classId = `class-${Date.now()}`;
+  const user = req.user!;
+  if (user.role === 'COACH' && Array.isArray(student_ids) && student_ids.length) return res.status(403).json({ error: 'Create the class first, then use student search to assign students.' });
+  const assignedCoachId = user.role === 'COACH' ? user.coach_id : (default_coach_id || coach_id || 'coach-1');
+  if (!assignedCoachId) return res.status(403).json({ error: 'A Coach profile is required to create a class.' });
+  const classId = `class-${crypto.randomUUID()}`;
   const newClass: AcademyClass = {
     id: classId,
     name: String(name).trim(),
@@ -1256,7 +1397,7 @@ router.post('/classes', authenticateUser, requireAdmin, async (req: Authenticate
           id: memId,
           student_id: stuId,
           schedule_id: classId,
-          joined_date: new Date().toISOString().split('T')[0],
+        joined_date: academyToday(),
           status: 'ACTIVE' as const,
         };
         db.memberships.set(memId, membership);
@@ -1266,7 +1407,8 @@ router.post('/classes', authenticateUser, requireAdmin, async (req: Authenticate
   }
 
   try {
-    await Promise.all(recordsToPersist.map(([collection, id, record]) => syncDocToFirestore(collection, id, record)));
+    await recordActivity(user, 'CLASS_CREATED', 'class', classId, { classId, summary: newClass.name });
+    await persistMutation(recordsToPersist);
     await Promise.all((Array.isArray(student_ids) ? student_ids : []).map((studentId: string) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedClass(classId));
@@ -1399,9 +1541,8 @@ router.post('/admin/reset-operational-data', authenticateUser, requireSuperAdmin
     const authFailures: string[] = [];
     if (adminAuth && removableFirebaseUserIds.length > 0) {
       for (let offset = 0; offset < removableFirebaseUserIds.length; offset += 1000) {
-        const batchIds = removableFirebaseUserIds.slice(offset, offset + 1000);
-        const result = await adminAuth.deleteUsers(batchIds);
-        result.errors.forEach((error) => authFailures.push(batchIds[error.index]));
+        const result = await adminAuth.deleteUsers(removableFirebaseUserIds.slice(offset, offset + 1000));
+        result.errors.forEach((error) => authFailures.push(removableFirebaseUserIds[offset + error.index]));
       }
     }
 
@@ -1449,7 +1590,7 @@ router.post('/students/bulk-assign-schedule', authenticateUser, requireAdmin, as
   uniqueStudentIds.forEach((studentId) => {
     const exists = Array.from(db.memberships.values()).some((membership) => membership.student_id === studentId && membership.schedule_id === schedule_id && membership.status === 'ACTIVE');
     if (exists) { alreadyEnrolled += 1; return; }
-    const membership = { id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, student_id: studentId, schedule_id, joined_date: new Date().toISOString().slice(0, 10), status: 'ACTIVE' as const };
+    const membership = { id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, student_id: studentId, schedule_id, joined_date: academyToday(), status: 'ACTIVE' as const };
     db.memberships.set(membership.id, membership);
     writes.push(['memberships', membership.id, membership]);
   });
@@ -1487,13 +1628,16 @@ router.post('/students/bulk-delete', authenticateUser, requireAdmin, async (req:
   }
 });
 
-router.put('/classes/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.classes.get(id);
 
   if (!cls) {
     return res.status(404).json({ error: 'Class not found' });
   }
+
+  if (!canManageClass(req.user!, id)) return res.status(403).json({ error: 'Forbidden' });
+  if (req.user!.role === 'COACH' && ['default_coach_id', 'coach_id', 'student_ids', 'is_active'].some((field) => req.body[field] !== undefined)) return res.status(403).json({ error: 'Use class assignment to change students; coach and status changes require Admin.' });
 
   const {
     name,
@@ -1596,7 +1740,7 @@ router.put('/classes/:id', authenticateUser, requireAdmin, async (req: Authentic
   // Update future scheduled sessions to match new default coach if not already customized
   const sessionWrites: Promise<unknown>[] = [];
   Array.from(db.sessions.values()).forEach((sess) => {
-    if ((sess.class_id === id || sess.schedule_id === id) && sess.status === 'SCHEDULED') {
+    if ((sess.class_id === id || sess.schedule_id === id) && sess.status === 'SCHEDULED' && sess.session_date >= academyToday()) {
       if (cls.default_coach_id && sess.session_type === 'NORMAL') {
         sess.default_coach_id = cls.default_coach_id;
         sess.scheduled_coach_id = cls.default_coach_id;
@@ -1627,7 +1771,7 @@ router.put('/classes/:id', authenticateUser, requireAdmin, async (req: Authentic
   }
 });
 
-router.delete('/classes/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.delete('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.classes.get(id);
 
@@ -1635,28 +1779,20 @@ router.delete('/classes/:id', authenticateUser, requireAdmin, async (req: Authen
     return res.status(404).json({ error: 'Class not found' });
   }
 
-  const membershipIds = Array.from(db.memberships.entries()).flatMap(([mId, m]) => {
-    if (m.schedule_id === id) {
-      return [mId];
-    }
-    return [];
-  });
-  const affectedStudentIds = membershipIds.map((membershipId) => db.memberships.get(membershipId)?.student_id).filter((studentId): studentId is string => Boolean(studentId));
+  if (!canManageClass(req.user!, id)) return res.status(403).json({ error: 'Forbidden' });
+  // Archive the class and schedule; keep sessions, attendance, and class metadata for reports.
+  const before = { ...cls };
+  const schedules = Array.from(db.schedules.values()).filter((schedule) => schedule.class_id === id);
+  const priorSchedules = schedules.map((schedule) => ({ ...schedule }));
+  cls.is_active = false;
+  schedules.forEach((schedule) => { schedule.is_active = false; schedule.status = 'INACTIVE'; });
   try {
-    await Promise.all([
-      deleteDocFromFirestore('classes', id),
-      deleteDocFromFirestore('schedules', id),
-      ...membershipIds.map((membershipId) => deleteDocFromFirestore('memberships', membershipId)),
-    ]);
-    membershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
-    db.classes.delete(id);
-    db.schedules.delete(id);
-    await Promise.all(affectedStudentIds.map((studentId) => syncPortalCoachLinksForStudent(studentId).catch(console.error)));
-    db.saveToDisk();
-    return res.json({ success: true, message: `Class ${cls.name} deleted successfully` });
-  } catch (error: any) {
-    console.error('[Delete Class] Firestore delete failed:', error?.message || error);
-    return res.status(503).json({ error: 'Class could not be deleted completely. Please retry.', code: 'DELETE_FAILED' });
+    await persistMutation([['classes', id, cls], ...schedules.map((schedule): [string, string, unknown] => ['schedules', schedule.id, schedule])]);
+    return res.json({ success: true, message: 'Class archived; attendance history preserved.' });
+  } catch {
+    db.classes.set(id, before);
+    priorSchedules.forEach((schedule) => db.schedules.set(schedule.id, schedule));
+    return res.status(503).json({ error: 'Class could not be archived.' });
   }
 });
 
@@ -1668,6 +1804,7 @@ router.get('/schedules', authenticateUser, (req: AuthenticatedRequest, res: Resp
   const { coach_id, class_id, day_of_week, status, search } = req.query;
 
   let list = Array.from(db.schedules.values()).map((s) => db.getPopulatedSchedule(s.id)!);
+  if (req.user!.role === 'COACH') list = list.filter((schedule) => db.classes.get(schedule.class_id)?.is_active && canManageClass(req.user!, schedule.class_id));
 
   if (coach_id) {
     list = list.filter((s) => s.coach_id === coach_id);
@@ -1768,13 +1905,15 @@ router.delete('/schedules/:id', authenticateUser, requireAdmin, (req: Authentica
 });
 
 // Manage student memberships in a schedule
-router.post('/schedules/:id/students', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/schedules/:id/students', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { student_id } = req.body;
 
   if (!student_id || !db.students.has(student_id) || !db.schedules.has(id)) {
     return res.status(400).json({ error: 'Invalid schedule or student' });
   }
+  const user = req.user!;
+  if (!canManageSchedule(user, id) || !db.classes.get(db.schedules.get(id)!.class_id)?.is_active) return res.status(403).json({ error: 'Forbidden: you do not manage this class.' });
 
   // Check if already enrolled
   const existing = Array.from(db.memberships.values()).find(
@@ -1782,14 +1921,25 @@ router.post('/schedules/:id/students', authenticateUser, requireAdmin, (req: Aut
   );
 
   if (!existing) {
-    const memId = `m-${Date.now()}`;
-    db.memberships.set(memId, {
+    const otherClass = Array.from(db.memberships.values()).some((membership) => membership.student_id === student_id && membership.status === 'ACTIVE' && membership.schedule_id !== id);
+    if (otherClass && req.body.add_anyway !== true) return res.status(409).json({ error: 'This student is already assigned to another class/coach. Add anyway?', confirmation_required: true });
+    const memId = `m-${crypto.randomUUID()}`;
+    const membership = {
       id: memId,
       student_id,
       schedule_id: id,
-      joined_date: new Date().toISOString().split('T')[0],
+      joined_date: academyToday(),
       status: 'ACTIVE',
-    });
+    } as const;
+    db.memberships.set(memId, membership);
+    try {
+      await recordActivity(user, 'STUDENT_ASSIGNED_TO_CLASS', 'membership', memId, { classId: db.schedules.get(id)!.class_id, summary: student_id });
+      await persistMutation([['memberships', memId, membership]]);
+      await syncPortalCoachLinksForStudent(student_id);
+    } catch (error) {
+      db.memberships.delete(memId);
+      return res.status(503).json({ error: 'Assignment could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+    }
   }
 
   return res.json(db.getPopulatedSchedule(id));
@@ -1964,13 +2114,14 @@ router.post('/sessions', authenticateUser, requireAdmin, (req: AuthenticatedRequ
   return res.status(201).json(db.getPopulatedSession(sessId));
 });
 
-router.put('/sessions/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/sessions/:id', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const existingSession = db.sessions.get(id);
 
   if (!existingSession) {
     return res.status(404).json({ error: 'Session not found' });
   }
+  if (!canManageClass(req.user!, existingSession.class_id)) return res.status(403).json({ error: 'Forbidden: you do not manage this session.' });
   // Vercel instances load sessions from Firestore, so a replacement assignment
   // must be durable before the substitute coach can reliably see it.
   const session: ClassSession = { ...existingSession };
@@ -2074,9 +2225,9 @@ router.put('/sessions/:id', authenticateUser, requireAdmin, async (req: Authenti
   if (end_time !== undefined) session.end_time = end_time;
 
   try {
-    // syncDocToFirestore publishes the full snapshot, so it must see the new session.
     db.sessions.set(id, session);
-    await syncDocToFirestore('sessions', id, session);
+    await recordActivity(req.user!, 'CLASS_DATE_CHANGED', 'session', id, { classId: session.class_id, summary: `${session.session_date} ${session.start_time}-${session.end_time}` });
+    await persistMutation([['sessions', id, session]]);
     db.saveToDisk();
     return res.json(db.getPopulatedSession(id));
   } catch (error: any) {
@@ -2111,7 +2262,7 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
   }
 
   // Future session attendance restriction (attendance only opens on or after session date)
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = academyToday();
   if (session.session_date > todayStr && user.role !== 'ADMIN') {
     return res.status(400).json({
       error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
@@ -2133,43 +2284,44 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
   if (newStatus === 'ABSENT' && suppliedStars && suppliedStars > 0) {
     return res.status(400).json({ error: 'Absent students cannot receive stars.' });
   }
-  if (existingRecord?.portal_sync_status === 'SYNCED' && suppliedStars !== undefined && suppliedStars !== existingRecord.base_stars) {
-    return res.status(400).json({ error: 'This star award has already synced. Use the future star-correction action so the portal audit remains accurate.' });
+  const portalAwardLocked = existingRecord?.portal_sync_status === 'SYNCED';
+  if (portalAwardLocked && suppliedStars !== undefined && suppliedStars !== existingRecord.base_stars) {
+    return res.status(400).json({ error: 'This star award has already synced. Correct star mistakes manually in Bingo Space.' });
   }
-  if (existingRecord?.portal_sync_status === 'SYNCED' && newStatus !== 'PRESENT' && newStatus !== 'LATE') {
-    return res.status(400).json({ error: 'This attendance already awarded stars. Use the future star-correction action before changing it to absent or excused.' });
+  if (portalAwardLocked && lucky_tshirt_worn !== undefined && Boolean(lucky_tshirt_worn) !== Boolean(existingRecord.lucky_tshirt_worn)) {
+    return res.status(400).json({ error: 'This star award has already synced. Correct star mistakes manually in Bingo Space.' });
+  }
+  if (portalAwardLocked && newStatus !== 'PRESENT' && newStatus !== 'LATE') {
+    return res.status(400).json({ error: 'This attendance already awarded stars. Correct star mistakes manually in Bingo Space.' });
   }
 
-  let recordId: string;
-  if (existingRecord) {
-    recordId = existingRecord.id;
-    existingRecord.status = newStatus;
-    existingRecord.attendance_type = attType;
-    if (replacement_note !== undefined) existingRecord.replacement_note = replacement_note;
-    existingRecord.marked_at = new Date().toISOString();
-    existingRecord.marked_by_user_id = user.id;
-    existingRecord.notification_status = 'SENT';
-    if (suppliedStars !== undefined) existingRecord.base_stars = suppliedStars;
-    if (lucky_tshirt_worn !== undefined) existingRecord.lucky_tshirt_worn = Boolean(lucky_tshirt_worn);
-    db.attendance.set(recordId, existingRecord);
-    syncDocToFirestore('attendance', recordId, existingRecord).catch(console.error);
-  } else {
-    recordId = `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const newRecord: AttendanceRecord = {
-      id: recordId,
-      session_id: id,
-      student_id,
-      status: newStatus,
-      attendance_type: attType,
-      replacement_note,
-      marked_at: new Date().toISOString(),
-      marked_by_user_id: user.id,
-      notification_status: 'SENT',
-      ...(suppliedStars !== undefined ? { base_stars: suppliedStars } : {}),
-      lucky_tshirt_worn: Boolean(lucky_tshirt_worn),
-    };
-    db.attendance.set(recordId, newRecord);
-    syncDocToFirestore('attendance', recordId, newRecord).catch(console.error);
+  const recordId = existingRecord?.id || `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  const attendanceToPersist: AttendanceRecord = {
+    ...(existingRecord || {}),
+    id: recordId,
+    session_id: id,
+    student_id,
+    status: newStatus,
+    attendance_type: attType,
+    ...(replacement_note !== undefined ? { replacement_note } : {}),
+    marked_at: new Date().toISOString(),
+    marked_by_user_id: user.id,
+    notification_status: 'SENT',
+    ...(suppliedStars !== undefined ? { base_stars: suppliedStars } : {}),
+    ...(lucky_tshirt_worn !== undefined
+      ? { lucky_tshirt_worn: Boolean(lucky_tshirt_worn) }
+      : (!existingRecord ? { lucky_tshirt_worn: false } : {})),
+  };
+  const attendanceClass = db.classes.get(session.class_id);
+  if (!attendanceClass) return res.status(409).json({ error: 'The session class is unavailable. Attendance was not changed.' });
+  try {
+    await persistAttendanceWithReplacementReconciliation({
+      attendance: attendanceToPersist,
+      classType: attendanceClass.class_type,
+    });
+  } catch (error: any) {
+    console.error('[Attendance] Durable attendance/credit transaction failed:', error?.message || error);
+    return res.status(503).json({ error: 'Attendance could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
 
   // Create Audit Log if status changed
@@ -2224,7 +2376,7 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
   // Attendance always wins: the record above is created first. A portal outage
   // only makes the reward pending; it can never undo or block roll-call.
   const record = db.attendance.get(recordId)!;
-  if ((newStatus === 'PRESENT' || newStatus === 'LATE') && suppliedStars !== undefined && suppliedStars > 0 && student) {
+  if (!portalAwardLocked && (newStatus === 'PRESENT' || newStatus === 'LATE') && suppliedStars !== undefined && suppliedStars > 0 && student) {
     const teachingCoach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
     const portalResult = await awardPortalStars({
       attendance: record,
@@ -2254,7 +2406,7 @@ router.post('/sessions/:id/attendance', authenticateUser, async (req: Authentica
 router.post('/sessions/:id/replacement-student', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
-  const { student_id, replacement_note } = req.body;
+  const { student_id, replacement_note, advance_future_session_id } = req.body;
 
   if (!student_id) {
     return res.status(400).json({ error: 'Student ID is required' });
@@ -2271,77 +2423,64 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
     });
   }
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (session.session_date > todayStr && user.role !== 'ADMIN') {
-    return res.status(400).json({
-      error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
-    });
-  }
+  const todayStr = academyToday();
 
   const student = db.students.get(student_id);
   if (!student) {
     return res.status(404).json({ error: 'Student not found in academy directory' });
   }
 
-  // Create attendance record as REPLACEMENT and default to PRESENT
+  let advanceCommitment: ReplacementAdvanceCommitment | undefined;
+  if (advance_future_session_id) {
+    const futureSession = db.sessions.get(String(advance_future_session_id));
+    const futureClass = futureSession && db.classes.get(futureSession.class_id);
+    const isEnrolled = Boolean(futureSession && Array.from(db.memberships.values()).some((membership) =>
+      membership.student_id === student_id && membership.status === 'ACTIVE' &&
+      (membership.schedule_id === futureSession.schedule_id || membership.schedule_id === futureSession.class_id)));
+    const unavailable = !futureSession || !futureClass || futureClass.class_type !== 'GROUP' ||
+      futureSession.session_date <= todayStr || futureSession.status !== 'SCHEDULED' || !isEnrolled;
+    if (unavailable) return res.status(400).json({ error: 'Advance Replacement must be linked to this student’s active future Group class.' });
+    const duplicate = Array.from(db.replacementAdvanceCommitments.values()).some((commitment) =>
+      commitment.future_session_id === futureSession.id && ['PENDING', 'REVIEW_REQUIRED'].includes(commitment.status));
+    if (duplicate) return res.status(409).json({ error: 'That future class is already linked to an unresolved advance replacement.' });
+    advanceCommitment = {
+      id: `advance-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      student_id,
+      replacement_attendance_id: '',
+      replacement_session_id: id,
+      future_session_id: futureSession.id,
+      status: 'PENDING',
+      created_by_user_id: user.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  if (Array.from(db.attendance.values()).some((record) => record.session_id === id && record.student_id === student_id)) return res.status(409).json({ error: 'Student is already in this session.' });
+  // Booking does not mark attendance or consume a replacement credit.
   const recordId = `att-rep-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const newRecord: AttendanceRecord = {
     id: recordId,
     session_id: id,
     student_id,
-    status: 'PRESENT',
+    status: 'BOOKED',
     attendance_type: 'REPLACEMENT',
     replacement_note: replacement_note || 'Attending replacement lesson',
     marked_at: new Date().toISOString(),
     marked_by_user_id: user.id,
-    notification_status: 'SENT',
+    notification_status: 'QUEUED',
   };
+  if (advanceCommitment) advanceCommitment.replacement_attendance_id = recordId;
 
-  db.attendance.set(recordId, newRecord);
-  syncDocToFirestore('attendance', recordId, newRecord).catch(console.error);
-
-  // Audit log
-  const auditEntry = {
-    id: `audit-${Date.now()}`,
-    attendance_id: recordId,
-    session_id: id,
-    student_id,
-    student_name: student.full_name,
-    changed_by_user_id: user.id,
-    changed_by_user_name: user.name,
-    changed_by_user_role: user.role,
-    previous_status: 'NOT_MARKED' as const,
-    new_status: 'PRESENT' as const,
-    reason: `Added as replacement student (${replacement_note || 'Flexible replacement'})`,
-    timestamp: new Date().toISOString(),
-  };
-  db.auditLogs.unshift(auditEntry);
-  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
-
-  // Parent Attendance Notification Trigger (via NotificationService)
-  const parent = student.parent_id ? db.parents.get(student.parent_id) : undefined;
-  const classItem = db.classes.get(session.class_id);
-  const coach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
-
-  notificationService.sendAttendanceAlert({
-    attendanceId: recordId,
-    sessionId: id,
-    studentId: student_id,
-    studentName: student.full_name,
-    parentId: parent?.id,
-    parentName: parent?.name,
-    parentPhone: parent?.phone,
-    parentTelegramChatId: parent?.telegram_chat_id,
-    parentTelegramUsername: parent?.telegram_username,
-    attendanceStatus: 'PRESENT',
-    attendanceType: 'REPLACEMENT',
-    className: classItem?.name || 'Class',
-    sessionDate: session.session_date,
-    startTime: session.start_time,
-    endTime: session.end_time,
-    coachName: coach?.name || 'Coach',
-    replacementNote: replacement_note || 'Attending replacement lesson',
-  }).catch((err) => console.error('[Routes] Replacement notification alert error:', err));
+  const replacementClass = db.classes.get(session.class_id);
+  if (!replacementClass) return res.status(409).json({ error: 'The session class is unavailable. Replacement attendance was not changed.' });
+  try {
+    await persistAttendanceWithReplacementReconciliation({ attendance: newRecord, classType: replacementClass.class_type, advanceCommitment });
+  } catch (error: any) {
+    if (error instanceof ReplacementCreditError) return res.status(409).json({ error: error.message });
+    console.error('[Replacement Attendance] Durable attendance/credit transaction failed:', error?.message || error);
+    return res.status(503).json({ error: 'Replacement attendance could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 
   return res.json({
     success: true,
@@ -2350,11 +2489,35 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
   });
 });
 
+router.get('/students/:id/replacement-credits', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const student = db.students.get(req.params.id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  const history = Array.from(db.replacementCredits.values()).filter((entry) => entry.student_id === student.id)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 50);
+  return res.json({ balance: replacementCreditBalance(student.id), history });
+});
+
+router.post('/students/:id/replacement-credits/adjustments', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const student = db.students.get(req.params.id);
+  const user = req.user!;
+  const amount = Number(req.body.amount);
+  const reason = String(req.body.reason || '').trim();
+  const openingBalance = Boolean(req.body.opening_balance);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!Number.isInteger(amount) || amount === 0) return res.status(400).json({ error: 'Adjustment amount must be a non-zero whole number.' });
+  if (reason.length < 3) return res.status(400).json({ error: 'Adjustment reason is required.' });
+  const timestamp = new Date().toISOString();
+  const idempotencyKey = String(req.body.idempotency_key || `adjustment-${student.id}-${user.id}-${Date.now()}`);
+  const entry: ReplacementCredit = { id: idempotencyKey, student_id: student.id, amount, reason: openingBalance ? 'OPENING_BALANCE_ADJUSTMENT' : 'ADMIN_ADJUSTMENT', created_by_user_id: user.id, created_at: timestamp, effective_at: timestamp, idempotency_key: idempotencyKey };
+  try { await createReplacementCredit(entry); return res.json({ success: true, balance: replacementCreditBalance(student.id), entry }); }
+  catch (error: any) { return res.status(503).json({ error: error.message || 'Adjustment could not be saved.' }); }
+});
+
 // Record an Unregistered Student on the fly during Roll Call
 router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
-  const { full_name, nick_name, parent_phone, status, replacement_note } = req.body;
+  const { full_name, nick_name, parent_phone, status, replacement_note, idempotency_key } = req.body;
 
   if (!full_name || !String(full_name).trim()) {
     return res.status(400).json({ error: 'Student full name is required' });
@@ -2369,12 +2532,16 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
     return res.status(403).json({ error: 'Forbidden: Unauthorized to mark attendance for this session' });
   }
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = academyToday();
   if (session.session_date > todayStr && user.role !== 'ADMIN') {
     return res.status(400).json({
       error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
     });
   }
+
+  const requestKey = typeof idempotency_key === 'string' ? idempotency_key.trim() : '';
+  const retried = requestKey && Array.from(db.attendance.values()).find((record) => record.session_id === id && record.trial_request_key === requestKey);
+  if (retried) return res.json({ success: true, idempotent: true, student: db.students.get(retried.student_id), attendance_record: retried, session: db.getPopulatedSession(id) });
 
   // Create temporary/unregistered parent if phone provided
   let parentId: string | undefined;
@@ -2387,11 +2554,10 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
       created_at: new Date().toISOString(),
     };
     db.parents.set(parentId, newParent);
-    syncDocToFirestore('parents', parentId, newParent).catch(console.error);
   }
 
-  const studentId = `student-unreg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-  const unregCode = `UNREG-${Math.floor(1000 + Math.random() * 9000)}`;
+  const studentId = `student-unreg-${crypto.randomUUID()}`;
+  const unregCode = `UNREG-${crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
   const newStudent: Student = {
     id: studentId,
     student_id: unregCode,
@@ -2404,7 +2570,6 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
   };
 
   db.students.set(studentId, newStudent);
-  syncDocToFirestore('students', studentId, newStudent).catch(console.error);
 
   const attStatus: AttendanceStatus = (status as AttendanceStatus) || 'PRESENT';
   const recordId = `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -2418,10 +2583,10 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
     marked_at: new Date().toISOString(),
     marked_by_user_id: user.id,
     notification_status: 'QUEUED',
+    trial_request_key: requestKey || undefined,
   };
 
   db.attendance.set(recordId, newRecord);
-  syncDocToFirestore('attendance', recordId, newRecord).catch(console.error);
 
   // Audit log
   const auditEntry = {
@@ -2439,9 +2604,17 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
     timestamp: new Date().toISOString(),
   };
   db.auditLogs.unshift(auditEntry);
-  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry).catch(console.error);
-
-  db.saveToDisk();
+  try {
+    await recordActivity(user, 'TRIAL_STUDENT_CREATED', 'student', studentId, { classId: session.class_id, summary: unregCode });
+    const records: Array<[string, string, unknown]> = [['students', studentId, newStudent], ['attendance', recordId, newRecord], ['auditLogs', auditEntry.id, auditEntry]];
+    if (parentId) records.push(['parents', parentId, db.parents.get(parentId)!]);
+    await persistMutation(records);
+    db.saveToDisk();
+  } catch (error) {
+    if (parentId) db.parents.delete(parentId);
+    db.students.delete(studentId); db.attendance.delete(recordId); db.auditLogs = db.auditLogs.filter((item) => item.id !== auditEntry.id);
+    return res.status(503).json({ error: 'Trial student could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 
   return res.status(201).json({
     success: true,
@@ -2452,7 +2625,7 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
 });
 
 // Admin converts an Unregistered Student to a Formal Registered Student profile
-router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const student = db.students.get(id);
   if (!student) {
@@ -2472,9 +2645,12 @@ router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, 
     schedule_ids,
   } = req.body;
 
-  if (!student_id || !full_name) {
-    return res.status(400).json({ error: 'Formal Student ID and Full Name are required' });
+  if (!full_name) {
+    return res.status(400).json({ error: 'Full Name is required' });
   }
+  let formalStudentCode: string;
+  try { formalStudentCode = await reserveStudentCode(student_id, await occupiedStudentCodes()); }
+  catch (error: any) { return res.status(400).json({ error: error.message || 'Formal Student ID is invalid or already in use.' }); }
 
   // Update parent
   let parentId = student.parent_id;
@@ -2489,7 +2665,6 @@ router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, 
       created_at: new Date().toISOString(),
     };
     db.parents.set(parentId, newParent);
-    syncDocToFirestore('parents', parentId, newParent).catch(console.error);
   } else {
     const p = db.parents.get(parentId);
     if (p) {
@@ -2498,12 +2673,11 @@ router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, 
       if (parent_email) p.email = parent_email;
       if (parent_telegram) p.telegram_username = parent_telegram;
       db.parents.set(parentId, p);
-      syncDocToFirestore('parents', parentId, p).catch(console.error);
     }
   }
 
   // Update student in place to maintain all existing attendance records and audit logs
-  student.student_id = String(student_id).trim();
+  student.student_id = formalStudentCode;
   student.full_name = String(full_name).trim();
   student.nick_name = nick_name ? String(nick_name).trim() : undefined;
   student.school = school ? String(school).trim() : undefined;
@@ -2512,38 +2686,35 @@ router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, 
   student.is_unregistered = false; // Officially registered
 
   db.students.set(id, student);
-  syncDocToFirestore('students', id, student).catch(console.error);
-
-  // Enroll in schedules if provided
+  // Conversion may add class memberships but must preserve existing coach links.
   if (Array.isArray(schedule_ids)) {
-    for (const [memId, mem] of db.memberships.entries()) {
-      if (mem.student_id === id) {
-        db.memberships.delete(memId);
-        deleteDocFromFirestore('memberships', memId).catch(console.error);
-      }
-    }
-    for (const schedId of schedule_ids) {
-      const memId = `mem-${id}-${schedId}`;
-      const newMem = {
-        id: memId,
-        student_id: id,
-        schedule_id: schedId,
-        joined_date: new Date().toISOString().split('T')[0],
-        status: 'ACTIVE' as const,
-      };
-      db.memberships.set(memId, newMem);
-      syncDocToFirestore('memberships', memId, newMem).catch(console.error);
+    for (const schedId of new Set<string>(schedule_ids)) {
+      if (!db.schedules.has(schedId)) continue;
+      const enrolled = Array.from(db.memberships.values()).some((membership) => membership.student_id === id && membership.schedule_id === schedId && membership.status === 'ACTIVE');
+      if (enrolled) continue;
+      const memId = 'm-' + crypto.randomUUID();
+      db.memberships.set(memId, { id: memId, student_id: id, schedule_id: schedId, joined_date: academyToday(), status: 'ACTIVE' });
     }
   }
-
-  db.saveToDisk();
-  return res.json(db.getPopulatedStudent(id));
+  try {
+    const records: Array<[string, string, unknown]> = [['students', id, student]];
+    if (parentId && db.parents.has(parentId)) records.push(['parents', parentId, db.parents.get(parentId)!]);
+    Array.from(db.memberships.values()).filter((membership) => membership.student_id === id).forEach((membership) => records.push(['memberships', membership.id, membership]));
+    await recordActivity(req.user!, 'TRIAL_STUDENT_CONVERTED', 'student', id, { summary: formalStudentCode });
+    await Promise.all(records.map(([collection, recordId, record]) => syncDocToFirestore(collection, recordId, record, false)));
+    await markFirestoreStateChanged();
+    db.saveToDisk();
+    return res.json(db.getPopulatedStudent(id));
+  } catch (error) {
+    return res.status(503).json({ error: 'Formal registration could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 });
 
 // List all attendance records with rich filtering (Admin & Session view)
 router.get('/attendance', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
   const { session_id, month, date, coach_id, class_id, status, student_search } = req.query;
   let records = Array.from(db.attendance.values());
+  if (req.user!.role === 'COACH') records = records.filter((record) => verifySessionAttendanceAccess(record.session_id, req.user!));
 
   if (session_id) {
     records = records.filter((r) => r.session_id === session_id);
@@ -2592,7 +2763,7 @@ router.get('/attendance', authenticateUser, (req: AuthenticatedRequest, res: Res
 });
 
 // Admin direct attendance correction with mandatory audit reason
-router.put('/attendance/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.put('/attendance/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
   const { status, attendance_type, replacement_note, reason } = req.body;
@@ -2607,14 +2778,23 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, (req: Authenticate
   }
 
   const prevStatus = record.status;
-  if (status !== undefined) record.status = status;
-  if (attendance_type !== undefined) record.attendance_type = attendance_type;
-  if (replacement_note !== undefined) record.replacement_note = replacement_note;
-
-  record.marked_at = new Date().toISOString();
-  record.marked_by_user_id = user.id;
-  db.attendance.set(id, record);
-  syncDocToFirestore('attendance', id, record).catch(console.error);
+  const correctedRecord: AttendanceRecord = {
+    ...record,
+    ...(status !== undefined ? { status } : {}),
+    ...(attendance_type !== undefined ? { attendance_type } : {}),
+    ...(replacement_note !== undefined ? { replacement_note } : {}),
+    marked_at: new Date().toISOString(),
+    marked_by_user_id: user.id,
+  };
+  const correctionSession = db.sessions.get(record.session_id);
+  const correctionClass = correctionSession && db.classes.get(correctionSession.class_id);
+  if (!correctionClass) return res.status(409).json({ error: 'The attendance session class is unavailable. Correction was not saved.' });
+  try {
+    await persistAttendanceWithReplacementReconciliation({ attendance: correctedRecord, classType: correctionClass.class_type });
+  } catch (error: any) {
+    console.error('[Attendance Correction] Durable attendance/credit transaction failed:', error?.message || error);
+    return res.status(503).json({ error: 'Attendance correction could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 
   // Audit log entry
   const student = db.students.get(record.student_id);
@@ -2628,7 +2808,7 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, (req: Authenticate
     changed_by_user_name: user.name,
     changed_by_user_role: 'ADMIN' as const,
     previous_status: prevStatus,
-    new_status: record.status,
+    new_status: correctedRecord.status,
     reason: String(reason).trim(),
     timestamp: new Date().toISOString(),
   };
@@ -2637,7 +2817,7 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, (req: Authenticate
 
   return res.json({
     success: true,
-    attendance_record: record,
+    attendance_record: db.attendance.get(id),
   });
 });
 
@@ -2680,21 +2860,26 @@ router.get('/export/class-schedules-docx', authenticateUser, requireAdmin, async
   }
 });
 
-// Admin creates a one-time portal registration URL. The portal receives the
-// immutable STU code and locked name; parents never type or choose either.
-router.post('/students/:id/portal-invite', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+// Admins can invite any student. Coaches are limited to students in one of
+// their active schedules, plus students they have already taught.
+router.post('/students/:id/portal-invite', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const student = db.students.get(req.params.id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  const user = req.user!;
   try {
-    return res.json(await createPortalInvite(student));
+    const result = await getPortalLink(student);
+    await recordActivity(user, result.status === 'REGISTERED' ? 'PORTAL_LINK_RETRIEVED' : 'PORTAL_INVITE_GENERATED', 'student', student.id, { summary: student.student_id });
+    await markFirestoreStateChanged();
+    return res.json(result);
   } catch (error: any) {
-    return res.status(502).json({ error: error.message || 'Could not create portal invite' });
+    return res.status(error.status === 409 ? 409 : 502).json({ error: error.message || 'Could not create portal invite', code: error.code });
   }
 });
 
 router.get('/export/accountant-report.xlsx', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const month = typeof req.query.month === 'string' ? req.query.month : new Date().toISOString().slice(0, 7);
+    const month = typeof req.query.month === 'string' ? req.query.month : academyMonth();
     const buffer = await generateAccountantWorkbook(month, typeof req.query.coach_id === 'string' ? req.query.coach_id : undefined, typeof req.query.class_id === 'string' ? req.query.class_id : undefined);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="Academy_Accountant_${month}.xlsx"`);
@@ -2704,19 +2889,20 @@ router.get('/export/accountant-report.xlsx', authenticateUser, requireAdmin, asy
 
 router.get('/export/accountant-report.pdf', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const month = typeof req.query.month === 'string' ? req.query.month : new Date().toISOString().slice(0, 7);
+    const month = typeof req.query.month === 'string' ? req.query.month : academyMonth();
     const buffer = await generateAccountantPdf(month, typeof req.query.coach_id === 'string' ? req.query.coach_id : undefined, typeof req.query.class_id === 'string' ? req.query.class_id : undefined);
     res.setHeader('Content-Type', 'application/pdf'); res.setHeader('Content-Disposition', `attachment; filename="Academy_Accountant_${month}.pdf"`); return res.send(buffer);
   } catch (err: any) { return res.status(500).json({ error: err.message || 'Failed to generate PDF report' }); }
 });
 
-router.get('/export/attendance-csv', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
+router.get('/export/attendance-csv', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { month, coach_id, class_id } = req.query;
-  const targetMonth = month ? String(month) : '2026-08';
+  const targetMonth = month ? String(month) : academyMonth();
 
   const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   let records = Array.from(db.attendance.values()).filter((r) => {
+    if (r.status === 'BOOKED') return false;
     const sess = db.sessions.get(r.session_id);
     if (!sess) return false;
     if (!sess.session_date.startsWith(targetMonth)) return false;
@@ -2782,7 +2968,7 @@ router.get('/export/attendance-csv', authenticateUser, (req: AuthenticatedReques
 router.get('/coach/breakdown', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const user = req.user!;
   const { month } = req.query;
-  const targetMonth = month ? String(month) : '2026-08';
+  const targetMonth = month ? String(month) : academyMonth();
 
   // Determine which coach to inspect
   let coachId = user.coach_id;
@@ -2890,11 +3076,11 @@ router.get('/coach/breakdown', authenticateUser, requireCoachOrAdmin, (req: Auth
 router.get('/reports/monthly', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { month, coach_id, class_id, student_id, class_type } = req.query;
 
-  const targetMonth = month ? String(month) : '2026-08';
+  const targetMonth = month ? String(month) : academyMonth();
 
   // 1. Get all sessions for this month
   let monthSessions = Array.from(db.sessions.values()).filter((s) =>
-    s.session_date.startsWith(targetMonth) && Array.from(db.attendance.values()).some((a) => a.session_id === s.id)
+    s.session_date.startsWith(targetMonth) && Array.from(db.attendance.values()).some((a) => a.session_id === s.id && a.status !== 'BOOKED')
   );
 
   if (coach_id) {
@@ -3011,7 +3197,7 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 
     const populatedStu = db.getPopulatedStudent(stu.id)!;
     const stuAttendances = Array.from(db.attendance.values()).filter((a) => {
-      if (a.student_id !== stu.id) return false;
+      if (a.student_id !== stu.id || a.status === 'BOOKED') return false;
       const sess = db.sessions.get(a.session_id);
       return sess && sess.session_date.startsWith(targetMonth);
     });
@@ -3069,9 +3255,8 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 // Dashboard Quick Stats
 const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
   try {
-    const now = new Date();
-    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const currentMonth = academyMonth();
+    const today = academyToday();
 
     const sessions = db?.sessions ? Array.from(db.sessions.values()) : [];
     const attendance = db?.attendance ? Array.from(db.attendance.values()) : [];
@@ -3118,7 +3303,7 @@ const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
   } catch (err: any) {
     console.error('[Dashboard Stats Error]:', err);
     return res.json({
-      month: new Date().toISOString().substring(0, 7),
+      month: academyMonth(),
       sessions_this_month: 0,
       student_attendances: 0,
       replacement_attendances: 0,
@@ -3138,6 +3323,15 @@ router.get('/dashboard/stats', authenticateUser, requireCoachOrAdmin, getDashboa
 
 router.get('/audit-logs', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
   return res.json(db.auditLogs);
+});
+
+router.get('/admin/recent-activity', authenticateUser, requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
+  const newest = <T extends { created_at: string }>(rows: T[], limit: number) => [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
+  return res.json({
+    students: newest(Array.from(db.students.values()), 10),
+    classes: newest(Array.from(db.classes.values()), 10),
+    activity: newest(db.activityLogs, 15),
+  });
 });
 
 router.get('/notifications', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {

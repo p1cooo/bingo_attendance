@@ -4,6 +4,8 @@ import { useToast } from '../common/Toast.js';
 import { api } from '../../lib/api.js';
 import { ClassSession } from '../../types.js';
 import { CoachAttendanceScreen } from './CoachAttendanceScreen.js';
+import { CoachStudentsView } from './CoachStudentsView.js';
+import { CoachClassesView } from './CoachClassesView.js';
 import { Header } from '../common/Header.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import { EmptyState } from '../common/EmptyState.js';
@@ -40,6 +42,8 @@ export const CoachWorkspace: React.FC = () => {
   const [weekAnchorDate, setWeekAnchorDate] = useState<string>(() => getWeekStart(todayStr, 'SUN'));
   const [sessions, setSessions] = useState<ClassSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showStudents, setShowStudents] = useState(false);
+  const [showClasses, setShowClasses] = useState(false);
 
   // Fixed 7-day strip (Sunday to Saturday) containing the current weekAnchorDate
   const weekDays = getFixedWeekDays(weekAnchorDate, 'SUN');
@@ -101,6 +105,9 @@ export const CoachWorkspace: React.FC = () => {
       </div>
     );
   }
+  if (showStudents) return <div className="min-h-screen bg-neutral-50"><Header workspaceTitle="Coach Students" /><div className="mx-auto max-w-6xl px-5 pt-4"><button type="button" onClick={() => setShowStudents(false)} className="inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black text-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2">← <span>Back to roll call</span></button></div><CoachStudentsView /></div>;
+
+  if (showClasses) return <div className="min-h-screen bg-neutral-50"><Header workspaceTitle="Coach Classes" /><div className="mx-auto max-w-6xl px-5 pt-4"><button type="button" onClick={() => setShowClasses(false)} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black">← Back to roll call</button></div><CoachClassesView /></div>;
 
   const coachDisplayName = coachProfile?.name || user?.name || 'Coach';
   const coachColor = coachProfile?.color || '#3b82f6';
@@ -116,8 +123,11 @@ export const CoachWorkspace: React.FC = () => {
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 transition-colors pb-16">
       <Header workspaceTitle="Coach Roll Call" />
-
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <div className="flex justify-end">
+          <button onClick={() => setShowClasses(true)} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black">My Classes</button>
+          <button onClick={() => setShowStudents(true)} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] hover:bg-slate-50 dark:bg-neutral-800 dark:text-white">My Students</button>
+        </div>
         {/* Welcome Coach Bento Hero */}
         <div className="bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 sm:p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden">
           {/* Coach Color Accent Strip */}

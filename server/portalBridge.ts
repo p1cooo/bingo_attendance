@@ -37,6 +37,19 @@ async function signedPost(path: string, body: unknown) {
   return { response, data };
 }
 
+/** Returns statuses only for IDs already authorized by the Attendance caller. */
+export async function portalAccountStatuses(studentCodes: string[]): Promise<Record<string, 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN'>> {
+  const unknown = Object.fromEntries(studentCodes.map((studentCode) => [studentCode, 'UNKNOWN' as const]));
+  if (!studentCodes.length) return unknown;
+  try {
+    const result = await signedPost('/integration/attendance/account-statuses', { student_ids: studentCodes });
+    if (!result?.response.ok || !result.data?.statuses || typeof result.data.statuses !== 'object') return unknown;
+    return Object.fromEntries(studentCodes.map((studentCode) => [studentCode, result.data.statuses[studentCode] === true ? 'REGISTERED' : result.data.statuses[studentCode] === false ? 'NOT_REGISTERED' : 'UNKNOWN']));
+  } catch {
+    return unknown;
+  }
+}
+
 /** The portal owns pets and calculates bonuses. Attendance never reads its DB. */
 export async function awardPortalStars(params: {
   attendance: AttendanceRecord;
@@ -74,8 +87,24 @@ export async function awardPortalStars(params: {
 export async function createPortalInvite(student: Student) {
   const result = await signedPost('/integration/attendance/invite', { student_id: student.student_id, student_name: student.full_name });
   if (!result) throw new Error('Portal connection is not configured yet.');
-  if (!result.response.ok) throw new Error(result.data?.message || 'Could not create portal invite.');
-  return result.data as { invite_url: string; expires_at: string };
+  if (!result.response.ok) {
+    const error: Error & { status?: number; code?: string } = new Error(result.data?.message || 'Could not create portal invite.');
+    error.status = result.response.status;
+    error.code = result.data?.code;
+    throw error;
+  }
+  return result.data as { invite_url: string };
+}
+
+/** Resolve first: a linked account must never be sent through registration again. */
+export async function getPortalLink(student: Student): Promise<{ status: 'REGISTERED' | 'INVITED'; portal_url?: string; invite_url?: string }> {
+  const status = await portalAccountStatuses([student.student_id]);
+  if (status[student.student_id] === 'REGISTERED') {
+    return { status: 'REGISTERED', portal_url: configuration()?.url ? `${configuration()!.url}/student` : undefined };
+  }
+  if (status[student.student_id] === 'UNKNOWN') throw new Error('Portal connection is unavailable. No invitation was created.');
+  const invite = await createPortalInvite(student);
+  return { status: 'INVITED', invite_url: invite.invite_url };
 }
 
 /**

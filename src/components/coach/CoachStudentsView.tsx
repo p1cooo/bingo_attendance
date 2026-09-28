@@ -1,0 +1,101 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { api } from '../../lib/api.js';
+import { AcademyClass, Student } from '../../types.js';
+import { Modal } from '../common/Modal.js';
+import { useToast } from '../common/Toast.js';
+
+type Row = Pick<Student, 'id' | 'full_name' | 'student_id'> & {
+  replacement_credits: number;
+  portal_account_status: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN';
+};
+const emptyForm = { full_name: '', nick_name: '', school: '', parent_name: '', parent_phone: '', parent_email: '', parent_relation: 'Parent' };
+
+export const CoachStudentsView: React.FC = () => {
+  const { showToast } = useToast();
+  const [students, setStudents] = useState<Row[]>([]);
+  const [classes, setClasses] = useState<AcademyClass[]>([]);
+  const [query, setQuery] = useState('');
+  const [links, setLinks] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<(Student & { attendance_history?: any[] }) | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [classId, setClassId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    try {
+      const [rows, assigned] = await Promise.all([api.getStudents(), api.getClasses()]);
+      setStudents(rows as unknown as Row[]);
+      setClasses(assigned);
+    } catch (error: any) { showToast(error.message || 'Could not load students', 'error'); }
+  };
+  useEffect(() => { load(); }, []);
+  const visible = useMemo(() => students.filter((student) =>
+    student.full_name.toLowerCase().includes(query.toLowerCase()) || student.student_id.toLowerCase().includes(query.toLowerCase())
+  ), [students, query]);
+  const openStudent = async (id: string, edit = false) => {
+    try {
+      const student = await api.getStudent(id);
+      setSelected(student);
+      setForm({
+        full_name: student.full_name, nick_name: student.nick_name || '', school: student.school || '',
+        parent_name: student.parent?.name || '', parent_phone: student.parent?.phone || '',
+        parent_email: student.parent?.email || '', parent_relation: student.parent_relation || 'Parent',
+      });
+      setEditing(edit);
+    } catch (error: any) { showToast(error.message || 'Could not open student', 'error'); }
+  };
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      if (selected) await api.updateStudent(selected.id, form);
+      else await api.createStudent({ ...form, schedule_ids: [classId] });
+      setEditing(false); setSelected(null); setForm(emptyForm);
+      await load();
+      showToast('Student saved', 'success');
+    } catch (error: any) { showToast(error.message || 'Could not save student', 'error'); }
+    finally { setBusy(false); }
+  };
+  const invite = async (student: Row) => {
+    try {
+      const result = await api.createPortalInvite(student.id);
+      if (result.status === 'REGISTERED') { showToast('Linked to Bingo Space', 'success'); await load(); return; }
+      const link = result.invite_url || result.portal_url;
+      if (!link) throw new Error('No invite link returned');
+      setLinks((current) => ({ ...current, [student.id]: link }));
+      await navigator.clipboard.writeText(link);
+      showToast('Bingo Space link copied', 'success');
+    } catch (error: any) { showToast(error.message || 'Could not copy link', 'error'); }
+  };
+  return <main className="mx-auto max-w-6xl p-5 text-slate-950">
+    <header className="mb-5 flex items-center justify-between">
+      <div><h2 className="text-2xl font-black tracking-tight">My Students</h2><p className="text-sm text-slate-500">Students in your normal classes.</p></div>
+      <button className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black" onClick={() => { setSelected(null); setForm(emptyForm); setClassId(classes[0]?.id || ''); setEditing(true); }}>Add Student</button>
+    </header>
+    <input aria-label="Search my students" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student name or STU-ID..." className="mb-4 w-full rounded-xl border-2 border-slate-900 bg-white p-3 text-sm" />
+    <section className="space-y-3">{visible.map((student) => <article key={student.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0_#e2e8f0]">
+      <div><h3 className="font-black">{student.full_name}</h3><p className="text-xs text-slate-500">{student.student_id} · {student.replacement_credits} replacement credits</p></div>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => openStudent(student.id)} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">View</button>
+        <button onClick={() => openStudent(student.id, true)} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button>
+        {student.portal_account_status === 'REGISTERED' ? <span className="rounded-lg bg-emerald-100 px-3 py-2 text-xs font-black text-emerald-800">Linked</span> :
+          student.portal_account_status === 'NOT_REGISTERED' ? <button onClick={() => links[student.id] ? navigator.clipboard.writeText(links[student.id]).then(() => showToast('Link copied', 'success')) : invite(student)} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white">Copy Link</button> :
+          <span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black">Status unavailable</span>}
+      </div>
+    </article>)}</section>
+    <Modal isOpen={editing} onClose={() => setEditing(false)} title={selected ? 'Edit Student Details' : 'Add Student'}>
+      <form onSubmit={save} className="space-y-3">
+        {Object.entries(form).map(([key, value]) => <label key={key} className="block text-xs font-bold capitalize">{key.replaceAll('_', ' ')}
+          <input required={key === 'full_name'} value={value} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" />
+        </label>)}
+        {!selected && <label className="block text-xs font-bold">Class
+          <select required value={classId} onChange={(event) => setClassId(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm"><option value="">Choose class</option>{classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name}</option>)}</select>
+        </label>}
+        <button disabled={busy || (!selected && !classId)} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">Save Student</button>
+      </form>
+    </Modal>
+    <Modal isOpen={Boolean(selected) && !editing} onClose={() => setSelected(null)} title="Student Details">
+      {selected && <div className="space-y-2 text-sm"><p><b>{selected.full_name}</b> ({selected.student_id})</p><p>Nickname: {selected.nick_name || '—'}</p><p>School: {selected.school || '—'}</p><p>Parent: {selected.parent?.name || '—'}</p><p>Phone: {selected.parent?.phone || '—'}</p><p>Classes: {selected.enrolled_schedules?.map((item) => item.class_name).join(', ') || '—'}</p></div>}
+    </Modal>
+  </main>;
+};

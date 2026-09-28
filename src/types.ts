@@ -8,9 +8,23 @@ export type SessionStatus = 'SCHEDULED' | 'COMPLETED' | 'CANCELLED' | 'OFF_DAY' 
 
 export type SessionType = 'NORMAL' | 'REPLACEMENT_COACH' | 'COACH_CANCELLED' | 'PLANNED_OFF_DAY';
 
-export type AttendanceStatus = 'PRESENT' | 'ABSENT' | 'EXCUSED' | 'LATE';
+export type AttendanceStatus = 'BOOKED' | 'PRESENT' | 'ABSENT' | 'EXCUSED' | 'LATE';
 
 export type AttendanceType = 'REGULAR' | 'REPLACEMENT';
+export type ReplacementCreditReason = 'GROUP_ABSENCE_CREDIT' | 'REPLACEMENT_ATTENDED_DEBIT' | 'OPENING_BALANCE_ADJUSTMENT' | 'ADMIN_ADJUSTMENT' | 'REVERSAL' | 'ADVANCE_REPLACEMENT_DEBIT';
+export interface ReplacementCredit { id:string; student_id:string; amount:number; reason:ReplacementCreditReason; attendance_id?:string; session_id?:string; advance_commitment_id?:string; created_by_user_id?:string; created_at:string; effective_at:string; idempotency_key:string; }
+export type ReplacementAdvanceCommitmentStatus = 'PENDING' | 'RECONCILED' | 'REVIEW_REQUIRED';
+export interface ReplacementAdvanceCommitment {
+  id: string;
+  student_id: string;
+  replacement_attendance_id: string;
+  replacement_session_id: string;
+  future_session_id: string;
+  status: ReplacementAdvanceCommitmentStatus;
+  created_by_user_id: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export type NotificationStatus = 'QUEUED' | 'SENT' | 'FAILED' | 'DISABLED';
 
@@ -181,6 +195,12 @@ export interface AttendanceRecord {
   portal_awarded_stars?: number;
   portal_multiplier?: number;
   portal_sync_message?: string;
+  /** Replacement-credit effect already reconciled for this attendance row. */
+  replacement_credit_impact?: number;
+  /** Monotonic transition number used in durable ledger idempotency keys. */
+  replacement_credit_revision?: number;
+  replacement_advance_commitment_id?: string;
+  trial_request_key?: string;
 }
 
 export interface AttendanceAuditLog {
@@ -196,6 +216,19 @@ export interface AttendanceAuditLog {
   new_status: AttendanceStatus;
   reason: string;
   timestamp: string;
+}
+
+export interface ActivityLog {
+  id: string;
+  actor_user_id: string;
+  actor_user_name: string;
+  actor_role: UserRole;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  class_id?: string;
+  summary?: string;
+  created_at: string;
 }
 
 export interface NotificationLog {

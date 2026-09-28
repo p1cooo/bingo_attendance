@@ -8,7 +8,7 @@ let lastDurableRevision: string | null = null;
 const STATE_COLLECTION = '_system';
 const STATE_DOCUMENT = 'academy';
 const SNAPSHOT_COLLECTION = '_academy_state';
-const SNAPSHOT_DOCUMENTS = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance', 'auditLogs', 'notificationLogs'] as const;
+const SNAPSHOT_DOCUMENTS = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance', 'replacementCredits', 'replacementAdvanceCommitments', 'auditLogs', 'activityLogs', 'notificationLogs'] as const;
 
 type SnapshotDocument = typeof SNAPSHOT_DOCUMENTS[number];
 
@@ -23,7 +23,10 @@ function snapshotValue(name: SnapshotDocument): unknown {
     case 'memberships': return Array.from(db.memberships.entries());
     case 'sessions': return Array.from(db.sessions.entries());
     case 'attendance': return Array.from(db.attendance.entries());
+    case 'replacementCredits': return Array.from(db.replacementCredits.entries());
+    case 'replacementAdvanceCommitments': return Array.from(db.replacementAdvanceCommitments.entries());
     case 'auditLogs': return db.auditLogs;
+    case 'activityLogs': return db.activityLogs;
     case 'notificationLogs': return db.notificationLogs;
   }
 }
@@ -40,7 +43,10 @@ function restoreSnapshot(name: SnapshotDocument, value: unknown): void {
     case 'memberships': db.memberships = new Map(value as never); break;
     case 'sessions': db.sessions = new Map(value as never); break;
     case 'attendance': db.attendance = new Map(value as never); break;
+    case 'replacementCredits': db.replacementCredits = new Map(value as never); break;
+    case 'replacementAdvanceCommitments': db.replacementAdvanceCommitments = new Map(value as never); break;
     case 'auditLogs': db.auditLogs = value as never; break;
+    case 'activityLogs': db.activityLogs = value as never; break;
     case 'notificationLogs': db.notificationLogs = value as never; break;
   }
 }
@@ -110,19 +116,21 @@ export function initializeFirestoreSync(): Promise<void> {
       console.log(`[Firestore] Snapshot restored: ${db.students.size} students.`);
       return;
     }
-    const collections = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance'] as const;
-    const targets = [db.users, db.coaches, db.parents, db.students, db.classes, db.schedules, db.memberships, db.sessions, db.attendance] as const;
+    const collections = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance', 'replacementCredits', 'replacementAdvanceCommitments'] as const;
+    const targets = [db.users, db.coaches, db.parents, db.students, db.classes, db.schedules, db.memberships, db.sessions, db.attendance, db.replacementCredits, db.replacementAdvanceCommitments] as const;
     await Promise.all(collections.map(async (name, index) => {
       const snapshot = await firestore.collection(name).get();
       const target = targets[index];
       target.clear();
       snapshot.forEach((document) => target.set(document.id, document.data() as never));
     }));
-    const [auditSnapshot, notificationSnapshot] = await Promise.all([
+    const [auditSnapshot, activitySnapshot, notificationSnapshot] = await Promise.all([
       firestore.collection('auditLogs').orderBy('timestamp', 'desc').limit(500).get(),
+      firestore.collection('activityLogs').orderBy('created_at', 'desc').limit(500).get(),
       firestore.collection('notificationLogs').orderBy('timestamp', 'desc').limit(500).get(),
     ]);
     db.auditLogs = auditSnapshot.docs.map((document) => document.data() as never);
+    db.activityLogs = activitySnapshot.docs.map((document) => document.data() as never);
     db.notificationLogs = notificationSnapshot.docs.map((document) => document.data() as never);
     hasLoadedDurableState = true;
     lastDurableRevision = revision;

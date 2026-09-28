@@ -97,7 +97,6 @@ class ApiClient {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
-      signal: options.signal ?? AbortSignal.timeout(20_000),
     });
 
     // If 401 Unauthorized occurs and Firebase Auth user is signed in, force refresh and retry once
@@ -302,6 +301,14 @@ class ApiClient {
     });
   }
 
+  async searchClassStudents(classId: string, search: string): Promise<Array<{ id: string; full_name: string; student_id: string; already_in_class: boolean; assigned_elsewhere: boolean }>> {
+    return this.request(`/classes/${classId}/student-search?search=${encodeURIComponent(search)}`);
+  }
+
+  async addStudentToClass(classId: string, studentId: string, addAnyway = false): Promise<unknown> {
+    return this.request(`/schedules/${classId}/students`, { method: 'POST', body: JSON.stringify({ student_id: studentId, add_anyway: addAnyway }) });
+  }
+
   async bulkCreateClasses(classes: any[]): Promise<{
     success: boolean;
     importedCount: number;
@@ -447,18 +454,33 @@ class ApiClient {
     });
   }
 
-  async createPortalInvite(studentId: string): Promise<{ invite_url: string; expires_at: string }> {
+  async createPortalInvite(studentId: string): Promise<{ status: 'REGISTERED' | 'INVITED'; invite_url?: string; portal_url?: string }> {
     return this.request(`/students/${studentId}/portal-invite`, { method: 'POST' });
   }
 
   async addReplacementStudent(
     sessionId: string,
-    data: { student_id: string; replacement_note?: string }
+    data: { student_id: string; replacement_note?: string; advance_future_session_id?: string }
   ): Promise<{ success: boolean; attendance_record: AttendanceRecord; session: ClassSession }> {
     return this.request(`/sessions/${sessionId}/replacement-student`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  async getReplacementCandidates(sessionId: string, search = ''): Promise<Array<Student & { replacement_credits: number }>> {
+    return this.request(`/sessions/${sessionId}/replacement-candidates${search ? `?search=${encodeURIComponent(search)}` : ''}`);
+  }
+  async getReplacementFutureSessions(sessionId: string, studentId: string): Promise<Array<{ id: string; date: string; day: string; class_name: string; coach_name?: string }>> {
+    return this.request(`/sessions/${sessionId}/replacement-candidates/${studentId}/future-sessions`);
+  }
+
+  async getReplacementCredits(studentId: string): Promise<{ balance: number; history: any[] }> {
+    return this.request(`/students/${studentId}/replacement-credits`);
+  }
+
+  async adjustReplacementCredits(studentId: string, data: { amount: number; reason: string; opening_balance?: boolean; idempotency_key?: string }) {
+    return this.request(`/students/${studentId}/replacement-credits/adjustments`, { method: 'POST', body: JSON.stringify(data) });
   }
 
   async recordUnregisteredStudent(
