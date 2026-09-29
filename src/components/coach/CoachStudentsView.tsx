@@ -97,7 +97,7 @@ export const CoachStudentsView: React.FC = () => {
           <span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black">Status unavailable</span>}
       </div>
     </article>)}</section>
-    <Modal isOpen={editing} onClose={() => setEditing(false)} title={selected ? 'Edit Student Details' : 'Add Student'}>
+    <Modal isOpen={editing} onClose={() => { setEditing(false); setSelected(null); }} title={selected ? 'Edit Student Details' : 'Add Student'}>
       <form onSubmit={save} className="space-y-3">
         {Object.entries(form).map(([key, value]) => <label key={key} className="block text-xs font-bold capitalize">{key.replaceAll('_', ' ')}
           <input required={key === 'full_name'} value={value} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" />

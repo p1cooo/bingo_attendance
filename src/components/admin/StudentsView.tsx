@@ -120,6 +120,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   }, [initialAddModalOpen]);
 
   const handleOpenAdd = () => {
+    setProfileStudent(null);
     setFormData({
       student_id: '',
       full_name: '',
@@ -140,6 +141,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   };
 
   const handleOpenEdit = (student: Student) => {
+    setProfileStudent(null);
     setEditingStudent(student);
     setFormData({
       student_id: student.student_id,
@@ -162,6 +164,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const handleOpenProfile = async (studentId: string) => {
     try {
       const detailed = await api.getStudent(studentId);
+      setIsAddModalOpen(false);
+      setEditingStudent(null);
       setProfileStudent(detailed);
     } catch (err: any) {
       showToast(err.message || 'Failed to load student profile', 'error');
