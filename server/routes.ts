@@ -1260,7 +1260,6 @@ router.put('/students/:id', authenticateUser, requireCoachOrAdmin, async (req: A
     db.students.set(id, updatedStudent);
     if (updatedParent) db.parents.set(updatedParent.id, updatedParent);
     for (const membership of [...membershipChanges.add, ...membershipChanges.end]) db.memberships.set(membership.id, membership);
-    if (membershipChanges.add.length || membershipChanges.end.length) await syncPortalCoachLinksForStudent(id).catch(console.error);
     return res.json(db.getPopulatedStudent(id));
   } catch { return res.status(503).json({ error: 'Student update could not be saved.' }); }
 });
