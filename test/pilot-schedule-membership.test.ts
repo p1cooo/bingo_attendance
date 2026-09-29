@@ -4,7 +4,10 @@ import { reconcileRecurringSessions } from '../server/recurringSessions.js';
 import { db } from '../server/db.js';
 import { router } from '../server/routes.js';
 import { planStudentMemberships } from '../server/studentMemberships.js';
-import { filterClassPicker, MONDAY_FIRST_DAYS } from '../src/lib/classPicker.js';
+import { filterClassPicker, MONDAY_FIRST_DAYS, toggleClassDay } from '../src/lib/classPicker.js';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement } from 'react';
+import { ClassMembershipPicker } from '../src/components/student/ClassMembershipPicker.js';
 import type { AcademyClass, AttendanceRecord, ClassSchedule, ClassSession, StudentClassMembership } from '../src/types.js';
 
 test('Thursday to Tuesday repairs untouched future occurrences without moving history or exceptions', () => {
@@ -58,10 +61,20 @@ test('class picker combines search, Monday-first, type and coach filters', () =>
     schedule('early', 6, '09:00', 'GROUP', 'wei'), schedule('other', 6, '08:00', 'INDIVIDUAL', 'other'),
     schedule('Monday', 1, '10:00', 'GROUP', 'wei')];
   assert.deepEqual(MONDAY_FIRST_DAYS, [1, 2, 3, 4, 5, 6, 0]);
-  assert.deepEqual(filterClassPicker(schedules, { search: '', day: null, type: '', coachId: '' }).map((row) => row.id),
+  assert.deepEqual(filterClassPicker(schedules, { search: '', days: [], type: '', coachId: '' }).map((row) => row.id),
     ['Monday', 'other', 'early', 'late', 'Sunday']);
-  assert.deepEqual(filterClassPicker(schedules, { search: 'chess', day: 6, type: 'GROUP', coachId: 'wei' }).map((row) => row.id),
+  assert.deepEqual(filterClassPicker(schedules, { search: 'chess', days: [6], type: 'GROUP', coachId: 'wei' }).map((row) => row.id),
     ['early', 'late']);
+  assert.deepEqual(filterClassPicker(schedules, { search: '', days: [1, 6], type: '', coachId: '' }).map((row) => row.id),
+    ['Monday', 'other', 'early', 'late']);
+  assert.deepEqual(toggleClassDay([1, 6], 1), [6]);
+  assert.deepEqual(toggleClassDay([1, 6], 0), [1, 6, 0]);
+  assert.deepEqual(filterClassPicker(schedules, { search: '', days: [1, 6], type: 'INDIVIDUAL', coachId: '' }).map((row) => row.id), ['other']);
+  const markup = renderToStaticMarkup(createElement(ClassMembershipPicker, { schedules, selected: [], onChange: () => {} }));
+  assert.match(markup, /Day: All/);
+  assert.match(markup, /Type: All/);
+  assert.match(markup, /type="radio"[^>]*checked=""[^>]*>All/);
+  assert.doesNotMatch(markup, />Reset</);
 });
 
 test('coach cannot edit a student into an unrelated class', async () => {

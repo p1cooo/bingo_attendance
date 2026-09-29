@@ -1,33 +1,43 @@
 import React, { useState } from 'react';
 import type { ClassSchedule, Coach } from '../../types.js';
-import { filterClassPicker, MONDAY_FIRST_DAYS, type ClassPickerFilters } from '../../lib/classPicker.js';
+import { filterClassPicker, MONDAY_FIRST_DAYS, toggleClassDay, type ClassPickerFilters } from '../../lib/classPicker.js';
 
 const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const emptyFilters: ClassPickerFilters = { search: '', day: null, type: '', coachId: '' };
+const emptyFilters: ClassPickerFilters = { search: '', days: [], type: '', coachId: '' };
 
 export function ClassMembershipPicker({ schedules, coaches = [], selected, onChange, admin = false }: {
   schedules: ClassSchedule[]; coaches?: Coach[]; selected: string[]; onChange: (ids: string[]) => void; admin?: boolean;
 }) {
   const [filters, setFilters] = useState<ClassPickerFilters>(emptyFilters);
   const visible = filterClassPicker(schedules, filters);
-  const chip = (label: string, active: boolean, onClick: () => void) =>
-    <button type="button" key={label} aria-pressed={active} onClick={onClick}
-      className={`rounded-full border-2 border-slate-900 px-3 py-1.5 text-xs font-bold ${active ? 'bg-amber-300' : 'bg-white hover:bg-amber-50'}`}>{label}</button>;
+  const dayLabel = filters.days.length === 0 ? 'All' : filters.days.length <= 2
+    ? MONDAY_FIRST_DAYS.filter((day) => filters.days.includes(day)).map((day) => dayNames[day]).join(', ')
+    : `${filters.days.length} days selected`;
   return <section className="space-y-3 border-t border-slate-200 pt-4">
     <div className="flex items-center justify-between gap-2"><h4 className="text-sm font-black">Classes</h4><span className="text-xs font-bold">{selected.length} selected</span></div>
     <input aria-label="Search classes" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })}
       placeholder="Search class name" className="w-full rounded-xl border-2 border-slate-900 bg-white p-2.5 text-sm" />
-    <div className="flex flex-wrap gap-1.5" aria-label="Class day filters">
-      {MONDAY_FIRST_DAYS.map((day) => chip(dayNames[day], filters.day === day, () => setFilters({ ...filters, day: filters.day === day ? null : day })))}
-    </div>
-    <div className="flex flex-wrap items-center gap-1.5" aria-label="Class type filters">
-      {chip('Group', filters.type === 'GROUP', () => setFilters({ ...filters, type: filters.type === 'GROUP' ? '' : 'GROUP' }))}
-      {chip('Individual', filters.type === 'INDIVIDUAL', () => setFilters({ ...filters, type: filters.type === 'INDIVIDUAL' ? '' : 'INDIVIDUAL' }))}
+    <div className="flex flex-wrap items-start gap-2">
+      <details className="group relative" aria-label="Class day filters">
+        <summary className="cursor-pointer list-none rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-bold hover:bg-amber-50">Day: {dayLabel} <span aria-hidden="true">▾</span></summary>
+        <div className="absolute left-0 z-20 mt-1 max-h-64 min-w-44 overflow-y-auto rounded-xl border-2 border-slate-900 bg-white p-2 shadow-lg">
+          {MONDAY_FIRST_DAYS.map((day) => <label key={day} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-bold hover:bg-amber-50">
+            <input type="checkbox" checked={filters.days.includes(day)} onChange={() => setFilters((current) => ({ ...current, days: toggleClassDay(current.days, day) }))} className="h-4 w-4 accent-amber-500" />{dayNames[day]}
+          </label>)}
+        </div>
+      </details>
+      <details className="group relative" aria-label="Class type filters">
+        <summary className="cursor-pointer list-none rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-bold hover:bg-amber-50">Type: {filters.type === 'INDIVIDUAL' ? 'Individual' : filters.type === 'GROUP' ? 'Group' : 'All'} <span aria-hidden="true">▾</span></summary>
+        <div className="absolute left-0 z-20 mt-1 min-w-36 rounded-xl border-2 border-slate-900 bg-white p-2 shadow-lg">
+          {([['', 'All'], ['GROUP', 'Group'], ['INDIVIDUAL', 'Individual']] as const).map(([value, label]) => <label key={label} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-bold hover:bg-amber-50">
+            <input type="radio" name="class-picker-type" checked={filters.type === value} onChange={() => setFilters((current) => ({ ...current, type: value }))} className="h-4 w-4 accent-amber-500" />{label}
+          </label>)}
+        </div>
+      </details>
       {admin && <select aria-label="Coach filter" value={filters.coachId} onChange={(event) => setFilters({ ...filters, coachId: event.target.value })}
         className="rounded-xl border-2 border-slate-900 bg-white px-2 py-1.5 text-xs font-bold">
         <option value="">All coaches</option>{coaches.map((coach) => <option key={coach.id} value={coach.id}>Coach {coach.name}</option>)}
       </select>}
-      {chip('Reset', false, () => setFilters(emptyFilters))}
     </div>
     <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border-2 border-slate-900 bg-slate-50 p-2" aria-label="Class memberships">
       {visible.map((schedule) => {

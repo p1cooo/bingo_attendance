@@ -93,7 +93,7 @@ export const CoachStudentsView: React.FC = () => {
     <section className="space-y-3">{visible.length === 0 && <p className="rounded-2xl border-2 border-slate-900 bg-white p-4 text-sm font-bold text-slate-500">No students match your search and filters.</p>}{visible.map((student) => <article key={student.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0_#e2e8f0]">
       <div><h3 className="font-black">{student.full_name}</h3><p className="text-xs text-slate-500">{student.student_id} · {student.replacement_credits} replacement credits</p></div>
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => openStudent(student.id)} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">View</button>
+        <button onClick={() => openStudent(student.id)} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Bingo</button>
         <button onClick={() => openStudent(student.id, true)} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button>
         {student.portal_account_status === 'REGISTERED' ? <span className="rounded-lg bg-emerald-100 px-3 py-2 text-xs font-black text-emerald-800">Linked</span> :
           student.portal_account_status === 'NOT_REGISTERED' ? <button onClick={() => links[student.id] ? navigator.clipboard.writeText(links[student.id]).then(() => showToast('Link copied', 'success')) : invite(student)} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white">Copy Link</button> :

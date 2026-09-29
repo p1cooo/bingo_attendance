@@ -3,6 +3,7 @@ import test from 'node:test';
 import { filterAndSortCoachClasses, filterCoachStudents, WEEK_DAYS, CoachStudentRow } from '../src/lib/coachListFilters.js';
 import { AcademyClass } from '../src/types.js';
 import { getFixedWeekDays, getWeekStart } from '../src/lib/dateUtils.js';
+import { readFileSync } from 'node:fs';
 
 const students: CoachStudentRow[] = [
   { id: 'one', full_name: 'Alice Tan', student_id: 'STU-0003', replacement_credits: 2, portal_account_status: 'REGISTERED', normal_class_days: [1, 4] },
@@ -57,4 +58,9 @@ test('Monday is first; classes on a day sort from earliest time', () => {
   assert.deepEqual(classFilter(), ['mon-early', 'mon-late', 'tue', 'sun']);
   assert.equal(getWeekStart('2026-10-04'), '2026-09-28');
   assert.deepEqual(getFixedWeekDays('2026-10-04').map((day) => day.dayLabel), ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+});
+
+test('Bingo row action keeps the existing student details handler', () => {
+  const view = readFileSync(new URL('../src/components/coach/CoachStudentsView.tsx', import.meta.url), 'utf8');
+  assert.match(view, /<button onClick=\{\(\) => openStudent\(student\.id\)\}[^>]*>Bingo<\/button>/);
 });

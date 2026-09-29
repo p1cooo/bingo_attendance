@@ -5,9 +5,9 @@ import { Modal } from '../common/Modal.js';
 import { useToast } from '../common/Toast.js';
 import { CoachFilterChip } from './CoachFilterChip.js';
 import { WEEK_DAYS, filterAndSortCoachClasses } from '../../lib/coachListFilters.js';
+import { addRosterStudents, filterRosterCandidates, toggleRosterStudent, type RosterCandidate } from '../../lib/classRoster.js';
 
 const empty = { name: '', class_type: 'GROUP' as ClassType, day_of_week: 6, start_time: '09:30', end_time: '11:00', room_location: 'Chess Hall A' };
-type Candidate = { id: string; full_name: string; student_id: string; already_in_class: boolean; assigned_elsewhere: boolean };
 
 export const CoachClassesView: React.FC = () => {
   const { showToast } = useToast();
@@ -20,9 +20,12 @@ export const CoachClassesView: React.FC = () => {
   const [classQuery, setClassQuery] = useState('');
   const [days, setDays] = useState<number[]>([]);
   const [typeFilter, setTypeFilter] = useState<ClassType | 'ALL'>('ALL');
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candidates, setCandidates] = useState<RosterCandidate[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [busy, setBusy] = useState(false);
   const visibleClasses = useMemo(() => filterAndSortCoachClasses(classes, { query: classQuery, type: typeFilter, days }), [classes, classQuery, typeFilter, days]);
+  const visibleCandidates = useMemo(() => filterRosterCandidates(candidates, query), [candidates, query]);
   const toggleDay = (day: number) => setDays((current) => current.includes(day) ? current.filter((value) => value !== day) : [...current, day]);
   const load = async () => {
     try { setClasses(await api.getClasses()); }
@@ -30,11 +33,15 @@ export const CoachClassesView: React.FC = () => {
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    if (!roster || query.trim().length < 2) { setCandidates([]); return; }
+    if (!roster) return;
     let active = true;
-    api.searchClassStudents(roster.id, query).then((rows) => { if (active) setCandidates(rows); }).catch(() => { if (active) setCandidates([]); });
+    setCandidates([]);
+    setLoadingCandidates(true);
+    api.searchClassStudents(roster.id, '').then((rows) => { if (active) setCandidates(rows.filter((student) => !student.already_in_class)); })
+      .catch((error) => { if (active) showToast(error.message || 'Could not load students', 'error'); })
+      .finally(() => { if (active) setLoadingCandidates(false); });
     return () => { active = false; };
-  }, [roster?.id, query]);
+  }, [roster?.id]);
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true);
     try {
@@ -49,14 +56,18 @@ export const CoachClassesView: React.FC = () => {
     try { await api.deleteClass(cls.id); await load(); showToast('Class deleted; history preserved', 'success'); }
     catch (error: any) { showToast(error.message || 'Could not delete class', 'error'); }
   };
-  const add = async (student: Candidate) => {
-    if (student.already_in_class || !roster) return;
-    if (student.assigned_elsewhere && !window.confirm('This student is already assigned to another class/coach. Add anyway?')) return;
-    try {
-      await api.addStudentToClass(roster.id, student.id, student.assigned_elsewhere);
-      setCandidates((rows) => rows.map((row) => row.id === student.id ? { ...row, already_in_class: true } : row));
-      showToast('Student added to class', 'success');
-    } catch (error: any) { showToast(error.message || 'Could not add student', 'error'); }
+  const addSelected = async () => {
+    if (!roster || !selectedIds.length || busy) return;
+    const students = candidates.filter((student) => selectedIds.includes(student.id) && !student.already_in_class);
+    if (students.some((student) => student.assigned_elsewhere) && !window.confirm('Some selected students are already assigned to another class/coach. Add anyway?')) return;
+    setBusy(true);
+    const { added, failed } = await addRosterStudents(students, selectedIds,
+      (student) => api.addStudentToClass(roster.id, student.id, student.assigned_elsewhere));
+    setCandidates((rows) => rows.filter((student) => !added.includes(student.id)));
+    setSelectedIds((ids) => ids.filter((id) => !added.includes(id)));
+    if (added.length) { showToast(`${added.length} student${added.length === 1 ? '' : 's'} added to class`, 'success'); await load(); }
+    if (failed) showToast(`${failed} student${failed === 1 ? '' : 's'} could not be added. Please retry.`, 'error');
+    setBusy(false);
   };
   return <main className="mx-auto max-w-6xl p-5 text-slate-950">
     <header className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-black">My Classes</h2><button onClick={() => { setEditing(null); setForm(empty); setFormOpen(true); }} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black">Create Class</button></header>
@@ -74,7 +85,7 @@ export const CoachClassesView: React.FC = () => {
     </div>
     <section className="space-y-3">{visibleClasses.length === 0 && <p className="rounded-2xl border-2 border-slate-900 bg-white p-4 text-sm font-bold text-slate-500">No classes match your search and filters.</p>}{visibleClasses.map((cls) => <article key={cls.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0_#e2e8f0]">
       <div><h3 className="font-black">{cls.name}</h3><p className="text-xs text-slate-500">{WEEK_DAYS.find((day) => day.value === cls.day_of_week)?.short || 'Day'} · {cls.class_type} · {cls.start_time}–{cls.end_time} · {cls.enrolled_students_count || 0} students</p></div>
-      <div className="flex gap-2"><button onClick={() => { setEditing(cls); setForm({ name: cls.name, class_type: cls.class_type, day_of_week: cls.day_of_week ?? 6, start_time: cls.start_time || '', end_time: cls.end_time || '', room_location: cls.room_location || '' }); setFormOpen(true); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button><button onClick={() => { setRoster(cls); setQuery(''); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Add Students</button><button onClick={() => archive(cls)} className="rounded-lg border border-rose-600 px-3 py-2 text-xs font-black text-rose-700">Delete</button></div>
+      <div className="flex gap-2"><button onClick={() => { setEditing(cls); setForm({ name: cls.name, class_type: cls.class_type, day_of_week: cls.day_of_week ?? 6, start_time: cls.start_time || '', end_time: cls.end_time || '', room_location: cls.room_location || '' }); setFormOpen(true); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button><button onClick={() => { setRoster(cls); setQuery(''); setSelectedIds([]); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Add Students</button><button onClick={() => archive(cls)} className="rounded-lg border border-rose-600 px-3 py-2 text-xs font-black text-rose-700">Delete</button></div>
     </article>)}</section>
     <Modal isOpen={formOpen} onClose={() => setFormOpen(false)} title={editing ? 'Edit Class' : 'Create Class'}>
       <form onSubmit={save} className="space-y-3">
@@ -88,8 +99,15 @@ export const CoachClassesView: React.FC = () => {
       </form>
     </Modal>
     <Modal isOpen={Boolean(roster)} onClose={() => setRoster(null)} title="Add Students to Class">
-      <input aria-label="Search academy students" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or STU-ID" className="mb-3 w-full rounded-lg border p-2 text-sm" />
-      <div className="space-y-2">{candidates.map((student) => <button key={student.id} disabled={student.already_in_class} onClick={() => add(student)} className="flex w-full items-center justify-between rounded-lg border p-2 text-left text-sm disabled:bg-slate-100 disabled:text-slate-400"><span>{student.full_name} ({student.student_id})</span><span>{student.already_in_class ? 'Already in class' : 'Add'}</span></button>)}</div>
+      <input aria-label="Search academy students" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or STU-ID" className="mb-3 w-full rounded-xl border-2 border-slate-900 bg-white p-2.5 text-sm" />
+      <p className="mb-2 text-xs font-bold">{selectedIds.length} selected</p>
+      <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border-2 border-slate-900 bg-slate-50 p-2" aria-label="Eligible students">
+        {loadingCandidates ? <p className="p-3 text-xs text-slate-500">Loading students…</p> : visibleCandidates.length ? visibleCandidates.map((student) => <label key={student.id} className={`flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 text-sm ${selectedIds.includes(student.id) ? 'border-amber-500 bg-amber-100' : 'border-slate-200 bg-white'}`}>
+          <input type="checkbox" checked={selectedIds.includes(student.id)} onChange={() => setSelectedIds((ids) => toggleRosterStudent(ids, student.id))} className="h-4 w-4 accent-amber-500" />
+          <span><b>{student.full_name}</b><span className="block text-xs text-slate-600">{student.student_id}</span></span>
+        </label>) : <p className="p-3 text-xs text-slate-500">No eligible students match your search.</p>}
+      </div>
+      <button type="button" disabled={busy || !selectedIds.length} onClick={addSelected} className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">{busy ? 'Adding…' : `Add ${selectedIds.length} Student${selectedIds.length === 1 ? '' : 's'}`}</button>
     </Modal>
   </main>;
 };

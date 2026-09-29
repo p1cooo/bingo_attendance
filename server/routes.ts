@@ -1338,10 +1338,8 @@ router.get('/classes/:id/student-search', authenticateUser, requireCoachOrAdmin,
   const classId = req.params.id;
   if (!canManageClass(req.user!, classId) || !db.classes.get(classId)?.is_active) return res.status(403).json({ error: 'Forbidden' });
   const query = String(req.query.search || '').trim().toLowerCase();
-  if (query.length < 2) return res.json([]);
   const results = Array.from(db.students.values())
     .filter((student) => student.status === 'ACTIVE' && (student.full_name.toLowerCase().includes(query) || student.student_id.toLowerCase().includes(query)))
-    .slice(0, 20)
     .map((student) => {
       const memberships = Array.from(db.memberships.values()).filter((membership) => membership.student_id === student.id && membership.status === 'ACTIVE');
       return {
@@ -1349,7 +1347,8 @@ router.get('/classes/:id/student-search', authenticateUser, requireCoachOrAdmin,
         already_in_class: memberships.some((membership) => db.schedules.get(membership.schedule_id)?.class_id === classId),
         assigned_elsewhere: memberships.some((membership) => db.schedules.get(membership.schedule_id)?.class_id !== classId),
       };
-    });
+    })
+    .filter((student) => !student.already_in_class);
   return res.json(results);
 });
 router.get('/classes/:id', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
