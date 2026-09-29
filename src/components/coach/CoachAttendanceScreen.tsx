@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useToast } from '../common/Toast.js';
 import { api } from '../../lib/api.js';
 import { getTodayDateString } from '../../lib/dateUtils.js';
 import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
-import { runAttendanceMark, withAttendanceRecord } from '../../lib/attendanceMark.js';
-import { ClassSession, Student, AttendanceRecord, AttendanceStatus } from '../../types.js';
+import { attendanceSaves } from '../../lib/attendanceSaves.js';
+import { useAttendanceSaves } from '../common/AttendanceSaveStatus.js';
+import { ClassSession, Student, AttendanceRecord, AttendanceStatus, Coach } from '../../types.js';
 import {
   ArrowLeft,
   Check,
@@ -40,14 +41,20 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const { user, coachProfile } = useAuth();
   const { showToast } = useToast();
 
-  const [session, setSession] = useState<(ClassSession & { enrolled_students?: Student[] }) | null>(null);
+  const [serverSession, setSession] = useState<(ClassSession & { enrolled_students?: Student[] }) | null>(null);
+  useAttendanceSaves();
+  const session = serverSession && attendanceSaves.overlay(serverSession);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const pendingMarks = useRef(new Set<string>());
-  const [savingStudentIds, setSavingStudentIds] = useState<Set<string>>(() => new Set());
   const [starsByStudent, setStarsByStudent] = useState<Record<string, string>>({});
   const [tshirtByStudent, setTshirtByStudent] = useState<Record<string, boolean>>({});
   const [creatingPortalInviteFor, setCreatingPortalInviteFor] = useState<string | null>(null);
+  const [editingOccurrence, setEditingOccurrence] = useState(false);
+  const [occurrenceDate, setOccurrenceDate] = useState('');
+  const [occurrenceStart, setOccurrenceStart] = useState('');
+  const [occurrenceCoach, setOccurrenceCoach] = useState('');
+  const [availableCoaches, setAvailableCoaches] = useState<Coach[]>([]);
+  const [savingOccurrence, setSavingOccurrence] = useState(false);
 
   // Replacement student modal
   const [isReplacementModalOpen, setIsReplacementModalOpen] = useState(false);
@@ -95,7 +102,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     }
   }, [isReplacementModalOpen, allStudents.length]);
 
-  const handleMarkStatus = async (
+  const handleMarkStatus = (
     studentId: string,
     studentName: string,
     status: 'PRESENT' | 'ABSENT',
@@ -117,40 +124,16 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       ...(baseStars !== undefined ? { base_stars: baseStars } : {}),
       ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
     };
-    try {
-      const saved = await runAttendanceMark(pendingMarks.current, studentId, {
-        optimistic: () => {
-          setSavingStudentIds(new Set(pendingMarks.current));
-          setSession((current) => current?.id === sessionId ? withAttendanceRecord(current, studentId, optimisticRecord) : current);
-        },
-        save: () => api.markAttendance(sessionId, {
+    attendanceSaves.submit({
+      sessionId, studentId, studentName, optimisticRecord,
+      save: () => api.markAttendance(sessionId, {
           student_id: studentId,
           status,
           attendance_type: attendanceType,
           ...(baseStars !== undefined ? { base_stars: baseStars } : {}),
           ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
-        }),
-        commit: ({ attendance_record }) => {
-          const record = { ...attendance_record, student: priorRecord?.student || attendance_record.student };
-          setSession((current) => current?.id === sessionId ? withAttendanceRecord(current, studentId, record) : current);
-        },
-        rollback: () => {
-          setSession((current) => current?.id === sessionId ? withAttendanceRecord(current, studentId, priorRecord) : current);
-        },
-      });
-      if (!saved) return;
-
-      if (status === 'PRESENT') {
-        showToast(`✓ ${studentName}: PRESENT (Attendance recorded)`, 'success', 2000);
-      } else {
-        showToast(`✕ ${studentName}: ABSENT (Attendance recorded)`, 'info', 2000);
-      }
-
-    } catch (err: any) {
-      showToast(`${studentName}: ${err.message || 'Unable to save attendance'}. Status reverted; please retry.`, 'error');
-    } finally {
-      setSavingStudentIds(new Set(pendingMarks.current));
-    }
+      }),
+    });
   };
 
   const handleAddReplacement = async (e: React.FormEvent) => {
@@ -238,6 +221,48 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     } finally {
       setCreatingPortalInviteFor(null);
     }
+  };
+
+  const openOccurrence = () => {
+    if (!session) return;
+    setOccurrenceDate(session.session_date);
+    setOccurrenceStart(session.start_time);
+    setOccurrenceCoach(session.replacement_coach_id || '');
+    setEditingOccurrence(true);
+    api.getCoaches().then((coaches) => setAvailableCoaches(coaches.filter((coach) => coach.is_active && coach.id !== (session.default_coach_id || session.scheduled_coach_id))))
+      .catch(() => showToast('Could not load replacement coaches', 'error'));
+  };
+
+  const saveOccurrence = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!session) return;
+    const toMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+    const endMinutes = toMinutes(occurrenceStart) + toMinutes(session.end_time) - toMinutes(session.start_time);
+    if (endMinutes >= 24 * 60) { showToast('Choose an earlier start time', 'error'); return; }
+    const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+    setSavingOccurrence(true);
+    try {
+      await api.updateSession(sessionId, {
+        session_date: occurrenceDate, start_time: occurrenceStart, end_time: endTime,
+        session_type: occurrenceCoach ? 'REPLACEMENT_COACH' : 'NORMAL',
+        replacement_coach_id: occurrenceCoach || null,
+      });
+      await fetchSession();
+      setEditingOccurrence(false);
+      showToast('Session occurrence updated', 'success');
+    } catch (error: any) { showToast(error.message || 'Could not update occurrence', 'error'); }
+    finally { setSavingOccurrence(false); }
+  };
+
+  const resetOccurrence = async () => {
+    setSavingOccurrence(true);
+    try {
+      await api.updateSession(sessionId, { reset_to_regular_schedule: true });
+      await fetchSession();
+      setEditingOccurrence(false);
+      showToast('Regular schedule restored', 'success');
+    } catch (error: any) { showToast(error.message || 'Could not reset occurrence', 'error'); }
+    finally { setSavingOccurrence(false); }
   };
 
   if (loading) {
@@ -333,6 +358,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
   const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
   const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
+  const hasTakenAttendance = (session.attendance_records || []).some((record) => record.status !== 'BOOKED');
+  const isRegularCoach = !!coachProfile && (session.default_coach_id || session.scheduled_coach_id) === coachProfile.id;
+  const isRescheduled = Boolean(session.original_session_date && session.original_session_date !== session.session_date ||
+    session.original_start_time && session.original_start_time !== session.start_time);
   const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (session.actual_coach?.color || coachProfile?.color || '#3b82f6');
 
   const todayStr = getTodayDateString();
@@ -403,6 +432,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   Replacement Coach
                 </span>
               )}
+              {isRescheduled && <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-violet-100 border border-violet-300 text-violet-800">Rescheduled</span>}
               {isFutureSession && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-sky-100 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-700 text-sky-800 dark:text-sky-200">
                   <Lock className="w-3 h-3" />
@@ -418,6 +448,11 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               </span>
               {session.room_location && <span>• Venue: {session.room_location}</span>}
             </div>
+            {isRegularCoach && <div className="mt-3 text-xs">
+              {hasTakenAttendance
+                ? <span className="text-slate-500">Date, time, and replacement coach are locked because attendance has been taken.</span>
+                : <button type="button" onClick={openOccurrence} className="rounded-xl border border-slate-900 px-3 py-1.5 font-black text-slate-900 dark:border-white dark:text-white">Edit this occurrence</button>}
+            </div>}
           </div>
 
           {/* Quick Roll Summary Badges */}
@@ -449,6 +484,23 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           </div>
         </div>
       </div>
+
+      <Modal isOpen={editingOccurrence} onClose={() => setEditingOccurrence(false)} title="Edit this occurrence" subtitle="Only this session changes. The recurring class remains unchanged.">
+        <form onSubmit={saveOccurrence} className="space-y-4">
+          <label className="block text-xs font-bold">Date<input type="date" required value={occurrenceDate} onChange={(event) => setOccurrenceDate(event.target.value)} className="mt-1 w-full rounded-xl border p-2 text-slate-900" /></label>
+          <label className="block text-xs font-bold">Start time<input type="time" required value={occurrenceStart} onChange={(event) => setOccurrenceStart(event.target.value)} className="mt-1 w-full rounded-xl border p-2 text-slate-900" /></label>
+          <label className="block text-xs font-bold">Replacement coach for this occurrence
+            <select value={occurrenceCoach} onChange={(event) => setOccurrenceCoach(event.target.value)} className="mt-1 w-full rounded-xl border p-2 text-slate-900">
+              <option value="">Regular coach</option>
+              {availableCoaches.map((coach) => <option key={coach.id} value={coach.id}>{coach.name}</option>)}
+            </select>
+          </label>
+          <div className="flex flex-wrap justify-between gap-2">
+            <div>{(isRescheduled || session.replacement_coach_id) && <button type="button" disabled={savingOccurrence} onClick={resetOccurrence} className="rounded-xl border border-slate-900 px-3 py-2 text-xs font-black">Reset to regular schedule</button>}</div>
+            <button type="submit" disabled={savingOccurrence} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white">{savingOccurrence ? 'Saving…' : 'Save occurrence'}</button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Future Session Notification Banner */}
       {isFutureSession && (
@@ -538,7 +590,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         ) : (
           filteredRoll.map(({ student, record, isReplacement, isUnregistered }) => {
             const status = record?.status;
-            const isSaving = savingStudentIds.has(student.id);
+            const isSaving = attendanceSaves.isPending(sessionId, student.id);
             const studentFullName = student?.full_name || 'Student';
             const studentId = student?.student_id || '';
             const starsValue = starsByStudent[student.id] ?? (record?.base_stars?.toString() || '');

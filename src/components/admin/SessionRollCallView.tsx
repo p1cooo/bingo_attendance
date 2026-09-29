@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../common/Toast.js';
+import { attendanceSaves } from '../../lib/attendanceSaves.js';
+import { useAttendanceSaves } from '../common/AttendanceSaveStatus.js';
 import { formatFullDate } from '../../lib/dateUtils.js';
 import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import {
@@ -47,11 +49,12 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
 }) => {
   const { showToast } = useToast();
 
-  const [session, setSession] = useState<(ClassSession & { enrolled_students?: Student[] }) | null>(null);
+  const [serverSession, setSession] = useState<(ClassSession & { enrolled_students?: Student[] }) | null>(null);
+  useAttendanceSaves();
+  const session = serverSession && attendanceSaves.overlay(serverSession);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [savingStudentId, setSavingStudentId] = useState<string | null>(null);
 
   // Replacement student modal
   const [isReplacementModalOpen, setIsReplacementModalOpen] = useState(false);
@@ -108,37 +111,27 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
     }
   }, [isReplacementModalOpen, allStudents.length]);
 
-  const handleMarkStatus = async (
+  const handleMarkStatus = (
     studentId: string,
     studentName: string,
     status: AttendanceStatus,
     attendanceType: 'REGULAR' | 'REPLACEMENT' = 'REGULAR'
   ) => {
     if (!session) return;
-    setSavingStudentId(studentId);
-
-    try {
-      await api.markAttendance(sessionId, {
+    const priorRecord = session.attendance_records?.find((record) => record.student_id === studentId);
+    attendanceSaves.submit({
+      sessionId, studentId, studentName,
+      optimisticRecord: {
+        ...(priorRecord || {}), id: priorRecord?.id || `pending-${studentId}`,
+        session_id: sessionId, student_id: studentId, status, attendance_type: attendanceType,
+        marked_at: new Date().toISOString(), marked_by_user_id: '',
+      },
+      save: () => api.markAttendance(sessionId, {
         student_id: studentId,
         status,
         attendance_type: attendanceType,
-      });
-
-      if (status === 'PRESENT') {
-        showToast(`✓ ${studentName}: Checked In (PRESENT)`, 'success', 2000);
-      } else if (status === 'ABSENT') {
-        showToast(`⚠ ${studentName}: Marked ABSENT`, 'info', 2000);
-      } else {
-        showToast(`✓ ${studentName}: Marked ${status}`, 'success', 2000);
-      }
-
-      const updated = await api.getSession(sessionId);
-      setSession(updated);
-    } catch (err: any) {
-      showToast(err.message || 'Unable to record attendance', 'error');
-    } finally {
-      setSavingStudentId(null);
-    }
+      }),
+    });
   };
 
   const handleOpenCorrection = (record: AttendanceRecord) => {
@@ -615,7 +608,7 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
                   const isAbsent = item.status === 'ABSENT';
                   const isLate = item.status === 'LATE';
                   const isExcused = item.status === 'EXCUSED';
-                  const isSaving = savingStudentId === item.studentId;
+                  const isSaving = attendanceSaves.isPending(sessionId, item.studentId);
 
                   return (
                     <tr

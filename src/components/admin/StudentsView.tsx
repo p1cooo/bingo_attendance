@@ -5,6 +5,7 @@ import { useToast } from '../common/Toast.js';
 import { Student, Coach, AcademyClass, ClassSchedule } from '../../types.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import { Modal } from '../common/Modal.js';
+import { BingoSpaceAccountSection } from '../student/BingoSpaceAccountSection.js';
 import { CoachBadge } from '../common/CoachBadge.js';
 import {
   Search,
@@ -954,6 +955,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       >
         {profileStudent && (
           <div className="space-y-5">
+            <BingoSpaceAccountSection student={profileStudent} />
             {/* Header info */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 text-xs">
               <div>

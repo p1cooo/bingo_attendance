@@ -30,10 +30,11 @@ import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
 import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged, publishFirestoreRevision } from './firestoreSync.js';
-import { awardPortalStars, getPortalLink, portalAccountStatuses, syncPortalCoachLinksForStudent } from './portalBridge.js';
+import { awardPortalStars, getPortalLink, managePortalAccount, portalAccountStatuses, syncPortalCoachLinksForStudent } from './portalBridge.js';
 import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from './studentIds.js';
 import { academyMonth, academyToday } from './academyDate.js';
 import { recordActivity } from './activity.js';
+import { OccurrenceError, planOccurrence } from './sessionOccurrence.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
@@ -2146,7 +2147,7 @@ router.put('/sessions/:id', authenticateUser, requireCoachOrAdmin, async (req: A
   if (!canManageClass(req.user!, existingSession.class_id)) return res.status(403).json({ error: 'Forbidden: you do not manage this session.' });
   // Vercel instances load sessions from Firestore, so a replacement assignment
   // must be durable before the substitute coach can reliably see it.
-  const session: ClassSession = { ...existingSession };
+  let session: ClassSession = { ...existingSession };
 
   const {
     session_type,
@@ -2158,41 +2159,17 @@ router.put('/sessions/:id', authenticateUser, requireCoachOrAdmin, async (req: A
     session_date,
     start_time,
     end_time,
+    reset_to_regular_schedule,
   } = req.body;
 
   const defaultCoachId = session.default_coach_id || session.scheduled_coach_id;
   const sessionClass = db.classes.get(session.class_id);
-  const isChangingAppointmentTime = session_date !== undefined || start_time !== undefined || end_time !== undefined;
-
-  // A group session is a shared appointment: moving it would silently change
-  // every enrolled student's timetable. Individual lessons may be rescheduled
-  // before attendance is recorded, while retaining their class and coach.
-  if (isChangingAppointmentTime) {
-    if (sessionClass?.class_type !== 'INDIVIDUAL') {
-      return res.status(400).json({
-        error: 'Only individual lessons can be rescheduled. Group class sessions stay on their published timetable.',
-        code: 'GROUP_SESSION_RESCHEDULE_NOT_ALLOWED',
-      });
-    }
-    const hasAttendance = Array.from(db.attendance.values()).some((record) => record.session_id === id);
-    if (hasAttendance) {
-      return res.status(400).json({
-        error: 'This individual lesson already has attendance recorded and cannot be rescheduled. Correct the attendance record first if necessary.',
-        code: 'SESSION_WITH_ATTENDANCE_CANNOT_BE_RESCHEDULED',
-      });
-    }
-    if (session_date && session_date !== session.session_date) {
-      const conflictingSession = Array.from(db.sessions.values()).find(
-        (candidate) => candidate.id !== id && candidate.class_id === session.class_id && candidate.session_date === session_date
-      );
-      if (conflictingSession) {
-        return res.status(400).json({
-          error: `This class already has a session on ${session_date}. Choose a different date or update that session instead.`,
-          code: 'SESSION_DATE_CONFLICT',
-        });
-      }
-      session.original_session_date ||= session.session_date;
-    }
+  try {
+    session = planOccurrence(session, sessionClass, { session_date, start_time, end_time, replacement_coach_id, actual_coach_id, session_type, reset_to_regular_schedule },
+      db.sessions.values(), Array.from(db.attendance.values()).some((record) => record.session_id === id && record.status !== 'BOOKED'));
+  } catch (error) {
+    if (error instanceof OccurrenceError) return res.status(400).json({ error: error.message, code: error.code });
+    throw error;
   }
 
   // Handle Session Type transitions
@@ -2236,15 +2213,20 @@ router.put('/sessions/:id', authenticateUser, requireCoachOrAdmin, async (req: A
     }
     session.cancellation_reason = undefined;
   } else {
-    if (actual_coach_id !== undefined) session.actual_coach_id = actual_coach_id;
+    if (actual_coach_id !== undefined && actual_coach_id !== session.actual_coach_id) {
+      return res.status(400).json({ error: 'Use a replacement coach assignment for this occurrence.', code: 'INVALID_REPLACEMENT_COACH' });
+    }
     if (status !== undefined) session.status = status;
     if (cancellation_reason !== undefined) session.cancellation_reason = cancellation_reason;
   }
 
   if (notes !== undefined) session.notes = notes;
-  if (session_date !== undefined) session.session_date = session_date;
-  if (start_time !== undefined) session.start_time = start_time;
-  if (end_time !== undefined) session.end_time = end_time;
+  if (reset_to_regular_schedule) {
+    session.replacement_coach_id = null;
+    session.actual_coach_id = defaultCoachId;
+    session.session_type = 'NORMAL';
+    if (session.status === 'COACH_CANCELLED' || session.status === 'PLANNED_OFF_DAY') session.status = 'SCHEDULED';
+  }
 
   try {
     db.sessions.set(id, session);
@@ -2895,8 +2877,7 @@ router.get('/export/class-schedules-docx', authenticateUser, requireAdmin, async
   }
 });
 
-// Admins can invite any student. Coaches are limited to students in one of
-// their active schedules, plus students they have already taught.
+// Admins can invite any student. Coaches are limited to normal class memberships.
 router.post('/students/:id/portal-invite', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const student = db.students.get(req.params.id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
@@ -2910,6 +2891,45 @@ router.post('/students/:id/portal-invite', authenticateUser, async (req: Authent
   } catch (error: any) {
     return res.status(error.status === 409 ? 409 : 502).json({ error: error.message || 'Could not create portal invite', code: error.code });
   }
+});
+
+router.get('/students/:id/portal-account', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const student = db.students.get(req.params.id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  try { return res.json(await managePortalAccount(student.student_id, 'metadata')); }
+  catch (error: any) {
+    if (error.status === 404) return res.json({ linked: false });
+    return res.status(error.status || 502).json({ error: error.message || 'Bingo Space account unavailable' });
+  }
+});
+
+router.put('/students/:id/portal-account/username', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const student = db.students.get(req.params.id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  if (typeof req.body.username !== 'string') return res.status(400).json({ error: 'Username is required' });
+  try {
+    const result = await managePortalAccount(student.student_id, 'username', { username: req.body.username });
+    await recordActivity(req.user!, 'PORTAL_USERNAME_CHANGED', 'student', student.id, { summary: student.student_id });
+    return res.json(result);
+  } catch (error: any) { return res.status(error.status || 502).json({ error: error.message || 'Could not change username' }); }
+});
+
+router.post('/students/:id/portal-account/password-reset', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const student = db.students.get(req.params.id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  if (typeof req.body.new_password !== 'string' || typeof req.body.new_password_confirmation !== 'string') {
+    return res.status(400).json({ error: 'New password and confirmation are required' });
+  }
+  try {
+    const result = await managePortalAccount(student.student_id, 'password-reset', {
+      new_password: req.body.new_password, new_password_confirmation: req.body.new_password_confirmation,
+    });
+    await recordActivity(req.user!, 'PORTAL_PASSWORD_RESET', 'student', student.id, { summary: student.student_id });
+    return res.json(result);
+  } catch (error: any) { return res.status(error.status || 502).json({ error: error.message || 'Could not reset password' }); }
 });
 
 router.get('/export/accountant-report.xlsx', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {

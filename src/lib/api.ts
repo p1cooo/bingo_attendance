@@ -124,7 +124,9 @@ class ApiClient {
             errorMessage = errorData.message;
           }
         } catch {
-          console.warn(`[API Diagnostic] ${options.method || 'GET'} ${endpoint} failed with HTTP ${response.status}:`, text);
+          if (!endpoint.includes('/portal-account/password-reset')) {
+            console.warn(`[API Diagnostic] ${options.method || 'GET'} ${endpoint} failed with HTTP ${response.status}:`, text);
+          }
           if (response.status === 404) {
             errorMessage = `API endpoint '${endpoint}' not found (404). Please verify backend deployment routing.`;
           } else if (response.status === 401) {
@@ -456,6 +458,20 @@ class ApiClient {
 
   async createPortalInvite(studentId: string): Promise<{ status: 'REGISTERED' | 'INVITED'; invite_url?: string; portal_url?: string }> {
     return this.request(`/students/${studentId}/portal-invite`, { method: 'POST' });
+  }
+
+  async getPortalAccount(studentId: string): Promise<{ linked: boolean; username: string; stars: number }> {
+    return this.request(`/students/${studentId}/portal-account`);
+  }
+
+  async updatePortalUsername(studentId: string, username: string): Promise<{ linked: boolean; username: string; stars: number }> {
+    return this.request(`/students/${studentId}/portal-account/username`, { method: 'PUT', body: JSON.stringify({ username }) });
+  }
+
+  async resetPortalPassword(studentId: string, newPassword: string, confirmation: string): Promise<{ success: boolean }> {
+    return this.request(`/students/${studentId}/portal-account/password-reset`, {
+      method: 'POST', body: JSON.stringify({ new_password: newPassword, new_password_confirmation: confirmation }),
+    });
   }
 
   async addReplacementStudent(

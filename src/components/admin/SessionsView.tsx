@@ -169,7 +169,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
             : editForm.status,
         cancellation_reason: editForm.cancellation_reason,
         notes: editForm.notes,
-        ...(isEditingIndividualLesson
+        ...(isEditingOccurrence
           ? {
               session_date: editForm.session_date,
               start_time: editForm.start_time,
@@ -188,9 +188,23 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
     }
   };
 
+  const handleResetOccurrence = async () => {
+    if (!editingSession) return;
+    setIsSubmitting(true);
+    try {
+      await api.updateSession(editingSession.id, { reset_to_regular_schedule: true });
+      setEditingSession(null);
+      await loadData();
+      showToast('Regular schedule restored', 'success');
+    } catch (error: any) { showToast(error.message || 'Could not reset occurrence', 'error'); }
+    finally { setIsSubmitting(false); }
+  };
+
   const defaultCoachForEditing = editingSession?.default_coach || editingSession?.scheduled_coach;
-  const isEditingIndividualLesson = !!editingSession &&
-    (editingSession.class_item?.class_type || classes.find((item) => item.id === editingSession.class_id)?.class_type) === 'INDIVIDUAL';
+  const isEditingOccurrence = !!editingSession;
+  const occurrenceLocked = Boolean(editingSession?.marked_attendance_count);
+  const occurrenceMoved = Boolean(editingSession?.original_session_date && editingSession.original_session_date !== editingSession.session_date ||
+    editingSession?.original_start_time && editingSession.original_start_time !== editingSession.start_time || editingSession?.replacement_coach_id);
 
   // Fixed Monday-to-Sunday strip containing the current weekAnchorDate
   const dayStrip = getFixedWeekDays(weekAnchorDate, 'MON');
@@ -584,6 +598,8 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                     </div>
 
                     {/* Status Badge */}
+                    {((sess.original_session_date && sess.original_session_date !== sess.session_date) || (sess.original_start_time && sess.original_start_time !== sess.start_time)) &&
+                      <span className="rounded-full border border-violet-300 bg-violet-100 px-2.5 py-0.5 text-[10px] font-black text-violet-800">Rescheduled</span>}
                     {isCancelled ? (
                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
                         Cancelled
@@ -718,6 +734,8 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                       <td className="py-3.5 px-4">
                         <div className="font-black text-slate-900 dark:text-white">
                           {sess.session_date}
+                          {((sess.original_session_date && sess.original_session_date !== sess.session_date) || (sess.original_start_time && sess.original_start_time !== sess.start_time)) &&
+                            <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-[9px] font-black text-violet-800">Rescheduled</span>}
                         </div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
                           <Clock className="w-3 h-3 text-slate-400" />
@@ -853,7 +871,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
       <Modal
         isOpen={!!editingSession}
         onClose={() => setEditingSession(null)}
-        title={`${isEditingIndividualLesson ? 'Individual Lesson Reschedule' : 'Session Substitution & Status'}: ${editingSession?.session_date}`}
+        title={`Session Occurrence: ${editingSession?.session_date}`}
         size="lg"
       >
         {editingSession && (
@@ -869,12 +887,13 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
               </div>
             </div>
 
-            {isEditingIndividualLesson && (
+            {occurrenceLocked && <p className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-900">Attendance has been taken. Date, time, and replacement coach are locked.</p>}
+            {isEditingOccurrence && (
               <div className="p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/60 space-y-3">
                 <div>
-                  <div className="text-xs font-black uppercase text-sky-900 dark:text-sky-200">Reschedule this individual lesson</div>
+                  <div className="text-xs font-black uppercase text-sky-900 dark:text-sky-200">Reschedule this occurrence</div>
                   <p className="mt-1 text-[11px] text-sky-700 dark:text-sky-300">
-                    This changes this occurrence only. The recurring Sunday class remains unchanged; group classes cannot be moved here.
+                    This changes only this occurrence. The recurring class remains unchanged.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -882,6 +901,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                     New date
                     <input
                       type="date"
+                      disabled={occurrenceLocked}
                       required
                       value={editForm.session_date}
                       onChange={(e) => setEditForm({ ...editForm, session_date: e.target.value })}
@@ -892,6 +912,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                     Start time
                     <input
                       type="time"
+                      disabled={occurrenceLocked}
                       required
                       value={editForm.start_time}
                       onChange={(e) => setEditForm({ ...editForm, start_time: e.target.value })}
@@ -902,6 +923,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                     End time
                     <input
                       type="time"
+                      disabled={occurrenceLocked}
                       required
                       value={editForm.end_time}
                       onChange={(e) => setEditForm({ ...editForm, end_time: e.target.value })}
@@ -909,6 +931,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                     />
                   </label>
                 </div>
+                {occurrenceMoved && !occurrenceLocked && <button type="button" onClick={handleResetOccurrence} disabled={isSubmitting} className="rounded-xl border border-sky-700 px-3 py-2 text-xs font-black text-sky-900">Reset to regular schedule</button>}
               </div>
             )}
 
@@ -928,6 +951,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                 >
                   <input
                     type="radio"
+                    disabled={occurrenceLocked}
                     name="session_type"
                     checked={editForm.session_type === 'NORMAL'}
                     onChange={() =>
@@ -958,6 +982,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                 >
                   <input
                     type="radio"
+                    disabled={occurrenceLocked}
                     name="session_type"
                     checked={editForm.session_type === 'REPLACEMENT_COACH'}
                     onChange={() =>
@@ -993,6 +1018,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                 >
                   <input
                     type="radio"
+                    disabled={occurrenceLocked}
                     name="session_type"
                     checked={editForm.session_type === 'COACH_CANCELLED'}
                     onChange={() =>
@@ -1024,6 +1050,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                 >
                   <input
                     type="radio"
+                    disabled={occurrenceLocked}
                     name="session_type"
                     checked={editForm.session_type === 'PLANNED_OFF_DAY'}
                     onChange={() =>
@@ -1057,6 +1084,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                 </label>
                 <select
                   value={editForm.replacement_coach_id}
+                  disabled={occurrenceLocked}
                   onChange={(e) => setEditForm({ ...editForm, replacement_coach_id: e.target.value })}
                   className="w-full px-3.5 py-2.5 text-xs font-bold bg-white dark:bg-neutral-800 border-2 border-indigo-300 dark:border-indigo-700 rounded-xl text-slate-900 dark:text-white"
                 >

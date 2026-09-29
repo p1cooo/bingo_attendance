@@ -6,6 +6,7 @@ import { LoginView } from './components/auth/LoginView.js';
 import { CoachWorkspace } from './components/coach/CoachWorkspace.js';
 import { AdminWorkspace } from './components/admin/AdminWorkspace.js';
 import { StudentWorkspace } from './components/student/StudentWorkspace.js';
+import { AttendanceSaveStatus } from './components/common/AttendanceSaveStatus.js';
 
 function AppContent() {
   const { user, isLoading } = useAuth();
@@ -40,6 +41,7 @@ export default function App() {
       <ToastProvider>
         <AuthProvider>
           <AppContent />
+          <AttendanceSaveStatus />
         </AuthProvider>
       </ToastProvider>
     </ThemeProvider>

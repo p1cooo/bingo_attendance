@@ -107,6 +107,22 @@ export async function getPortalLink(student: Student): Promise<{ status: 'REGIST
   return { status: 'INVITED', invite_url: invite.invite_url };
 }
 
+export async function managePortalAccount(
+  studentCode: string,
+  action: 'metadata' | 'username' | 'password-reset',
+  fields: Record<string, string> = {},
+): Promise<{ linked?: boolean; username?: string; stars?: number; success?: boolean }> {
+  const result = await signedPost(`/integration/attendance/account-${action}`, { student_id: studentCode, ...fields });
+  if (!result) throw Object.assign(new Error('Bingo Space connection is not configured.'), { status: 502 });
+  if (!result.response.ok) {
+    const fieldError = result.data?.errors?.username?.[0] || result.data?.errors?.new_password?.[0];
+    throw Object.assign(new Error(fieldError || result.data?.message || 'Bingo Space account update failed.'), {
+      status: result.response.status === 404 ? 404 : result.response.status === 422 ? 422 : 502,
+    });
+  }
+  return result.data;
+}
+
 /**
  * Mirrors recurring attendance enrolments only. One-off replacement sessions
  * deliberately do not enter this list, so they never grant permanent access.

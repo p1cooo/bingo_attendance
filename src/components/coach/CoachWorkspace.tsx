@@ -349,6 +349,8 @@ export const CoachWorkspace: React.FC = () => {
                             Replacement Duty
                           </span>
                         )}
+                        {((sess.original_session_date && sess.original_session_date !== sess.session_date) || (sess.original_start_time && sess.original_start_time !== sess.start_time)) &&
+                          <span className="rounded-full border border-violet-300 bg-violet-100 px-2.5 py-0.5 text-[10px] font-black text-violet-800">Rescheduled</span>}
 
                         {isCancelled && (
                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-700 text-rose-800 dark:text-rose-200">

@@ -4,6 +4,7 @@ import { AcademyClass, Student } from '../../types.js';
 import { Modal } from '../common/Modal.js';
 import { useToast } from '../common/Toast.js';
 import { CoachFilterChip } from './CoachFilterChip.js';
+import { BingoSpaceAccountSection } from '../student/BingoSpaceAccountSection.js';
 import { CoachStudentRow, CreditFilter, LinkFilter, WEEK_DAYS, filterCoachStudents } from '../../lib/coachListFilters.js';
 
 const emptyForm = { full_name: '', nick_name: '', school: '', parent_name: '', parent_phone: '', parent_email: '', parent_relation: 'Parent' };
@@ -108,7 +109,7 @@ export const CoachStudentsView: React.FC = () => {
       </form>
     </Modal>
     <Modal isOpen={Boolean(selected) && !editing} onClose={() => setSelected(null)} title="Student Details">
-      {selected && <div className="space-y-2 text-sm"><p><b>{selected.full_name}</b> ({selected.student_id})</p><p>Nickname: {selected.nick_name || '—'}</p><p>School: {selected.school || '—'}</p><p>Parent: {selected.parent?.name || '—'}</p><p>Phone: {selected.parent?.phone || '—'}</p><p>Classes: {selected.enrolled_schedules?.map((item) => item.class_name).join(', ') || '—'}</p></div>}
+      {selected && <div className="space-y-2 text-sm"><p><b>{selected.full_name}</b> ({selected.student_id})</p><p>Nickname: {selected.nick_name || '—'}</p><p>School: {selected.school || '—'}</p><p>Parent: {selected.parent?.name || '—'}</p><p>Phone: {selected.parent?.phone || '—'}</p><p>Classes: {selected.enrolled_schedules?.map((item) => item.class_name).join(', ') || '—'}</p><BingoSpaceAccountSection student={selected} /></div>}
     </Modal>
   </main>;
 };
