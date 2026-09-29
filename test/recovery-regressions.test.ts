@@ -6,6 +6,7 @@ import { db } from '../server/db.js';
 import { router, canManageStudent } from '../server/routes.js';
 import { replacementCreditImpact, replacementCreditChange } from '../server/replacementCredits.js';
 import { legacyAbsenceRepair } from '../server/legacyAbsenceCredits.js';
+import { legacyReplacementDebitRepair } from '../server/legacyReplacementDebits.js';
 
 test('coach scope uses active normal class membership, not replacement attendance', () => {
   const original = [db.classes, db.schedules, db.memberships, db.attendance] as const;
@@ -49,6 +50,36 @@ test('legacy regular group absences earn one repair credit and never double cred
   assert.equal(legacyAbsenceRepair(absent, 'GROUP', [{ ...earned, amount: -1 }]), 'CONFLICT');
   assert.deepEqual(replacementCreditChange(undefined, absent, 'GROUP'), { nextImpact: 1, changed: true, revision: 1, delta: 1 });
   assert.deepEqual(replacementCreditChange({ ...absent, replacement_credit_impact: 1, replacement_credit_revision: 1 }, absent, 'GROUP'), { nextImpact: 1, changed: false, revision: 1, delta: 0 });
+});
+
+test('advance replacement at zero credit debits once; later group absence restores zero', () => {
+  const booked = { id: 'replacement-1', student_id: 'student-1', session_id: 'session-1', status: 'BOOKED', attendance_type: 'REPLACEMENT' } as any;
+  const present = { ...booked, status: 'PRESENT' };
+  const first = replacementCreditChange(booked, present, 'GROUP');
+  assert.equal(first.delta, -1);
+  const savedPresent = { ...present, replacement_credit_impact: first.nextImpact, replacement_credit_revision: first.revision };
+  assert.equal(replacementCreditChange(savedPresent, savedPresent, 'GROUP').delta, 0);
+  assert.equal(replacementCreditChange(savedPresent, { ...savedPresent, replacement_note: 'edited' }, 'GROUP').delta, 0);
+  const absence = { id: 'absence-1', student_id: 'student-1', session_id: 'session-2', status: 'ABSENT', attendance_type: 'REGULAR' } as any;
+  const earned = replacementCreditChange(undefined, absence, 'GROUP');
+  assert.equal(earned.delta, 1);
+  assert.equal(first.delta + earned.delta, 0);
+  assert.equal(replacementCreditChange({ ...absence, replacement_credit_impact: 1, replacement_credit_revision: 1 }, absence, 'GROUP').delta, 0);
+});
+
+test('historical replacement debit repair is idempotent and rejects ambiguous history', () => {
+  const present = { id: 'old-replacement', student_id: 'student-1', session_id: 'session-1', status: 'PRESENT', attendance_type: 'REPLACEMENT' } as any;
+  const debit = { id: 'old-replacement:replacement-credit:1', attendance_id: present.id, student_id: present.student_id, session_id: present.session_id, amount: -1, reason: 'REPLACEMENT_ATTENDED_DEBIT' } as any;
+  assert.equal(legacyReplacementDebitRepair(present, []), 'CREATE_DEBIT');
+  assert.equal(legacyReplacementDebitRepair(present, [debit]), 'STAMP_IMPACT');
+  const repaired = { ...present, replacement_credit_impact: -1, replacement_credit_revision: 1 };
+  assert.equal(legacyReplacementDebitRepair(repaired, [debit]), 'NONE');
+  assert.equal(replacementCreditChange(repaired, repaired, 'GROUP').delta, 0);
+  assert.equal(legacyReplacementDebitRepair(repaired, []), 'CREATE_DEBIT');
+  assert.equal(legacyReplacementDebitRepair(present, [{ ...debit, student_id: 'other' }]), 'CONFLICT');
+  assert.equal(legacyReplacementDebitRepair(present, [debit, debit]), 'CONFLICT');
+  assert.equal(legacyReplacementDebitRepair({ ...repaired, replacement_credit_revision: 2 }, []), 'CONFLICT');
+  assert.equal(legacyReplacementDebitRepair({ ...present, status: 'BOOKED' }, []), 'NONE');
 });
 
 test('signed portal progress is JSON, rejects invalid requests, and preserves archived class history', async () => {
