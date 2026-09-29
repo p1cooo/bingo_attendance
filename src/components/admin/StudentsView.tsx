@@ -7,6 +7,7 @@ import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import { Modal } from '../common/Modal.js';
 import { BingoSpaceAccountSection } from '../student/BingoSpaceAccountSection.js';
 import { CoachBadge } from '../common/CoachBadge.js';
+import { ClassMembershipPicker } from '../student/ClassMembershipPicker.js';
 import {
   Search,
   Plus,
@@ -153,7 +154,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       parent_email: student.parent?.email || '',
       parent_relation: student.parent_relation || 'Parent',
       status: student.status,
-      schedule_ids: student.enrolled_schedules?.map((s) => s.schedule_id) || [],
+      schedule_ids: student.enrolled_schedules?.map((s) => s.schedule_id)
+        .filter((id) => schedules.some((schedule) => schedule.id === id && schedule.is_active)) || [],
     });
     setModalDayFilter('');
     setModalCoachFilter('');
@@ -661,235 +663,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             </div>
           </div>
 
-          {/* Enrolled Class Schedules (Supports Multiple Memberships) */}
-          <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1.5">
-              <div>
-                <h4 className="text-xs font-semibold text-neutral-900 dark:text-white">
-                  Class Schedule Memberships (Select all applicable)
-                </h4>
-                <p className="text-[11px] text-neutral-400">
-                  A student can belong to multiple weekly schedules across different coaches.
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 self-start sm:self-auto">
-                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
-                  Selected: {formData.schedule_ids.length} {formData.schedule_ids.length === 1 ? 'class' : 'classes'}
-                </span>
-              </div>
-            </div>
-
-            {/* Schedule Filter Controls */}
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 mb-2">
-              {/* Day Filter */}
-              <div className="sm:col-span-4">
-                <select
-                  id="modal-schedule-filter-day"
-                  value={modalDayFilter}
-                  onChange={(e) => setModalDayFilter(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-neutral-900 dark:focus:ring-white"
-                >
-                  <option value="">All Days</option>
-                  <option value="1">Monday</option>
-                  <option value="2">Tuesday</option>
-                  <option value="3">Wednesday</option>
-                  <option value="4">Thursday</option>
-                  <option value="5">Friday</option>
-                  <option value="6">Saturday</option>
-                  <option value="0">Sunday</option>
-                </select>
-              </div>
-
-              {/* Coach Filter */}
-              <div className="sm:col-span-4">
-                <select
-                  id="modal-schedule-filter-coach"
-                  value={modalCoachFilter}
-                  onChange={(e) => setModalCoachFilter(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-neutral-900 dark:focus:ring-white"
-                >
-                  <option value="">All Coaches</option>
-                  {coaches.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      Coach {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Search Filter */}
-              <div className="sm:col-span-4 relative">
-                <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-2.5 pointer-events-none" />
-                <input
-                  id="modal-schedule-search-input"
-                  type="text"
-                  value={modalSearch}
-                  onChange={(e) => setModalSearch(e.target.value)}
-                  placeholder="Search schedule..."
-                  className="w-full pl-8 pr-6 py-1.5 text-xs rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-900 dark:focus:ring-white"
-                />
-                {modalSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setModalSearch('')}
-                    className="absolute right-2 top-2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 text-xs font-bold leading-none p-0.5"
-                    title="Clear search"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Filtered Schedules List */}
-            {(() => {
-              const DAY_NAMES_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-              const DAY_NAMES_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-              const filteredModalSchedules = schedules.filter((sch) => {
-                // Day filter
-                if (modalDayFilter !== '' && sch.day_of_week !== Number(modalDayFilter)) {
-                  return false;
-                }
-
-                // Coach filter
-                if (modalCoachFilter !== '') {
-                  const coachId = sch.coach_id || sch.coach?.id || sch.default_coach_id;
-                  if (coachId !== modalCoachFilter) {
-                    return false;
-                  }
-                }
-
-                // Search query filter
-                if (modalSearch.trim()) {
-                  const q = modalSearch.trim().toLowerCase();
-                  const dayFull = DAY_NAMES_FULL[sch.day_of_week]?.toLowerCase() || '';
-                  const dayShort = DAY_NAMES_SHORT[sch.day_of_week]?.toLowerCase() || '';
-                  const coachName = (sch.coach?.name || '').toLowerCase();
-                  const className = (sch.class_item?.name || '').toLowerCase();
-                  const timeStr = `${sch.start_time} ${sch.end_time} ${sch.start_time}-${sch.end_time} ${sch.start_time}–${sch.end_time}`.toLowerCase();
-                  const roomStr = (sch.room_location || '').toLowerCase();
-
-                  const matches =
-                    dayFull.includes(q) ||
-                    dayShort.includes(q) ||
-                    coachName.includes(q) ||
-                    className.includes(q) ||
-                    timeStr.includes(q) ||
-                    roomStr.includes(q);
-
-                  if (!matches) return false;
-                }
-
-                return true;
-              });
-
-              if (filteredModalSchedules.length === 0) {
-                return (
-                  <div className="py-6 px-4 text-center rounded-xl border border-dashed border-neutral-200 dark:border-neutral-700 bg-neutral-50/50 dark:bg-neutral-800/30">
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
-                      No class schedules match your filters.
-                    </p>
-                    {(modalDayFilter || modalCoachFilter || modalSearch) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setModalDayFilter('');
-                          setModalCoachFilter('');
-                          setModalSearch('');
-                        }}
-                        className="inline-flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg text-neutral-700 dark:text-neutral-300 bg-neutral-200/80 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600 transition-colors cursor-pointer"
-                      >
-                        Clear Filters
-                      </button>
-                    )}
-                  </div>
-                );
-              }
-
-              return (
-                <div className="max-h-48 overflow-y-auto border border-neutral-200 dark:border-neutral-700 rounded-xl divide-y divide-neutral-100 dark:divide-neutral-800 p-1">
-                  {filteredModalSchedules.map((sch) => {
-                    const isChecked = formData.schedule_ids.includes(sch.id);
-                    const dayName = DAY_NAMES_SHORT[sch.day_of_week] || 'Day';
-                    const enrolledCount = sch.enrolled_students_count ?? sch.enrolled_students?.length ?? 0;
-                    const capacity = sch.class_item?.default_capacity;
-                    const hasCapacity = typeof capacity === 'number' && capacity > 0;
-                    const isFull = hasCapacity && enrolledCount >= capacity;
-                    const isAlmostFull = hasCapacity && !isFull && enrolledCount >= Math.ceil(capacity * 0.8);
-                    const isSelectionDisabled = isFull && !isChecked;
-
-                    return (
-                      <label
-                        key={sch.id}
-                        className={`flex items-center justify-between p-2 rounded-lg transition-colors text-xs select-none ${
-                          isSelectionDisabled
-                            ? 'opacity-60 bg-neutral-50/70 dark:bg-neutral-800/30 cursor-not-allowed border border-dashed border-rose-200 dark:border-rose-900/40'
-                            : isChecked
-                            ? 'bg-neutral-100 dark:bg-neutral-800 font-medium cursor-pointer border border-neutral-200 dark:border-neutral-700'
-                            : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/50 cursor-pointer border border-transparent'
-                        }`}
-                        title={isSelectionDisabled ? 'Class is at full capacity' : undefined}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            disabled={isSelectionDisabled}
-                            onChange={() => toggleScheduleEnrollment(sch.id)}
-                            className="rounded text-neutral-900 disabled:cursor-not-allowed cursor-pointer"
-                          />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-semibold text-neutral-900 dark:text-white">
-                                {dayName} {sch.start_time}–{sch.end_time}
-                              </span>
-                              <span className="text-neutral-500 dark:text-neutral-400 truncate">
-                                · {sch.class_item?.name}
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex items-center gap-2 mt-0.5">
-                              <span>Coach {sch.coach?.name || 'Unassigned'}</span>
-                              {sch.room_location && <span>· Venue: {sch.room_location}</span>}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                          {/* Capacity Indicator */}
-                          {hasCapacity && (
-                            <span
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                                isFull
-                                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
-                                  : isAlmostFull
-                                  ? 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-                                  : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                              }`}
-                              title={`${enrolledCount} / ${capacity} enrolled students`}
-                            >
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full ${
-                                  isFull ? 'bg-rose-500' : isAlmostFull ? 'bg-amber-500' : 'bg-emerald-500'
-                                }`}
-                              />
-                              {isFull ? (
-                                <span>{enrolledCount}/{capacity} Full</span>
-                              ) : (
-                                <span>{enrolledCount}/{capacity} students</span>
-                              )}
-                            </span>
-                          )}
-
-                          <CoachBadge coach={sch.coach} size="sm" variant="dot" />
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-          </div>
+          <ClassMembershipPicker schedules={schedules} coaches={coaches} admin selected={formData.schedule_ids}
+            onChange={(schedule_ids) => setFormData((current) => ({ ...current, schedule_ids }))} />
 
           <div className="flex items-center justify-end gap-2 pt-3">
             <button

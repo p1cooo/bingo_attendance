@@ -1,18 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { AcademyClass, Student } from '../../types.js';
+import { ClassSchedule, Student } from '../../types.js';
 import { Modal } from '../common/Modal.js';
 import { useToast } from '../common/Toast.js';
 import { CoachFilterChip } from './CoachFilterChip.js';
 import { BingoSpaceAccountSection } from '../student/BingoSpaceAccountSection.js';
 import { CoachStudentRow, CreditFilter, LinkFilter, WEEK_DAYS, filterCoachStudents } from '../../lib/coachListFilters.js';
+import { ClassMembershipPicker } from '../student/ClassMembershipPicker.js';
 
 const emptyForm = { full_name: '', nick_name: '', school: '', parent_name: '', parent_phone: '', parent_email: '', parent_relation: 'Parent' };
 
 export const CoachStudentsView: React.FC = () => {
   const { showToast } = useToast();
   const [students, setStudents] = useState<CoachStudentRow[]>([]);
-  const [classes, setClasses] = useState<AcademyClass[]>([]);
+  const [schedules, setSchedules] = useState<ClassSchedule[]>([]);
   const [query, setQuery] = useState('');
   const [creditFilter, setCreditFilter] = useState<CreditFilter>('ALL');
   const [linkFilter, setLinkFilter] = useState<LinkFilter>('ALL');
@@ -21,13 +22,13 @@ export const CoachStudentsView: React.FC = () => {
   const [selected, setSelected] = useState<(Student & { attendance_history?: any[] }) | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(emptyForm);
-  const [classId, setClassId] = useState('');
+  const [scheduleIds, setScheduleIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const load = async () => {
     try {
-      const [rows, assigned] = await Promise.all([api.getStudents(), api.getClasses()]);
+      const [rows, assigned] = await Promise.all([api.getStudents(), api.getSchedules()]);
       setStudents(rows as unknown as CoachStudentRow[]);
-      setClasses(assigned);
+      setSchedules(assigned);
     } catch (error: any) { showToast(error.message || 'Could not load students', 'error'); }
   };
   useEffect(() => { load(); }, []);
@@ -44,14 +45,16 @@ export const CoachStudentsView: React.FC = () => {
         parent_email: student.parent?.email || '', parent_relation: student.parent_relation || 'Parent',
       });
       setEditing(edit);
+      setScheduleIds(student.enrolled_schedules?.map((schedule) => schedule.schedule_id)
+        .filter((scheduleId) => schedules.some((schedule) => schedule.id === scheduleId)) || []);
     } catch (error: any) { showToast(error.message || 'Could not open student', 'error'); }
   };
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     try {
-      if (selected) await api.updateStudent(selected.id, form);
-      else await api.createStudent({ ...form, schedule_ids: [classId] });
+      if (selected) await api.updateStudent(selected.id, { ...form, schedule_ids: scheduleIds });
+      else await api.createStudent({ ...form, schedule_ids: scheduleIds });
       setEditing(false); setSelected(null); setForm(emptyForm);
       await load();
       showToast('Student saved', 'success');
@@ -72,7 +75,7 @@ export const CoachStudentsView: React.FC = () => {
   return <main className="mx-auto max-w-6xl p-5 text-slate-950">
     <header className="mb-5 flex items-center justify-between">
       <div><h2 className="text-2xl font-black tracking-tight">My Students</h2><p className="text-sm text-slate-500">Students in your normal classes.</p></div>
-      <button className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black" onClick={() => { setSelected(null); setForm(emptyForm); setClassId(classes[0]?.id || ''); setEditing(true); }}>Add Student</button>
+      <button className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black" onClick={() => { setSelected(null); setForm(emptyForm); setScheduleIds([]); setEditing(true); }}>Add Student</button>
     </header>
     <input aria-label="Search student name or Attendance student ID" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or Attendance ID (STU-0001)" className="mb-3 w-full rounded-xl border-2 border-slate-900 bg-white p-3 text-sm" />
     <div className="mb-4 space-y-2">
@@ -102,10 +105,8 @@ export const CoachStudentsView: React.FC = () => {
         {Object.entries(form).map(([key, value]) => <label key={key} className="block text-xs font-bold capitalize">{key.replaceAll('_', ' ')}
           <input required={key === 'full_name'} value={value} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" />
         </label>)}
-        {!selected && <label className="block text-xs font-bold">Class
-          <select required value={classId} onChange={(event) => setClassId(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm"><option value="">Choose class</option>{classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name}</option>)}</select>
-        </label>}
-        <button disabled={busy || (!selected && !classId)} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">Save Student</button>
+        <ClassMembershipPicker schedules={schedules} selected={scheduleIds} onChange={setScheduleIds} />
+        <button disabled={busy || (!selected && !scheduleIds.length)} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">Save Student</button>
       </form>
     </Modal>
     <Modal isOpen={Boolean(selected) && !editing} onClose={() => setSelected(null)} title="Student Details">

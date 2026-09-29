@@ -266,7 +266,7 @@ class DatabaseStore {
   }
 
   // Ensure concrete session instances exist for all active recurring classes in a target month
-  ensureSessionsForMonth(targetMonth: string): ClassSession[] {
+  ensureSessionsForMonth(targetMonth: string, notBefore?: string): ClassSession[] {
     if (!targetMonth || !targetMonth.match(/^\d{4}-\d{2}$/)) return [];
     const createdSessions: ClassSession[] = [];
 
@@ -286,6 +286,7 @@ class DatabaseStore {
         const dateObj = new Date(year, month - 1, day);
         if (dateObj.getDay() === dayOfWeek) {
           const dateString = `${targetMonth}-${String(day).padStart(2, '0')}`;
+          if (notBefore && dateString < notBefore) continue;
           
           // Check if session exists
           const existingSession = Array.from(this.sessions.values()).find(

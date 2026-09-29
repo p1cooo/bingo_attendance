@@ -101,7 +101,7 @@ export async function publishFirestoreRevision(): Promise<void> {
 }
 
 /** Firestore rejects undefined values; optional fields are omitted instead. */
-function removeUndefinedValues(value: unknown): unknown {
+export function removeUndefinedValues(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(removeUndefinedValues);
   if (value && typeof value === 'object' && !(value instanceof Date)) {
     return Object.fromEntries(

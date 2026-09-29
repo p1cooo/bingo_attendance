@@ -23,18 +23,21 @@ import {
   Student,
   User,
   Coach,
+  Parent,
 } from '../src/types.js';
 import { dispatchTelegramNotification } from './telegram.js';
 import { notificationService } from './notifications/NotificationService.js';
 import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
-import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged, publishFirestoreRevision } from './firestoreSync.js';
+import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged, publishFirestoreRevision, removeUndefinedValues } from './firestoreSync.js';
 import { awardPortalStars, getPortalLink, managePortalAccount, portalAccountStatuses, syncPortalCoachLinksForStudent } from './portalBridge.js';
 import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from './studentIds.js';
 import { academyMonth, academyToday } from './academyDate.js';
 import { recordActivity } from './activity.js';
 import { OccurrenceError, planOccurrence } from './sessionOccurrence.js';
+import { reconcileRecurringSessions } from './recurringSessions.js';
+import { planStudentMemberships } from './studentMemberships.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
@@ -935,7 +938,11 @@ router.post('/students', authenticateUser, requireCoachOrAdmin, async (req: Auth
     return res.status(400).json({ error: 'Student full name is required' });
   }
   const user = req.user!;
-  if (user.role === 'COACH' && (!user.coach_id || (Array.isArray(schedule_ids) && schedule_ids.some((scheduleId) => !canManageSchedule(user, String(scheduleId)))))) {
+  if (schedule_ids !== undefined && (!Array.isArray(schedule_ids) || schedule_ids.some((scheduleId) =>
+    typeof scheduleId !== 'string' || !db.schedules.has(scheduleId) || !db.schedules.get(scheduleId)?.is_active || !canManageClass(user, db.schedules.get(scheduleId)!.class_id)))) {
+    return res.status(400).json({ error: 'Choose only active classes you may manage.' });
+  }
+  if (user.role === 'COACH' && (!user.coach_id || !Array.isArray(schedule_ids) || !schedule_ids.length)) {
     return res.status(403).json({ error: 'Coaches may only add students to their own active classes.' });
   }
 
@@ -981,7 +988,7 @@ router.post('/students', authenticateUser, requireCoachOrAdmin, async (req: Auth
 
   // Enroll in schedules if provided
   if (Array.isArray(schedule_ids) && schedule_ids.length > 0) {
-    schedule_ids.forEach((schedId) => {
+    [...new Set<string>(schedule_ids)].forEach((schedId) => {
       if (db.schedules.has(schedId)) {
         const memId = `m-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
         const membership = {
@@ -999,7 +1006,11 @@ router.post('/students', authenticateUser, requireCoachOrAdmin, async (req: Auth
 
   try {
     await recordActivity(user, 'STUDENT_CREATED', 'student', stuId, { summary: finalStudentId });
-    await persistMutation(recordsToPersist);
+    const firestore = getFirestoreDb();
+    const batch = firestore.batch();
+    for (const [collection, recordId, value] of recordsToPersist) batch.set(firestore.collection(collection).doc(recordId), removeUndefinedValues(value));
+    batch.set(firestore.collection('_system').doc('academy'), { revision: `${new Date().toISOString()}:${crypto.randomUUID()}` }, { merge: true });
+    await batch.commit();
     await syncPortalCoachLinksForStudent(stuId).catch(console.error);
     db.saveToDisk();
     return res.status(201).json(db.getPopulatedStudent(stuId));
@@ -1176,7 +1187,7 @@ router.put('/students/:id', authenticateUser, requireCoachOrAdmin, async (req: A
   }
 
   if (!canManageStudent(user, id)) return res.status(403).json({ error: 'Forbidden' });
-  if (user.role === 'COACH' && ['student_id', 'status', 'schedule_ids'].some((field) => req.body[field] !== undefined)) return res.status(403).json({ error: 'Coaches cannot change student IDs, status, or class memberships here.' });
+  if (user.role === 'COACH' && ['student_id', 'status'].some((field) => req.body[field] !== undefined)) return res.status(403).json({ error: 'Coaches cannot change student IDs or status.' });
 
   const {
     student_id,
@@ -1192,53 +1203,64 @@ router.put('/students/:id', authenticateUser, requireCoachOrAdmin, async (req: A
     schedule_ids,
   } = req.body;
 
-  if (student_id !== undefined) student.student_id = String(student_id).trim().toUpperCase();
-  if (full_name !== undefined) student.full_name = String(full_name).trim();
-  if (nick_name !== undefined) student.nick_name = String(nick_name).trim();
-  if (school !== undefined) student.school = String(school).trim();
-  if (parent_relation !== undefined) student.parent_relation = String(parent_relation).trim();
-  if (status !== undefined) student.status = status;
+  if (schedule_ids !== undefined && (!Array.isArray(schedule_ids) || schedule_ids.some((scheduleId) =>
+    typeof scheduleId !== 'string' || !db.schedules.has(scheduleId) || !db.schedules.get(scheduleId)?.is_active || !canManageClass(user, db.schedules.get(scheduleId)!.class_id)))) {
+    return res.status(400).json({ error: 'Choose only active classes you may manage.' });
+  }
+
+  const updatedStudent = { ...student };
+  if (student_id !== undefined) updatedStudent.student_id = String(student_id).trim().toUpperCase();
+  if (full_name !== undefined) updatedStudent.full_name = String(full_name).trim();
+  if (nick_name !== undefined) updatedStudent.nick_name = String(nick_name).trim();
+  if (school !== undefined) updatedStudent.school = String(school).trim();
+  if (parent_relation !== undefined) updatedStudent.parent_relation = String(parent_relation).trim();
+  if (status !== undefined) updatedStudent.status = status;
 
   // Update parent info
-  if (student.parent_id && db.parents.has(student.parent_id)) {
-    const parent = db.parents.get(student.parent_id)!;
+  let updatedParent: Parent | undefined;
+  if (updatedStudent.parent_id && db.parents.has(updatedStudent.parent_id)) {
+    const parent = { ...db.parents.get(updatedStudent.parent_id)! };
     if (parent_name !== undefined) parent.name = String(parent_name).trim();
     if (parent_phone !== undefined) parent.phone = String(parent_phone).trim();
     if (parent_email !== undefined) parent.email = String(parent_email).trim();
     if (parent_telegram !== undefined) parent.telegram_username = String(parent_telegram).trim();
-    db.parents.set(parent.id, parent);
+    updatedParent = parent;
   } else if (parent_name || parent_phone) {
     const newParentId = `parent-${Date.now()}`;
-    db.parents.set(newParentId, {
+    updatedParent = {
       id: newParentId,
       name: String(parent_name || 'Guardian').trim(),
       phone: String(parent_phone || '').trim(),
       email: parent_email ? String(parent_email).trim() : undefined,
       telegram_username: parent_telegram ? String(parent_telegram).trim() : undefined,
       created_at: new Date().toISOString(),
-    });
-    student.parent_id = newParentId;
+    };
+    updatedStudent.parent_id = newParentId;
   }
 
-  db.students.set(id, student);
-
-  // Student edits only add memberships; existing coach/class links remain intact.
-  const addedMemberships: Array<[string, string, unknown]> = [];
+  // End removed memberships without deleting their history. Coaches only replace
+  // the subset they manage; memberships with other coaches remain untouched.
+  const membershipChanges = { add: [] as ReturnType<typeof planStudentMemberships>['add'], end: [] as ReturnType<typeof planStudentMemberships>['end'] };
   if (Array.isArray(schedule_ids)) {
-    for (const schedId of new Set<string>(schedule_ids)) {
-      if (!db.schedules.has(schedId)) continue;
-      const enrolled = Array.from(db.memberships.values()).some((membership) => membership.student_id === id && membership.schedule_id === schedId && membership.status === 'ACTIVE');
-      if (enrolled) continue;
-      const memId = 'm-' + crypto.randomUUID();
-      const membership = { id: memId, student_id: id, schedule_id: schedId, joined_date: academyToday(), status: 'ACTIVE' as const };
-      db.memberships.set(memId, membership);
-      addedMemberships.push(['memberships', memId, membership]);
-    }
+    const manageable = new Set(Array.from(db.schedules.values()).filter((schedule) =>
+      schedule.is_active && canManageClass(user, schedule.class_id)).map((schedule) => schedule.id));
+    Object.assign(membershipChanges, planStudentMemberships(id, schedule_ids, Array.from(db.memberships.values()), manageable, academyToday()));
   }
   try {
-    const writes: Array<[string, string, unknown]> = [['students', id, student]];
-    if (student.parent_id && db.parents.has(student.parent_id)) writes.push(['parents', student.parent_id, db.parents.get(student.parent_id)!]);
-    await persistMutation([...writes, ...addedMemberships]);
+    const writes: Array<[string, string, unknown]> = [['students', id, updatedStudent]];
+    if (updatedParent) writes.push(['parents', updatedParent.id, updatedParent]);
+    const firestore = getFirestoreDb();
+    const batch = firestore.batch();
+    for (const [collection, recordId, value] of writes) batch.set(firestore.collection(collection).doc(recordId), removeUndefinedValues(value));
+    for (const membership of [...membershipChanges.add, ...membershipChanges.end]) {
+      batch.set(firestore.collection('memberships').doc(membership.id), membership);
+    }
+    batch.set(firestore.collection('_system').doc('academy'), { revision: `${new Date().toISOString()}:${crypto.randomUUID()}` }, { merge: true });
+    await batch.commit();
+    db.students.set(id, updatedStudent);
+    if (updatedParent) db.parents.set(updatedParent.id, updatedParent);
+    for (const membership of [...membershipChanges.add, ...membershipChanges.end]) db.memberships.set(membership.id, membership);
+    if (membershipChanges.add.length || membershipChanges.end.length) await syncPortalCoachLinksForStudent(id).catch(console.error);
     return res.json(db.getPopulatedStudent(id));
   } catch { return res.status(503).json({ error: 'Student update could not be saved.' }); }
 });
@@ -1751,20 +1773,16 @@ router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: Au
     });
   }
 
-  // Update future scheduled sessions to match new default coach if not already customized
-  const sessionWrites: Promise<unknown>[] = [];
-  Array.from(db.sessions.values()).forEach((sess) => {
-    if ((sess.class_id === id || sess.schedule_id === id) && sess.status === 'SCHEDULED' && sess.session_date >= academyToday()) {
-      if (cls.default_coach_id && sess.session_type === 'NORMAL') {
-        sess.default_coach_id = cls.default_coach_id;
-        sess.scheduled_coach_id = cls.default_coach_id;
-        sess.actual_coach_id = cls.default_coach_id;
-      }
-      if (cls.start_time) sess.start_time = cls.start_time;
-      if (cls.end_time) sess.end_time = cls.end_time;
-      sessionWrites.push(syncDocToFirestore('sessions', sess.id, sess, false));
-    }
-  });
+  const oldFutureMonths = new Set(Array.from(db.sessions.values())
+    .filter((session) => (session.class_id === id || session.schedule_id === id) && session.session_date > academyToday())
+    .map((session) => session.session_date.slice(0, 7)));
+  const changedSessions = reconcileRecurringSessions(cls, db.sessions, db.attendance.values(), academyToday());
+  const generatedSessions = [...oldFutureMonths].flatMap((month) => db.ensureSessionsForMonth(month, academyToday()));
+  const sessionWrites: Promise<unknown>[] = [
+    ...changedSessions.updated.map((session) => syncDocToFirestore('sessions', session.id, session, false)),
+    ...changedSessions.removed.map((session) => deleteDocFromFirestore('sessions', session.id, false)),
+    ...generatedSessions.map((session) => syncDocToFirestore('sessions', session.id, session, false)),
+  ];
 
   try {
     await Promise.all([
@@ -1988,12 +2006,27 @@ router.get('/sessions', authenticateUser, async (req: AuthenticatedRequest, res:
       ? date.slice(0, 7)
       : undefined;
   if (requestedMonth) {
-    const createdSessions = db.ensureSessionsForMonth(requestedMonth);
-    if (createdSessions.length > 0) {
+    const originalSessions = new Map(db.sessions);
+    const repaired = { updated: [] as ClassSession[], removed: [] as ClassSession[] };
+    for (const cls of db.classes.values()) {
+      const changes = reconcileRecurringSessions(cls, db.sessions, db.attendance.values(), academyToday(), requestedMonth);
+      repaired.updated.push(...changes.updated);
+      repaired.removed.push(...changes.removed);
+    }
+    const createdSessions = db.ensureSessionsForMonth(requestedMonth, academyToday());
+    if (createdSessions.length || repaired.updated.length || repaired.removed.length) {
       try {
-        await Promise.all(createdSessions.map((session) => syncDocToFirestore('sessions', session.id, session, false)));
+        await Promise.all([
+          ...createdSessions.map((session) => syncDocToFirestore('sessions', session.id, session, false)),
+          ...repaired.updated.map((session) => syncDocToFirestore('sessions', session.id, session, false)),
+          ...repaired.removed.map((session) => deleteDocFromFirestore('sessions', session.id, false)),
+        ]);
         await publishFirestoreRevision();
       } catch (error: any) {
+        for (const session of [...repaired.updated, ...repaired.removed]) {
+          const original = originalSessions.get(session.id);
+          if (original) db.sessions.set(session.id, original);
+        }
         // Let the next request retry any unsaved generated occurrence. Keep a
         // session if roll call has already referenced it concurrently.
         createdSessions.forEach((session) => {
