@@ -22,6 +22,7 @@ Working rules:
 - Run targeted validation first; avoid full test suites unless necessary.
 - Do not use browser/computer control unless explicitly requested.
 - If `.harness` conflicts with the actual repository, trust the repository and update the docs.
+- When an enhancement is complete, tested, and ready, commit only its intended files to this repository, push `main`, report the commit SHA, and verify the production deployment run. Do not describe local edits or a successful push as live until the deployment succeeds.
 
 Current Phase 1:
 1. link existing Bingo Space students with `attendance_student_id`
