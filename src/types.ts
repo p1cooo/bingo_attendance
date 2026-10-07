@@ -1,5 +1,26 @@
 export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'COACH';
 
+export interface StudentFee {
+  id: string; student_id: string; membership_id: string; class_id: string;
+  class_name: string; coach_name: string; billing_mode: 'MONTHLY' | 'PER_SESSION';
+  amount_cents: number; effective_month: string; created_by_user_id: string; created_at: string;
+  created_by_name?: string;
+}
+export interface PaymentAllocation { month: string; amount_cents: number; }
+export interface StudentPayment {
+  id: string; student_id: string; amount_cents: number; payment_date: string;
+  method: string; source: 'MANUAL' | 'ONLINE_PARENT_PORTAL' | 'OTHER';
+  reference?: string; notes?: string; allocations: PaymentAllocation[];
+  recorded_by_user_id: string; created_at: string;
+  recorded_by_name?: string;
+}
+export interface StudentAdjustment {
+  id: string; student_id: string; month: string; amount_cents: number;
+  type: 'DISCOUNT' | 'CREDIT' | 'WAIVER' | 'CORRECTION';
+  reason: string; created_by_user_id: string; created_at: string;
+  created_by_name?: string;
+}
+
 export type ClassType = 'GROUP' | 'INDIVIDUAL';
 
 export type ScheduleStatus = 'ACTIVE' | 'INACTIVE';

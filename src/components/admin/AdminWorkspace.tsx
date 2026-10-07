@@ -7,6 +7,7 @@ import { ClassesAndSchedulesView } from './ClassesAndSchedulesView.js';
 import { SessionsView } from './SessionsView.js';
 import { MonthlyReportsView } from './MonthlyReportsView.js';
 import { SettingsView } from './SettingsView.js';
+import { FinanceView } from './FinanceView.js';
 import { useAuth } from '../../context/AuthContext.js';
 import {
   LayoutDashboard,
@@ -16,6 +17,7 @@ import {
   CalendarDays,
   FileBarChart,
   Settings,
+  Wallet,
 } from 'lucide-react';
 
 export const AdminWorkspace: React.FC = () => {
@@ -40,6 +42,7 @@ export const AdminWorkspace: React.FC = () => {
     { id: 'classes', label: 'Classes & Schedules', icon: BookOpen },
     { id: 'sessions', label: 'Sessions', icon: CalendarDays },
     { id: 'reports', label: 'Reports', icon: FileBarChart },
+    { id: 'finance', label: 'Finance', icon: Wallet },
     { id: 'settings', label: 'Rules & Logs', icon: Settings },
   ];
 
@@ -135,6 +138,7 @@ export const AdminWorkspace: React.FC = () => {
         )}
 
         {activeTab === 'reports' && <MonthlyReportsView />}
+        {activeTab === 'finance' && <FinanceView />}
 
         {activeTab === 'settings' && <SettingsView />}
       </main>

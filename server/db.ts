@@ -19,6 +19,7 @@ import {
   ReplacementAdvanceCommitment,
   SessionStatus,
   SessionType,
+  StudentFee, StudentPayment, StudentAdjustment,
 } from '../src/types.js';
 
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
@@ -39,6 +40,9 @@ class DatabaseStore {
   attendance: Map<string, AttendanceRecord> = new Map();
   replacementCredits: Map<string, ReplacementCredit> = new Map();
   replacementAdvanceCommitments: Map<string, ReplacementAdvanceCommitment> = new Map();
+  studentFees: Map<string, StudentFee> = new Map();
+  studentPayments: Map<string, StudentPayment> = new Map();
+  studentAdjustments: Map<string, StudentAdjustment> = new Map();
   auditLogs: AttendanceAuditLog[] = [];
   activityLogs: ActivityLog[] = [];
   notificationLogs: NotificationLog[] = [];
@@ -61,6 +65,9 @@ class DatabaseStore {
     this.attendance.clear();
     this.replacementCredits.clear();
     this.replacementAdvanceCommitments.clear();
+    this.studentFees.clear();
+    this.studentPayments.clear();
+    this.studentAdjustments.clear();
     this.auditLogs = [];
     this.activityLogs = [];
     this.notificationLogs = [];
@@ -375,6 +382,9 @@ class DatabaseStore {
         attendance: Array.from(this.attendance.entries()),
         replacementCredits: Array.from(this.replacementCredits.entries()),
         replacementAdvanceCommitments: Array.from(this.replacementAdvanceCommitments.entries()),
+        studentFees: Array.from(this.studentFees.entries()),
+        studentPayments: Array.from(this.studentPayments.entries()),
+        studentAdjustments: Array.from(this.studentAdjustments.entries()),
         auditLogs: this.auditLogs,
         activityLogs: this.activityLogs,
         notificationLogs: this.notificationLogs,
@@ -416,6 +426,9 @@ class DatabaseStore {
       if (state.attendance) this.attendance = new Map(state.attendance);
       if (state.replacementCredits) this.replacementCredits = new Map(state.replacementCredits);
       if (state.replacementAdvanceCommitments) this.replacementAdvanceCommitments = new Map(state.replacementAdvanceCommitments);
+      if (state.studentFees) this.studentFees = new Map(state.studentFees);
+      if (state.studentPayments) this.studentPayments = new Map(state.studentPayments);
+      if (state.studentAdjustments) this.studentAdjustments = new Map(state.studentAdjustments);
       if (state.auditLogs) this.auditLogs = state.auditLogs;
       if (state.activityLogs) this.activityLogs = state.activityLogs;
       if (state.notificationLogs) this.notificationLogs = state.notificationLogs;

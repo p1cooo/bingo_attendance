@@ -18,6 +18,12 @@ const API_BASE = '/api';
 class ApiClient {
   private token: string | null = null;
 
+  getFinanceStudents(): Promise<any> { return this.request('/finance/students'); }
+  getFinanceStudent(id: string): Promise<any> { return this.request(`/finance/students/${id}`); }
+  saveStudentFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/fees`, { method: 'POST', body: JSON.stringify(data) }); }
+  recordStudentPayment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }); }
+  addStudentAdjustment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/adjustments`, { method: 'POST', body: JSON.stringify(data) }); }
+
   constructor() {
     if (typeof window !== 'undefined') {
       this.token = localStorage.getItem('ams_token');

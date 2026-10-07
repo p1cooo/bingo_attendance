@@ -41,8 +41,87 @@ import { planStudentMemberships } from './studentMemberships.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
+import { financeDetail, validMonth, validDate, cents, validAllocations } from './finance.js';
+import type { StudentFee, StudentPayment, StudentAdjustment } from '../src/types.js';
 
 export const router = Router();
+
+router.get('/finance/students', authenticateUser, requireAdmin, (_req, res) => {
+  const students = [...db.students.values()].filter(s => !s.is_unregistered).map(s => {
+    const detail = financeDetail(s.id)!;
+    return { student: s, outstanding_cents: detail.outstanding_cents, current_charges_cents: detail.current_charges_cents, paid_until: detail.paid_until, last_payment: detail.last_payment };
+  });
+  res.json({ students });
+});
+
+router.get('/finance/students/:id', authenticateUser, requireAdmin, (req, res) => {
+  const detail = financeDetail(req.params.id);
+  if (!detail) return res.status(404).json({ error: 'Student not found.' });
+  res.json({ ...detail, memberships: [...db.memberships.values()].filter(m => m.student_id === req.params.id).map(m => {
+    const schedule = db.schedules.get(m.schedule_id);
+    const cls = db.classes.get(schedule?.class_id || m.schedule_id);
+    return { ...m, class_name: cls?.name || 'Class', class_type: cls?.class_type || 'GROUP', coach_name: db.coaches.get(schedule?.coach_id || cls?.default_coach_id || '')?.name || 'Coach' };
+  }) });
+});
+
+router.post('/finance/students/:id/fees', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const student = db.students.get(req.params.id);
+  const membership = db.memberships.get(String(req.body.membership_id));
+  const amount = cents(req.body.amount_cents);
+  const month = req.body.effective_month;
+  if (!student || !membership || membership.student_id !== student.id || !amount || !validMonth(month) || month < membership.joined_date.slice(0, 7)) return res.status(400).json({ error: 'Choose a valid enrollment, fee, and effective month.' });
+  const schedule = db.schedules.get(membership.schedule_id);
+  const cls = db.classes.get(schedule?.class_id || membership.schedule_id);
+  if (!cls) return res.status(400).json({ error: 'Class is unavailable.' });
+  if (month < academyMonth() && [...db.studentPayments.values()].some(p => p.student_id === student.id && p.allocations.some(a => a.month >= month))) return res.status(409).json({ error: 'Past billed periods with payments are locked. Use a current-period adjustment.' });
+  const fee: StudentFee = { id: crypto.randomUUID(), student_id: student.id, membership_id: membership.id, class_id: cls.id, class_name: cls.name, coach_name: db.coaches.get(schedule?.coach_id || cls.default_coach_id || '')?.name || 'Coach', billing_mode: cls.class_type === 'GROUP' ? 'MONTHLY' : 'PER_SESSION', amount_cents: amount, effective_month: month, created_by_user_id: req.user!.id, created_by_name: req.user!.name, created_at: new Date().toISOString() };
+  try { await syncDocToFirestore('studentFees', fee.id, fee, false); db.studentFees.set(fee.id, fee); await publishFirestoreRevision(); db.saveToDisk(); res.status(201).json(fee); }
+  catch (error) { res.status(503).json({ error: 'Fee could not be saved.' }); }
+});
+
+router.post('/finance/students/:id/payments', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const student = db.students.get(req.params.id);
+  const amount = cents(req.body.amount_cents);
+  const allocations = req.body.allocations;
+  const id = String(req.body.idempotency_key || '');
+  if (!student || !amount || !validDate(req.body.payment_date) || !validAllocations(allocations, amount) || !/^[a-zA-Z0-9-]{8,100}$/.test(id)) return res.status(400).json({ error: 'Enter a valid payment and allocate its full amount to distinct months.' });
+  const method = String(req.body.method || '').trim();
+  if (!method || method.length > 60) return res.status(400).json({ error: 'Payment method is required.' });
+  const payment: StudentPayment = { id, student_id: student.id, amount_cents: amount, payment_date: req.body.payment_date, method, source: 'MANUAL', reference: String(req.body.reference || '').slice(0, 100), notes: String(req.body.notes || '').slice(0, 500), allocations, recorded_by_user_id: req.user!.id, recorded_by_name: req.user!.name, created_at: new Date().toISOString() };
+  try {
+    const ref = getFirestoreDb().collection('studentPayments').doc(id);
+    const created = await getFirestoreDb().runTransaction(async tx => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return existing.data() as StudentPayment;
+      tx.create(ref, payment);
+      return payment;
+    });
+    if (created.student_id !== student.id || created.amount_cents !== payment.amount_cents || created.payment_date !== payment.payment_date || JSON.stringify(created.allocations) !== JSON.stringify(payment.allocations)) return res.status(409).json({ error: 'Payment key was already used for a different payment.' });
+    db.studentPayments.set(id, created);
+    await publishFirestoreRevision();
+    db.saveToDisk();
+    res.status(created === payment ? 201 : 200).json(created);
+  } catch { res.status(503).json({ error: 'Payment could not be saved. Retry with the same form.' }); }
+});
+
+router.post('/finance/students/:id/adjustments', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const id = String(req.body.idempotency_key || '');
+  if (!db.students.has(req.params.id) || !validMonth(req.body.month) || !['DISCOUNT', 'CREDIT', 'WAIVER', 'CORRECTION'].includes(req.body.type) || !Number.isSafeInteger(req.body.amount_cents) || req.body.amount_cents === 0 || (req.body.amount_cents < 0 && req.body.type !== 'CORRECTION') || String(req.body.reason || '').trim().length < 3 || !/^[a-zA-Z0-9-]{8,100}$/.test(id)) return res.status(400).json({ error: 'Enter a valid period, amount, type, and reason.' });
+  const adjustment: StudentAdjustment = { id, student_id: req.params.id, month: req.body.month, amount_cents: req.body.amount_cents, type: req.body.type, reason: String(req.body.reason).trim().slice(0, 500), created_by_user_id: req.user!.id, created_by_name: req.user!.name, created_at: new Date().toISOString() };
+  try {
+    const ref = getFirestoreDb().collection('studentAdjustments').doc(id);
+    const created = await getFirestoreDb().runTransaction(async tx => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return existing.data() as StudentAdjustment;
+      tx.create(ref, adjustment);
+      return adjustment;
+    });
+    if (created.student_id !== adjustment.student_id || created.month !== adjustment.month || created.amount_cents !== adjustment.amount_cents || created.type !== adjustment.type || created.reason !== adjustment.reason) return res.status(409).json({ error: 'Adjustment key was already used for a different record.' });
+    db.studentAdjustments.set(id, created);
+    await publishFirestoreRevision(); db.saveToDisk(); res.status(created === adjustment ? 201 : 200).json(created);
+  }
+  catch { res.status(503).json({ error: 'Adjustment could not be saved.' }); }
+});
 
 const isAdmin = (user: User) => user.role === 'ADMIN' || user.role === 'SUPER_ADMIN';
 const canManageClass = (user: User, classId: string) => isAdmin(user) || Boolean(user.coach_id && db.classes.get(classId)?.default_coach_id === user.coach_id);
@@ -1271,6 +1350,7 @@ router.delete('/students/:id', authenticateUser, requireAdmin, async (req: Authe
   if (!student) {
     return res.status(404).json({ error: 'Student not found' });
   }
+  if ([...db.studentFees.values()].some(f => f.student_id === id) || [...db.studentPayments.values()].some(p => p.student_id === id) || [...db.studentAdjustments.values()].some(a => a.student_id === id)) return res.status(409).json({ error: 'Student has finance history. Mark the student inactive to preserve billing records.' });
 
   const membershipIds = Array.from(db.memberships.entries()).flatMap(([mId, m]) => {
     if (m.student_id === id) {
@@ -1542,6 +1622,7 @@ router.post('/classes/bulk', authenticateUser, requireAdmin, async (req: Authent
  * so the caller cannot lock the academy out of its own portal.
  */
 router.post('/admin/reset-operational-data', authenticateUser, requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  if (db.studentFees.size || db.studentPayments.size || db.studentAdjustments.size) return res.status(409).json({ error: 'Finance records exist. Operational reset is blocked to preserve billing history.' });
   if (req.body?.confirmation !== 'RESET TEST DATA') {
     return res.status(400).json({ error: 'Type RESET TEST DATA to confirm this irreversible reset.' });
   }
@@ -1646,6 +1727,7 @@ router.post('/students/bulk-delete', authenticateUser, requireAdmin, async (req:
   if (student_ids.length > 500) return res.status(400).json({ error: 'A bulk action is limited to 500 students.' });
   const ids = [...new Set(student_ids)].filter((studentId): studentId is string => typeof studentId === 'string' && db.students.has(studentId));
   if (ids.length === 0) return res.status(400).json({ error: 'None of the selected students still exist.' });
+  if ([...db.studentFees.values()].some(f => ids.includes(f.student_id)) || [...db.studentPayments.values()].some(p => ids.includes(p.student_id)) || [...db.studentAdjustments.values()].some(a => ids.includes(a.student_id))) return res.status(409).json({ error: 'One or more students have finance history. Mark them inactive instead.' });
   const membershipIds = Array.from(db.memberships.values()).filter((membership) => ids.includes(membership.student_id)).map((membership) => membership.id);
   try {
     await Promise.all([
@@ -1743,14 +1825,15 @@ router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: Au
     const currentMemberships = Array.from(db.memberships.values()).filter(
       (m) => m.schedule_id === id || (sched && m.schedule_id === sched.id)
     );
-    const currentStudentIds = new Set(currentMemberships.map((m) => m.student_id));
+    const currentStudentIds = new Set(currentMemberships.filter(m => m.status === 'ACTIVE').map((m) => m.student_id));
     const targetStudentIds = new Set(student_ids);
 
     // Remove unassigned
     currentMemberships.forEach((m) => {
-      if (!targetStudentIds.has(m.student_id)) {
-        db.memberships.delete(m.id);
-        membershipWrites.push(deleteDocFromFirestore('memberships', m.id, false));
+      if (m.status === 'ACTIVE' && !targetStudentIds.has(m.student_id)) {
+        const ended = { ...m, status: 'ENDED' as const, ended_date: academyToday() };
+        db.memberships.set(m.id, ended);
+        membershipWrites.push(syncDocToFirestore('memberships', m.id, ended, false));
       }
     });
 
@@ -1817,8 +1900,10 @@ router.delete('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req:
   const priorSchedules = schedules.map((schedule) => ({ ...schedule }));
   cls.is_active = false;
   schedules.forEach((schedule) => { schedule.is_active = false; schedule.status = 'INACTIVE'; });
+  const ended = [...db.memberships.values()].filter(m => m.status === 'ACTIVE' && (m.schedule_id === id || schedules.some(s => s.id === m.schedule_id))).map(m => ({ ...m, status: 'ENDED' as const, ended_date: academyToday() }));
   try {
-    await persistMutation([['classes', id, cls], ...schedules.map((schedule): [string, string, unknown] => ['schedules', schedule.id, schedule])], true);
+    await persistMutation([['classes', id, cls], ...schedules.map((schedule): [string, string, unknown] => ['schedules', schedule.id, schedule]), ...ended.map((m): [string, string, unknown] => ['memberships', m.id, m])], true);
+    ended.forEach(m => db.memberships.set(m.id, m));
     return res.json({ success: true, message: 'Class archived; attendance history preserved.' });
   } catch {
     db.classes.set(id, before);
@@ -1916,7 +2001,7 @@ router.put('/schedules/:id', authenticateUser, requireAdmin, (req: Authenticated
   return res.json(db.getPopulatedSchedule(id));
 });
 
-router.delete('/schedules/:id', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.delete('/schedules/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const sched = db.schedules.get(id);
 
@@ -1924,15 +2009,13 @@ router.delete('/schedules/:id', authenticateUser, requireAdmin, (req: Authentica
     return res.status(404).json({ error: 'Schedule not found' });
   }
 
-  // Remove memberships associated with schedule
-  Array.from(db.memberships.entries()).forEach(([mId, m]) => {
-    if (m.schedule_id === id) {
-      db.memberships.delete(mId);
-    }
-  });
-
-  db.schedules.delete(id);
-  return res.json({ success: true, message: 'Class schedule deleted successfully' });
+  const ended = [...db.memberships.values()].filter(m => m.schedule_id === id && m.status === 'ACTIVE').map(m => ({ ...m, status: 'ENDED' as const, ended_date: academyToday() }));
+  const archived = { ...sched, is_active: false, status: 'INACTIVE' as const };
+  try {
+    await persistMutation([['schedules', id, archived], ...ended.map((m): [string, string, unknown] => ['memberships', m.id, m])], true);
+    db.schedules.set(id, archived); ended.forEach(m => db.memberships.set(m.id, m));
+    return res.json({ success: true, message: 'Class schedule archived.' });
+  } catch { return res.status(503).json({ error: 'Schedule could not be archived.' }); }
 });
 
 // Manage student memberships in a schedule
@@ -1976,16 +2059,14 @@ router.post('/schedules/:id/students', authenticateUser, requireCoachOrAdmin, as
   return res.json(db.getPopulatedSchedule(id));
 });
 
-router.delete('/schedules/:id/students/:studentId', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+router.delete('/schedules/:id/students/:studentId', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id, studentId } = req.params;
-
-  Array.from(db.memberships.entries()).forEach(([mId, m]) => {
-    if (m.schedule_id === id && m.student_id === studentId) {
-      db.memberships.delete(mId);
-    }
-  });
-
-  return res.json(db.getPopulatedSchedule(id));
+  const ended = [...db.memberships.values()].filter(m => m.schedule_id === id && m.student_id === studentId && m.status === 'ACTIVE').map(m => ({ ...m, status: 'ENDED' as const, ended_date: academyToday() }));
+  try {
+    await persistMutation(ended.map((m): [string, string, unknown] => ['memberships', m.id, m]), true);
+    ended.forEach(m => db.memberships.set(m.id, m));
+    return res.json(db.getPopulatedSchedule(id));
+  } catch { return res.status(503).json({ error: 'Enrollment could not be ended.' }); }
 });
 
 // ============================================================
