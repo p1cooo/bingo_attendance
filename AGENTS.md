@@ -1,5 +1,21 @@
 # Bingo Chess — Agent Instructions
 
+## PRODUCTION HOSTING — AUTHORITATIVE RULE
+
+Bingo Chess Attendance is hosted on Hostinger VPS.
+
+Canonical production URL: `https://attendance.bingochess.space/`
+
+Vercel is deprecated and must not be used as the production deployment target for Bingo Chess Attendance.
+
+All production deployments, runtime debugging, server configuration, health checks, logs, and rollback procedures must target the verified Hostinger VPS.
+
+Never assume that a successful GitHub push, Vercel build, or Vercel deployment means the Hostinger production application has been updated.
+
+A deployment is successful only after the correct commit has been deployed to Hostinger and its live application has passed verification. See `DEPLOYMENT.md`.
+
+Do not disconnect or delete Vercel until the dependency checks in `DEPLOYMENT.md` are complete and the user approves the live change.
+
 Before non-trivial work, read the relevant files in `.harness/`.
 
 Project docs:
@@ -9,7 +25,7 @@ Project docs:
 - `.harness/PORTAL_SYNC.md`
 
 Project naming:
-- Bingo Attendance = `bingo-attendance.vercel.app` (admin/coach system)
+- Bingo Attendance = `attendance.bingochess.space` (admin/coach system; Hostinger production)
 - Bingo Space = `bingochess.space` (student portal)
 
 Working rules:
@@ -22,7 +38,7 @@ Working rules:
 - Run targeted validation first; avoid full test suites unless necessary.
 - Do not use browser/computer control unless explicitly requested.
 - If `.harness` conflicts with the actual repository, trust the repository and update the docs.
-- When an enhancement is complete, tested, and ready, commit only its intended files to this repository, push `main`, report the commit SHA, and verify the production deployment run. Do not describe local edits or a successful push as live until the deployment succeeds.
+- For an approved release, commit only its intended files and push `main`; then verify the Hostinger deployment run, VPS checkout SHA, and live application. Do not describe a push or Vercel build as live.
 
 Current Phase 1:
 1. link existing Bingo Space students with `attendance_student_id`

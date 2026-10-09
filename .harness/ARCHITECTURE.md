@@ -1,5 +1,11 @@
 # Bingo Chess — Architecture
 
+## Production hosting (verified 2026-10-09)
+
+Bingo Attendance's canonical production URL is `https://attendance.bingochess.space/`. Its DNS A record and `srv880872.hstgr.cloud` both resolve to `31.97.157.195`. On that Hostinger VPS, Nginx terminates HTTPS with a Let's Encrypt certificate and proxies to the Node application bound to `127.0.0.1:3001`. PM2 runs `bingo-attendance` from `/var/www/bingo-attendance/app` using `/etc/bingo-attendance.env`. Firestore is the production data store; the configured database is `ai-studio-academymanagemen-2caacafd-217e-4741-b292-40c397c4893c` in project `gen-lang-client-0937442942`.
+
+Bingo Space is served at `https://bingochess.space/` on Hostinger. Attendance's `PORTAL_BRIDGE_URL` points there; Bingo Space's `BINGO_ATTENDANCE_URL` points to the canonical Attendance URL. Vercel retains an obsolete Attendance deployment and is not the production host. See `DEPLOYMENT.md` for release and decommission checks.
+
 ## System ownership
 
 ### Bingo Attendance

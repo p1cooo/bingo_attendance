@@ -1,5 +1,15 @@
 # Bingo Chess — Current Plan
 
+## Hosting and release checkpoint (2026-10-09)
+
+- [x] Verify Hostinger as the canonical Attendance host and confirm its VPS, Nginx, PM2, and Firestore configuration.
+- [x] Identify the live Hostinger checkout: `ca5711f3a9bbf22b47aa8af22249f9331ce83485`.
+- [x] Confirm Finance commit `8de3782534946a9f13404dd8cad999859533ea44` is on GitHub `main` but is **not** deployed to Hostinger.
+- [ ] Have an authorized administrator configure and verify the GitHub Actions VPS secrets and review the deployment gate. No deployment is authorized by this documentation task.
+- [ ] Review Vercel project Git integration and any external callback/webhook settings, then approve disconnection only after the dependency audit is complete.
+
+The older Phase 1 plan below is historical product planning; it does not identify the current production host or release state.
+
 ## Completed
 - [x] Coaches imported
 - [x] Students imported
@@ -53,8 +63,8 @@ Add a safe correction flow:
 - example: +200 original, -40 correction, net +160
 - coach must confirm before applying correction
 
-## Deferred
+## Deferred or not yet live
 - Bingo Space `My Progress` attendance UI
-- monthly fees
+- Finance is implemented in GitHub commit `8de3782` but is not yet live on Hostinger.
 - payment gateway
 - payment reconciliation

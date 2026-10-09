@@ -3,8 +3,11 @@
 ## Coach creation snapshot ordering regression
 Known fix: commit `5764aff` — `Fix coach account snapshot ordering`.
 
-## Vercel / Firestore stale snapshot issue
-Do not remove refresh-before-response behavior without understanding the regression it prevents.
+## Historical Vercel / Firestore stale snapshot regression
+The Vercel serverless path is obsolete production infrastructure. Do not remove refresh-before-response behavior without understanding the regression it prevents; this note does not make Vercel the current host.
+
+## Hostinger release gap (verified 2026-10-09)
+The live Hostinger checkout is `ca5711f3a9bbf22b47aa8af22249f9331ce83485`; Finance commit `8de3782534946a9f13404dd8cad999859533ea44` is not deployed there. The previous GitHub Actions attempt failed before SSH because required VPS secrets were empty. Secret presence and the gate's current value require an authorized GitHub administrator to recheck before any release. Vercel remains online; do not retire it until dashboard Git integration and external callback/webhook dependencies are checked.
 
 ## Cross-system identity
 Runtime integration must use `attendance_student_id`, not names.
