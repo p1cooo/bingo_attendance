@@ -167,6 +167,29 @@ export interface StudentClassMembership {
   status: 'ACTIVE' | 'PAUSED' | 'ENDED';
 }
 
+export type PauseReason = 'EXAMINATION' | 'HOLIDAY_TRAVEL' | 'MEDICAL_HEALTH' | 'PERSONAL' | 'OTHER';
+export interface StudentPause {
+  id: string;
+  student_id: string;
+  membership_id: string;
+  schedule_id: string;
+  class_id: string;
+  start_date: string;
+  end_date: string | null;
+  reason: PauseReason;
+  note?: string;
+  declared_by_user_id: string;
+  declared_by_name: string;
+  declared_by_role: UserRole;
+  created_at: string;
+  updated_at: string;
+  resumed_at?: string;
+  resumed_by_user_id?: string;
+  attendance_conflict_ids?: string[];
+  billing_reviews?: Record<string, { amount_cents: number; reviewed_by_user_id: string; reviewed_at: string }>;
+  history: Array<{ action: 'DECLARED' | 'RESUMED' | 'BILLING_REVIEWED'; at: string; user_id: string; details?: string }>;
+}
+
 export interface ClassSession {
   id: string;
   occurrence_revision?: string;
@@ -198,6 +221,8 @@ export interface ClassSession {
   present_count?: number;
   attendance_records?: AttendanceRecord[];
   enrolled_students?: Student[];
+  paused_students?: Array<{ student_id: string; membership_id: string; start_date: string; end_date: string | null }>;
+  enrolled_memberships?: Array<{ student_id: string; membership_id: string }>;
 }
 
 export interface AttendanceRecord {

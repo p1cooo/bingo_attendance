@@ -39,18 +39,118 @@ import { OccurrenceError, planOccurrence, applyOccurrenceMode } from './sessionO
 import { commitOccurrence } from './occurrencePersistence.js';
 import { reconcileRecurringSessions } from './recurringSessions.js';
 import { planStudentMemberships } from './studentMemberships.js';
-import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError } from './replacementCredits.js';
+import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 import { financeDetail, validMonth, validDate, cents, validAllocations } from './finance.js';
+import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } from './studentPauses.js';
 import type { StudentFee, StudentPayment, StudentAdjustment } from '../src/types.js';
+import type { StudentPause, PauseReason } from '../src/types.js';
+import { commitPauseDeclaration, commitPauseBillingReview } from './pausePersistence.js';
 
 export const router = Router();
+
+const pauseReasons = new Set<PauseReason>(['EXAMINATION', 'HOLIDAY_TRAVEL', 'MEDICAL_HEALTH', 'PERSONAL', 'OTHER']);
+const pauseLock = (membershipId: string) => getFirestoreDb().collection('_student_pause_locks').doc(membershipId);
+const pauseAccess = (user: User, membershipId: string) => {
+  const membership = db.memberships.get(membershipId);
+  const schedule = membership && db.schedules.get(membership.schedule_id);
+  return canManagePause(user, membership, schedule);
+};
+
+router.get('/student-pauses', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  const studentId = String(req.query.student_id || '');
+  const pauses = [...db.studentPauses.values()].filter(p => (!studentId || p.student_id === studentId) && pauseAccess(user, p.membership_id))
+    .map(p => ({ ...p, class_name: db.classes.get(p.class_id)?.name || p.class_id }));
+  res.json({ pauses, finance_notifications: user.role === 'COACH' ? [] : pauses.filter(p => p.declared_by_role === 'COACH').map(p => ({ pause_id: p.id, student_id: p.student_id, created_at: p.created_at, action: 'REVIEW_PAUSE_BILLING' })) });
+});
+
+router.post('/memberships/:id/pauses', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res) => {
+  const membership = db.memberships.get(req.params.id);
+  const user = req.user!;
+  if (!membership || !pauseAccess(user, membership.id)) return res.status(403).json({ error: 'Enrollment is not assigned to this coach.' });
+  const schedule = db.schedules.get(membership.schedule_id)!;
+  const id = String(req.body.idempotency_key || '');
+  const start = req.body.start_date;
+  const end = req.body.end_date ?? null;
+  const reason = req.body.reason as PauseReason;
+  const note = String(req.body.note || '').trim();
+  if (!/^[a-zA-Z0-9-]{8,100}$/.test(id) || !validatePauseDates(start, end) || start < membership.joined_date || membership.status !== 'ACTIVE' ||
+    membership.ended_date && start > membership.ended_date || !pauseReasons.has(reason) || note.length > 500) return res.status(400).json({ error: 'Choose a valid enrollment, pause period, reason, and request key.' });
+  const now = new Date().toISOString();
+  const attendanceConflicts = [...db.attendance.values()].filter(record => {
+    const session = db.sessions.get(record.session_id);
+    return record.student_id === membership.student_id && record.status !== 'BOOKED' && session &&
+      (session.schedule_id === membership.schedule_id || session.class_id === schedule.class_id) && session.session_date >= start && (!end || session.session_date <= end);
+  }).map(record => record.id);
+  const pause: StudentPause = { id, student_id: membership.student_id, membership_id: membership.id, schedule_id: schedule.id, class_id: schedule.class_id,
+    start_date: start, end_date: end, reason, note, declared_by_user_id: user.id, declared_by_name: user.name, declared_by_role: user.role,
+    created_at: now, updated_at: now, attendance_conflict_ids: attendanceConflicts, history: [{ action: 'DECLARED', at: now, user_id: user.id }] };
+  const activity = activityEntry(user, 'STUDENT_PAUSE_DECLARED', 'studentPause', id, { classId: schedule.class_id, summary: membership.student_id,
+    new_values: { start_date: start, end_date: end, reason, note } });
+  try {
+    const result = await commitPauseDeclaration(getFirestoreDb(), pause, activity);
+    db.studentPauses.set(id, result.pause);
+    if (result.created) db.activityLogs.unshift(activity);
+    await publishFirestoreRevision(); db.saveToDisk();
+    return res.status(result.created ? 201 : 200).json(result.pause);
+  } catch (error) { return res.status(String(error).includes('OVERLAPPING_PAUSE') || String(error).includes('IDEMPOTENCY_CONFLICT') ? 409 : 503).json({ error: String(error).includes('OVERLAPPING_PAUSE') ? 'Pause dates overlap an existing pause.' : String(error).includes('IDEMPOTENCY_CONFLICT') ? 'Request key was already used.' : 'Pause could not be saved.' }); }
+});
+
+router.post('/student-pauses/:id/resume', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res) => {
+  const pause = db.studentPauses.get(req.params.id);
+  if (!pause || !pauseAccess(req.user!, pause.membership_id)) return res.status(403).json({ error: 'Pause is not assigned to this user.' });
+  const date = req.body.resume_date;
+  if (!validDate(date) || date <= pause.start_date || date > academyToday()) return res.status(400).json({ error: 'Choose a valid resumption date after the pause began.' });
+  const end = new Date(`${date}T00:00:00Z`); end.setUTCDate(end.getUTCDate() - 1);
+  const endDate = end.toISOString().slice(0, 10);
+  if (pause.end_date && pause.end_date <= endDate) return res.status(409).json({ error: 'Pause has already ended.' });
+  const now = new Date().toISOString();
+  const updated: StudentPause = { ...pause, end_date: endDate, resumed_at: now, resumed_by_user_id: req.user!.id, updated_at: now,
+    history: [...pause.history, { action: 'RESUMED', at: now, user_id: req.user!.id, details: date }] };
+  const activity = activityEntry(req.user!, 'STUDENT_PAUSE_RESUMED', 'studentPause', pause.id, { classId: pause.class_id, summary: pause.student_id, new_values: { resume_date: date } });
+  try {
+    await getFirestoreDb().runTransaction(async tx => {
+      const ref = getFirestoreDb().collection('studentPauses').doc(pause.id);
+      const lockRef = pauseLock(pause.membership_id);
+      const [current, lock] = await Promise.all([tx.get(ref), tx.get(lockRef)]);
+      if (!current.exists || (current.data() as StudentPause).updated_at !== pause.updated_at) throw new Error('STALE_PAUSE');
+      const intervals = (lock.data()?.intervals || []) as Array<{ id: string; start_date: string; end_date: string | null }>;
+      tx.set(ref, updated);
+      tx.set(lockRef, { ...lock.data(), intervals: intervals.map(item => item.id === pause.id ? { ...item, end_date: endDate } : item) });
+      tx.create(getFirestoreDb().collection('activityLogs').doc(activity.id), removeUndefinedValues(activity) as FirebaseFirestore.DocumentData);
+    });
+    db.studentPauses.set(pause.id, updated);
+    db.activityLogs.unshift(activity);
+    await publishFirestoreRevision(); db.saveToDisk(); return res.json(updated);
+  } catch { return res.status(409).json({ error: 'Pause changed concurrently or could not be resumed.' }); }
+});
+
+router.post('/student-pauses/:id/billing-review', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const pause = db.studentPauses.get(req.params.id);
+  const month = req.body.month;
+  const amount = req.body.amount_cents;
+  const monthEnd = validMonth(month) ? `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate()}` : '';
+  if (!pause || !validMonth(month) || !Number.isSafeInteger(amount) || amount < 0 || pause.start_date > monthEnd || pause.end_date && pause.end_date < `${month}-01` ||
+    pauseMonthCoverage(db.studentPauses.values(), pause.membership_id, month) !== 'PARTIAL') return res.status(400).json({ error: 'Choose a partially paused month and a custom fee of RM0 or more.' });
+  if ([...db.studentPauses.values()].some(other => other.id !== pause.id && other.membership_id === pause.membership_id && other.billing_reviews?.[month])) return res.status(409).json({ error: 'This enrollment and month already have a review on another pause.' });
+  const now = new Date().toISOString();
+  const updated: StudentPause = { ...pause, billing_reviews: { ...pause.billing_reviews, [month]: { amount_cents: amount, reviewed_by_user_id: req.user!.id, reviewed_at: now } },
+    updated_at: now, history: [...pause.history, { action: 'BILLING_REVIEWED', at: now, user_id: req.user!.id, details: `${month}:${amount}` }] };
+  const activity = activityEntry(req.user!, 'STUDENT_PAUSE_BILLING_REVIEWED', 'studentPause', pause.id, { classId: pause.class_id, summary: pause.student_id, new_values: { month, amount_cents: amount } });
+  try {
+    await commitPauseBillingReview(getFirestoreDb(), pause, updated, activity, month);
+    db.studentPauses.set(pause.id, updated);
+    db.activityLogs.unshift(activity);
+    await publishFirestoreRevision(); db.saveToDisk(); return res.json(updated);
+  } catch { return res.status(409).json({ error: 'Pause changed concurrently or review could not be saved.' }); }
+});
 
 router.get('/finance/students', authenticateUser, requireAdmin, (_req, res) => {
   const students = [...db.students.values()].filter(s => !s.is_unregistered).map(s => {
     const detail = financeDetail(s.id)!;
-    return { student: s, outstanding_cents: detail.outstanding_cents, current_charges_cents: detail.current_charges_cents, paid_until: detail.paid_until, last_payment: detail.last_payment };
+    return { student: s, outstanding_cents: detail.outstanding_cents, current_charges_cents: detail.current_charges_cents, pending_finance_review: detail.pending_finance_review, paid_until: detail.paid_until, last_payment: detail.last_payment };
   });
   res.json({ students });
 });
@@ -2407,6 +2507,9 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   if (classMemberships.some((membership) => membership.status === 'PAUSED')) {
     return res.status(409).json({ error: 'Attendance is not required for a paused student.' });
   }
+  if (classMemberships.some((membership) => pauseOnDate(db.studentPauses.values(), membership.id, session.session_date))) {
+    return res.status(409).json({ error: 'Attendance is not required while this student is on pause for this class.' });
+  }
   if (!db.students.has(student_id) || !existingRecord && !classMemberships.some((membership) => membership.status === 'ACTIVE')) {
     return res.status(403).json({ error: 'The student is not enrolled or booked for this occurrence.' });
   }
@@ -2463,8 +2566,11 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     await persistAttendanceWithReplacementReconciliation({
       attendance: attendanceToPersist,
       classType: attendanceClass.class_type,
+      pauseMembershipIds: classMemberships.map(m => m.id).filter(Boolean),
+      sessionDate: session.session_date,
     });
   } catch (error: any) {
+    if (error instanceof PauseAttendanceError) return res.status(409).json({ error: error.message });
     console.error('[Attendance] Durable attendance/credit transaction failed:', error?.message || error);
     return res.status(503).json({ error: 'Attendance could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }

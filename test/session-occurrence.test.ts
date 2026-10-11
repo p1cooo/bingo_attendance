@@ -210,3 +210,21 @@ test('attendance rejects paused students, unrelated students and invalid marks',
     assert.equal(db.attendance.size, 0);
   } finally { [db.sessions, db.students, db.memberships, db.attendance] = previous; }
 });
+
+test('attendance route rejects a dated class pause while preserving other enrollments', async () => {
+  const previous = [db.sessions, db.students, db.memberships, db.studentPauses, db.attendance] as const;
+  try {
+    db.sessions = new Map([[original.id, original]]);
+    db.students = new Map([['student-1', { id: 'student-1' } as any]]);
+    db.memberships = new Map([['membership-1', { id: 'membership-1', student_id: 'student-1', schedule_id: cls.id, status: 'ACTIVE' } as any]]);
+    db.studentPauses = new Map([['pause-1', { id: 'pause-1', membership_id: 'membership-1', start_date: '2026-09-01', end_date: '2026-09-30' } as any]]);
+    db.attendance = new Map();
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/attendance' && item.route.methods.post);
+    const handler = layer.route.stack.at(-1).handle;
+    let status = 200;
+    await handler({ params: { id: original.id }, user: { id: 'admin', role: 'ADMIN' }, body: { student_id: 'student-1', status: 'ABSENT' } },
+      { status(code: number) { status = code; return this; }, json() { return this; } });
+    assert.equal(status, 409);
+    assert.equal(db.attendance.size, 0);
+  } finally { [db.sessions, db.students, db.memberships, db.studentPauses, db.attendance] = previous; }
+});

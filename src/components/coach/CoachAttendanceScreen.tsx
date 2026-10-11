@@ -35,6 +35,8 @@ interface CoachAttendanceScreenProps {
   onBack: () => void;
 }
 
+const dayAfter = (date: string) => { const next = new Date(`${date}T00:00:00Z`); next.setUTCDate(next.getUTCDate() + 1); return next.toISOString().slice(0, 10); };
+
 export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   sessionId,
   onBack,
@@ -52,6 +54,12 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [creatingPortalInviteFor, setCreatingPortalInviteFor] = useState<string | null>(null);
   const [editingOccurrence, setEditingOccurrence] = useState(false);
   const [availableCoaches, setAvailableCoaches] = useState<Coach[]>([]);
+  const [pauseStudent, setPauseStudent] = useState<Student | null>(null);
+  const [pauseStart, setPauseStart] = useState(getTodayDateString());
+  const [pauseEnd, setPauseEnd] = useState('');
+  const [pauseReason, setPauseReason] = useState('EXAMINATION');
+  const [pauseNote, setPauseNote] = useState('');
+  const [pauseBusy, setPauseBusy] = useState(false);
 
   // Replacement student modal
   const [isReplacementModalOpen, setIsReplacementModalOpen] = useState(false);
@@ -131,6 +139,21 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
       }),
     });
+  };
+
+  const declarePause = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!session || !pauseStudent) return;
+    const membershipId = session.enrolled_memberships?.find(m => m.student_id === pauseStudent.id)?.membership_id;
+    if (!membershipId) return;
+    setPauseBusy(true);
+    try {
+      await api.declareStudentPause(membershipId, { idempotency_key: crypto.randomUUID(), start_date: pauseStart, end_date: pauseEnd || null, reason: pauseReason, note: pauseNote });
+      showToast('Student pause saved. Finance has a billing review item.', 'success');
+      setPauseStudent(null); setPauseNote(''); setPauseEnd('');
+      await fetchSession();
+    } catch (error: any) { showToast(error.message || 'Could not save pause', 'error'); }
+    finally { setPauseBusy(false); }
   };
 
   const handleAddReplacement = async (e: React.FormEvent) => {
@@ -310,11 +333,11 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   });
 
   // Stats calculation: Present + Absent + Unmarked = Expected / Total Students
-  const totalStudents = rollList.length;
+  const totalStudents = rollList.filter(item => !session.paused_students?.some(p => p.student_id === item.student.id)).length;
   const presentCount = rollList.filter((item) => item.record?.status === 'PRESENT').length;
   const absentCount = rollList.filter((item) => item.record?.status === 'ABSENT').length;
   const unmarkedCount = rollList.filter(
-    (item) => !item.record || (item.record.status !== 'PRESENT' && item.record.status !== 'ABSENT')
+    (item) => !session.paused_students?.some(p => p.student_id === item.student.id) && (!item.record || (item.record.status !== 'PRESENT' && item.record.status !== 'ABSENT'))
   ).length;
 
   const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
@@ -538,6 +561,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           </div>
         ) : (
           filteredRoll.map(({ student, record, isReplacement, isUnregistered }) => {
+            const pause = session.paused_students?.find(p => p.student_id === student.id);
             const status = record?.status;
             const isSaving = attendanceSaves.isPending(sessionId, student.id);
             const studentFullName = student?.full_name || 'Student';
@@ -593,7 +617,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           </span>
                         )}
                         {isReplacement && record?.replacement_advance_commitment_id && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">Advance</span>}
+                        {pause && <span className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800">ON PAUSE</span>}
                       </div>
+                      {pause && <p className="text-[11px] font-bold text-violet-700">Student on Pause: {pause.start_date}–{pause.end_date || 'Until Further Notice'}{pause.end_date ? ` · Expected return ${dayAfter(pause.end_date)}` : ''}</p>}
+                      {!pause && !isReplacement && !isUnregistered && (isRegularCoach || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && <button type="button" onClick={() => setPauseStudent(student)} className="text-[11px] font-bold text-violet-700 underline">Declare class pause</button>}
 
                       <div className="flex items-center gap-2.5 text-xs text-slate-500 font-bold flex-wrap">
                         {studentId && <span className="font-mono">{studentId}</span>}
@@ -640,7 +667,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* PRESENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -664,7 +691,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* ABSENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -694,7 +721,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       step="0.5"
                       inputMode="decimal"
                       value={starsValue}
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
                       onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
                       placeholder="Stars"
                       aria-label={`Base stars for ${studentFullName}`}
@@ -702,7 +729,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     />
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
                       onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
                       title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
                       aria-pressed={shirtWorn}
@@ -717,6 +744,15 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       </div>
 
       {/* Unregistered Student Modal */}
+      <Modal isOpen={!!pauseStudent} onClose={() => setPauseStudent(null)} title={`Pause ${pauseStudent?.full_name || 'student'} in this class`}>
+        <form onSubmit={declarePause} className="space-y-3 pt-3">
+          <label className="block text-xs font-bold">Start date<input className="mt-1 w-full rounded border p-2" type="date" required value={pauseStart} onChange={e => setPauseStart(e.target.value)} /></label>
+          <label className="block text-xs font-bold">End date (leave empty for Until Further Notice)<input className="mt-1 w-full rounded border p-2" type="date" value={pauseEnd} min={pauseStart} onChange={e => setPauseEnd(e.target.value)} /></label>
+          <label className="block text-xs font-bold">Reason<select className="mt-1 w-full rounded border p-2" value={pauseReason} onChange={e => setPauseReason(e.target.value)}><option value="EXAMINATION">Examination</option><option value="HOLIDAY_TRAVEL">Holiday / Travel</option><option value="MEDICAL_HEALTH">Medical / Health</option><option value="PERSONAL">Personal</option><option value="OTHER">Other</option></select></label>
+          <label className="block text-xs font-bold">Optional note<textarea className="mt-1 w-full rounded border p-2" maxLength={500} value={pauseNote} onChange={e => setPauseNote(e.target.value)} /></label>
+          <button type="submit" disabled={pauseBusy} className="rounded bg-violet-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Confirm pause</button>
+        </form>
+      </Modal>
       <Modal
         isOpen={isUnregModalOpen}
         onClose={() => setIsUnregModalOpen(false)}

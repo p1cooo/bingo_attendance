@@ -20,7 +20,9 @@ import {
   SessionStatus,
   SessionType,
   StudentFee, StudentPayment, StudentAdjustment,
+  StudentPause,
 } from '../src/types.js';
+import { pauseOnDate } from './studentPauses.js';
 
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
 const DB_FILE_PATH = isServerless
@@ -36,6 +38,7 @@ class DatabaseStore {
   classes: Map<string, AcademyClass> = new Map();
   schedules: Map<string, ClassSchedule> = new Map();
   memberships: Map<string, StudentClassMembership> = new Map();
+  studentPauses: Map<string, StudentPause> = new Map();
   sessions: Map<string, ClassSession> = new Map();
   attendance: Map<string, AttendanceRecord> = new Map();
   replacementCredits: Map<string, ReplacementCredit> = new Map();
@@ -61,6 +64,7 @@ class DatabaseStore {
     this.classes.clear();
     this.schedules.clear();
     this.memberships.clear();
+    this.studentPauses.clear();
     this.sessions.clear();
     this.attendance.clear();
     this.replacementCredits.clear();
@@ -226,7 +230,11 @@ class DatabaseStore {
         .map((record) => record.student_id)
         .filter((studentId) => !enrolledStudentIds.has(studentId))
     );
-    const expectedStudentsCount = enrolledMemberships.length + additionalSessionStudentIds.size;
+    const pausedStudents = enrolledMemberships.flatMap((membership) => {
+      const pause = pauseOnDate(this.studentPauses.values(), membership.id, session.session_date);
+      return pause ? [{ student_id: membership.student_id, membership_id: membership.id, start_date: pause.start_date, end_date: pause.end_date }] : [];
+    });
+    const expectedStudentsCount = enrolledMemberships.length - pausedStudents.length + additionalSessionStudentIds.size;
 
     const populatedRecords = records.map((r) => {
       const student = this.getPopulatedStudent(r.student_id);
@@ -266,6 +274,8 @@ class DatabaseStore {
       actual_coach: teachingCoach,
       expected_students_count: expectedStudentsCount,
       enrolled_students: enrolledStudents,
+      enrolled_memberships: enrolledMemberships.map(m => ({ student_id: m.student_id, membership_id: m.id })),
+      paused_students: pausedStudents,
       marked_attendance_count: records.filter((record) => record.status !== 'BOOKED').length,
       present_count: presentCount,
       attendance_records: populatedRecords,
@@ -378,6 +388,7 @@ class DatabaseStore {
         classes: Array.from(this.classes.entries()),
         schedules: Array.from(this.schedules.entries()),
         memberships: Array.from(this.memberships.entries()),
+        studentPauses: Array.from(this.studentPauses.entries()),
         sessions: Array.from(this.sessions.entries()),
         attendance: Array.from(this.attendance.entries()),
         replacementCredits: Array.from(this.replacementCredits.entries()),
@@ -422,6 +433,7 @@ class DatabaseStore {
       if (state.classes) this.classes = new Map(state.classes);
       if (state.schedules) this.schedules = new Map(state.schedules);
       if (state.memberships) this.memberships = new Map(state.memberships);
+      if (state.studentPauses) this.studentPauses = new Map(state.studentPauses);
       if (state.sessions) this.sessions = new Map(state.sessions);
       if (state.attendance) this.attendance = new Map(state.attendance);
       if (state.replacementCredits) this.replacementCredits = new Map(state.replacementCredits);

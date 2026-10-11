@@ -23,6 +23,10 @@ class ApiClient {
   saveStudentFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/fees`, { method: 'POST', body: JSON.stringify(data) }); }
   recordStudentPayment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }); }
   addStudentAdjustment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/adjustments`, { method: 'POST', body: JSON.stringify(data) }); }
+  getStudentPauses(studentId?: string): Promise<any> { return this.request(`/student-pauses${studentId ? `?student_id=${encodeURIComponent(studentId)}` : ''}`); }
+  declareStudentPause(membershipId: string, data: unknown): Promise<any> { return this.request(`/memberships/${membershipId}/pauses`, { method: 'POST', body: JSON.stringify(data) }); }
+  resumeStudentPause(id: string, resumeDate: string): Promise<any> { return this.request(`/student-pauses/${id}/resume`, { method: 'POST', body: JSON.stringify({ resume_date: resumeDate }) }); }
+  reviewStudentPauseBilling(id: string, month: string, amount_cents: number): Promise<any> { return this.request(`/student-pauses/${id}/billing-review`, { method: 'POST', body: JSON.stringify({ month, amount_cents }) }); }
 
   constructor() {
     if (typeof window !== 'undefined') {

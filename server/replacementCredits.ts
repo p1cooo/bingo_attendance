@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { AttendanceRecord, ClassType, ReplacementAdvanceCommitment, ReplacementCredit, ReplacementCreditReason } from '../src/types.js';
 import { markFirestoreStateChanged, publishFirestoreRevision } from './firestoreSync.js';
 import { attendanceTiming } from './attendanceTiming.js';
+import type { Firestore } from 'firebase-admin/firestore';
 
 export function replacementCreditBalance(studentId: string): number {
   return [...db.replacementCredits.values()].filter(x => x.student_id === studentId).reduce((sum, x) => sum + x.amount, 0);
@@ -54,6 +55,8 @@ function ledgerReason(nextImpact: number): ReplacementCreditReason {
 export interface AttendanceReconciliationInput {
   attendance: AttendanceRecord;
   classType: ClassType;
+  pauseMembershipIds?: string[];
+  sessionDate?: string;
   /** Required only when this replacement attendance is an approved advance use. */
   advanceCommitment?: ReplacementAdvanceCommitment;
 }
@@ -65,6 +68,7 @@ export interface AttendanceReconciliationResult {
 }
 
 export class ReplacementCreditError extends Error {}
+export class PauseAttendanceError extends Error {}
 
 /**
  * Atomically persists an attendance mutation and its ledger delta.  The
@@ -73,8 +77,9 @@ export class ReplacementCreditError extends Error {}
  */
 export async function persistAttendanceWithReplacementReconciliation(
   input: AttendanceReconciliationInput,
+  firestore: Firestore = getFirestoreDb(),
+  publishRevision: () => Promise<void> = publishFirestoreRevision,
 ): Promise<AttendanceReconciliationResult> {
-  const firestore = getFirestoreDb();
   const attendanceRef = firestore.collection('attendance').doc(input.attendance.id);
   const transactionStartedAt = performance.now();
   const result = await firestore.runTransaction(async (transaction) => {
@@ -93,10 +98,15 @@ export async function persistAttendanceWithReplacementReconciliation(
       ? firestore.collection('replacementCredits').doc(`${attendance.id}:replacement-credit:${revision}`)
       : undefined;
     // All reads happen before any transaction writes, as required by Firestore.
-    const [creditSnapshot, futureCommitmentsSnapshot] = await Promise.all([
+    const [creditSnapshot, futureCommitmentsSnapshot, pauseLocks] = await Promise.all([
       creditRef ? transaction.get(creditRef) : Promise.resolve(undefined),
       transaction.get(commitmentsQuery),
+      Promise.all((input.pauseMembershipIds || []).map(id => transaction.get(firestore.collection('_student_pause_locks').doc(id)))),
     ]);
+    if (input.sessionDate && pauseLocks.some(lock => ((lock.data()?.intervals || []) as Array<{ start_date: string; end_date: string | null }>).some(
+      pause => pause.start_date <= input.sessionDate! && (!pause.end_date || input.sessionDate! <= pause.end_date)))) {
+      throw new PauseAttendanceError('Attendance is not required while this student is on pause for this class.');
+    }
 
     if (changed) {
       const idempotencyKey = creditRef!.id;
@@ -154,7 +164,7 @@ export async function persistAttendanceWithReplacementReconciliation(
   // Canonical attendance and credit documents are committed above. Invalidate
   // cached snapshots and await the small revision write before reporting success.
   const publishStartedAt = performance.now();
-  await publishFirestoreRevision();
+  await publishRevision();
   attendanceTiming('transaction_publish', publishStartedAt);
   return result;
 }
