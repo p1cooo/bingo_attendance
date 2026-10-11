@@ -43,7 +43,7 @@ export const OccurrenceEditor: React.FC<OccurrenceEditorProps> = ({ session: edi
         session_type: editForm.session_type,
         replacement_coach_id: editForm.session_type === 'REPLACEMENT_COACH' ? editForm.replacement_coach_id : null,
         status: editForm.session_type === 'COACH_CANCELLED' ? 'COACH_CANCELLED' : editForm.session_type === 'PLANNED_OFF_DAY' ? 'PLANNED_OFF_DAY' : editForm.status,
-        cancellation_reason: editForm.cancellation_reason,
+        cancellation_reason: ['COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(editForm.session_type) ? editForm.cancellation_reason : '',
         notes: editForm.notes,
         session_date: editForm.session_date,
         start_time: editForm.start_time,
@@ -220,7 +220,7 @@ export const OccurrenceEditor: React.FC<OccurrenceEditorProps> = ({ session: edi
                         ...editForm,
                         session_type: 'COACH_CANCELLED',
                         status: 'COACH_CANCELLED',
-                        cancellation_reason: editForm.cancellation_reason || 'Coach sick / unavailable',
+                        cancellation_reason: editForm.session_type === 'COACH_CANCELLED' ? editForm.cancellation_reason : 'Coach sick / unavailable',
                       })
                     }
                     className="mt-0.5 text-rose-600"
@@ -252,8 +252,7 @@ export const OccurrenceEditor: React.FC<OccurrenceEditorProps> = ({ session: edi
                         ...editForm,
                         session_type: 'PLANNED_OFF_DAY',
                         status: 'PLANNED_OFF_DAY',
-                        cancellation_reason:
-                          editForm.cancellation_reason || 'Academy 5th week off-day / holiday',
+                        cancellation_reason: editForm.session_type === 'PLANNED_OFF_DAY' ? editForm.cancellation_reason : 'Academy 5th week off-day / holiday',
                       })
                     }
                     className="mt-0.5"

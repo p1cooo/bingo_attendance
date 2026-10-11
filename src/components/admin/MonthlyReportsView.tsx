@@ -739,15 +739,15 @@ export const MonthlyReportsView: React.FC = () => {
                   className="p-3 rounded-2xl border border-slate-200 dark:border-neutral-800 bg-slate-50 dark:bg-neutral-800/60 space-y-1 text-xs"
                 >
                   <div className="flex items-center justify-between gap-2 text-[10px] text-slate-500 font-bold">
-                    <span>{new Date(log.created_at).toLocaleString()}</span>
+                    <span>{new Date(log.timestamp).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' })}</span>
                     <span className="font-mono bg-slate-200 dark:bg-neutral-700 px-1.5 py-0.5 rounded">
-                      User: {log.user?.username || log.user?.email || 'Admin'}
+                      User: {log.changed_by_user_name}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
                     <span>Status changed from</span>
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-100 text-rose-800">
-                      {log.old_status}
+                      {log.previous_status}
                     </span>
                     <span>→</span>
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-100 text-emerald-800">

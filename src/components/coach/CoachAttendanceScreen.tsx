@@ -336,12 +336,13 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const totalStudents = rollList.filter(item => !session.paused_students?.some(p => p.student_id === item.student.id)).length;
   const presentCount = rollList.filter((item) => item.record?.status === 'PRESENT').length;
   const absentCount = rollList.filter((item) => item.record?.status === 'ABSENT').length;
-  const unmarkedCount = rollList.filter(
+  const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
+  const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
+  const beforeGoLive = session.attendance_expected === false;
+  const unmarkedCount = beforeGoLive || isCancelled || isOffDay ? 0 : rollList.filter(
     (item) => !session.paused_students?.some(p => p.student_id === item.student.id) && (!item.record || (item.record.status !== 'PRESENT' && item.record.status !== 'ABSENT'))
   ).length;
 
-  const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
-  const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
   const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
   const hasTakenAttendance = (session.attendance_records || []).some((record) => record.status !== 'BOOKED');
   const isRegularCoach = !!coachProfile && (session.default_coach_id || session.scheduled_coach_id) === coachProfile.id;
@@ -424,6 +425,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   Future Session
                 </span>
               )}
+              {beforeGoLive && <span className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-0.5 text-[10px] font-black text-sky-800">Before attendance go-live</span>}
             </div>
 
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500 dark:text-slate-400">
@@ -533,7 +535,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         <button
           id="record-unregistered-student-btn"
           onClick={() => setIsUnregModalOpen(true)}
-          disabled={isCancelled || isOffDay || isFutureSession}
+          disabled={isCancelled || isOffDay || isFutureSession || beforeGoLive}
           className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl text-xs font-black bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border-2 border-slate-900 dark:border-amber-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
         >
           <UserCheck className="w-4 h-4 text-amber-700" />
@@ -667,7 +669,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* PRESENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -691,7 +693,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* ABSENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -721,7 +723,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       step="0.5"
                       inputMode="decimal"
                       value={starsValue}
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
                       onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
                       placeholder="Stars"
                       aria-label={`Base stars for ${studentFullName}`}
@@ -729,7 +731,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     />
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
                       onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
                       title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
                       aria-pressed={shirtWorn}

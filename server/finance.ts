@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { academyMonth } from './academyDate.js';
 import { pauseMonthCoverage } from './studentPauses.js';
+import { attendanceExpectedOn } from './attendanceGoLive.js';
 
 export const validMonth = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 export const validDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
@@ -36,7 +37,7 @@ export function financeDetail(studentId: string, through = academyMonth()) {
   const attendance = [...db.attendance.values()].filter(a => a.student_id === studentId);
   // A recorded absence still represents a class that took place. Excused and merely booked dates do not bill.
   const billableSessionIds = new Set(attendance.filter(a => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'ABSENT').map(a => a.session_id));
-  const months: Array<{month: string; lines: Array<{membership_id: string; class_name: string; coach_name: string; mode: string; unit_cents: number; dates: string[]; amount_cents: number; pending_finance_review?: boolean}>; charges_cents: number; paid_cents: number; adjustments_cents: number; outstanding_cents: number; status: string}> = [];
+  const months: Array<{month: string; lines: Array<{membership_id: string; class_name: string; coach_name: string; mode: string; unit_cents: number; dates: string[]; amount_cents: number; pending_finance_review?: boolean; pre_go_live_dates?: string[]}>; charges_cents: number; paid_cents: number; adjustments_cents: number; outstanding_cents: number; status: string}> = [];
   for (let month = startMonth, count = 0; month <= final && count < 240; month = nextMonth(month), count++) {
     const lines = [] as typeof months[number]['lines'];
     for (const membership of memberships) {
@@ -47,13 +48,17 @@ export function financeDetail(studentId: string, through = academyMonth()) {
       if (!applicable) continue;
       const related = sessions.filter(s => s.session_date.startsWith(month) && (!goLiveDate || s.session_date >= goLiveDate) && (s.schedule_id === membership.schedule_id || s.class_id === (schedule?.class_id || membership.schedule_id)) && !nonBillable.has(s.status) && !nonBillable.has(s.session_type || '') && s.session_date >= membership.joined_date && (!membership.ended_date || s.session_date <= membership.ended_date));
       const dates = related.map(s => s.session_date).sort();
-      const billable = related.filter(s => billableSessionIds.has(s.id));
+      const billable = related.filter(s => attendanceExpectedOn(s.session_date) && billableSessionIds.has(s.id));
       const quantity = applicable.billing_mode === 'MONTHLY' ? 1 : billable.length;
       const coverage = pauseMonthCoverage(db.studentPauses.values(), membership.id, month);
       const review = [...db.studentPauses.values()].filter(p => p.membership_id === membership.id && p.billing_reviews?.[month]).at(-1)?.billing_reviews?.[month];
-      const pending_finance_review = coverage === 'PARTIAL' && !review;
-      const amount_cents = coverage === 'FULL' ? 0 : review ? review.amount_cents : pending_finance_review ? 0 : applicable.amount_cents * quantity;
-      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review) lines.push({ membership_id: membership.id, class_name: applicable.class_name || cls?.name || 'Class', coach_name: applicable.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, dates: applicable.billing_mode === 'MONTHLY' ? dates : billable.map(s => s.session_date).sort(), amount_cents, pending_finance_review });
+      // Earlier October lessons may have happened without electronic roll-call.
+      // Their charge cannot be inferred from missing attendance; leave the balance provisional.
+      const preGoLiveDates = applicable.billing_mode === 'PER_SESSION' && coverage !== 'FULL'
+        ? related.filter(s => !attendanceExpectedOn(s.session_date)).map(s => s.session_date).sort() : [];
+      const pending_finance_review = !review && (coverage === 'PARTIAL' || preGoLiveDates.length > 0);
+      const amount_cents = coverage === 'FULL' ? 0 : review ? review.amount_cents : coverage === 'PARTIAL' ? 0 : applicable.amount_cents * quantity;
+      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review) lines.push({ membership_id: membership.id, class_name: applicable.class_name || cls?.name || 'Class', coach_name: applicable.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, dates: applicable.billing_mode === 'MONTHLY' ? dates : billable.map(s => s.session_date).sort(), amount_cents, pending_finance_review, pre_go_live_dates: preGoLiveDates });
     }
     const charges_cents = lines.reduce((sum, line) => sum + line.amount_cents, 0);
     const paid_cents = payments.reduce((sum, payment) => sum + payment.allocations.filter(a => a.month === month).reduce((n, a) => n + a.amount_cents, 0), 0);

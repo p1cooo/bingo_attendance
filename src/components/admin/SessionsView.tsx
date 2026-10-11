@@ -555,7 +555,10 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                   </div>
 
                   {/* Attendance Stats Pill */}
-                  {!isCancelled && !isOffDay && (
+                  {!isCancelled && !isOffDay && sess.attendance_expected === false && (
+                    <p className="text-xs font-semibold text-slate-500">Before attendance go-live · no roll call due</p>
+                  )}
+                  {!isCancelled && !isOffDay && sess.attendance_expected !== false && (
                     <div className="flex items-center gap-2 pt-1">
                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-black bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                         <Users className="w-3.5 h-3.5 text-emerald-600" />
@@ -740,7 +743,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                       {/* Attendance */}
                       <td className="py-3.5 px-4 text-center">
                         <span className="font-mono font-bold text-xs">
-                          {presentCount} / {expectedCount}
+                          {isCancelled || isOffDay ? 'Exempt' : sess.attendance_expected === false ? 'Before go-live' : `${presentCount} / ${expectedCount}`}
                         </span>
                       </td>
 

@@ -114,9 +114,11 @@ export const CoachWorkspace: React.FC = () => {
   const coachColorName = coachProfile?.color_name || 'Pastel Blue';
 
   // Compute daily totals
-  const totalStudents = sessions.reduce((acc, s) => acc + (s.expected_students_count || 0), 0);
-  const totalMarked = sessions.reduce((acc, s) => acc + (s.marked_attendance_count || 0), 0);
-  const totalPresent = sessions.reduce((acc, s) => acc + (s.present_count || 0), 0);
+  const exemptModes = ['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'];
+  const rollCallDue = (s: ClassSession) => s.attendance_expected !== false && !exemptModes.includes(s.status) && !exemptModes.includes(s.session_type || '');
+  const totalStudents = sessions.reduce((acc, s) => acc + (rollCallDue(s) ? s.expected_students_count || 0 : 0), 0);
+  const totalMarked = sessions.reduce((acc, s) => acc + (rollCallDue(s) ? s.marked_attendance_count || 0 : 0), 0);
+  const totalPresent = sessions.reduce((acc, s) => acc + (rollCallDue(s) ? s.present_count || 0 : 0), 0);
 
   const isSelectedToday = selectedDate === getTodayDateString();
 
@@ -294,6 +296,11 @@ export const CoachWorkspace: React.FC = () => {
                 statusBadge = {
                   text: 'Planned Off-Day',
                   bgClass: 'bg-slate-200 dark:bg-neutral-800 text-slate-800 dark:text-slate-300 border-slate-300',
+                };
+              } else if (sess.attendance_expected === false) {
+                statusBadge = {
+                  text: 'Before attendance go-live',
+                  bgClass: 'bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 border-sky-300',
                 };
               } else if (markedCount > 0 && markedCount < expectedCount) {
                 statusBadge = {

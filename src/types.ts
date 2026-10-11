@@ -217,6 +217,8 @@ export interface ClassSession {
   scheduled_coach?: Coach;
   actual_coach?: Coach;
   expected_students_count?: number;
+  /** False for a scheduled occurrence before electronic attendance go-live. */
+  attendance_expected?: boolean;
   marked_attendance_count?: number;
   present_count?: number;
   attendance_records?: AttendanceRecord[];

@@ -1,5 +1,5 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth } from 'firebase/auth';
+import { getAuth, connectAuthEmulator, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import appletConfig from '../../firebase-applet-config.json';
 
@@ -31,6 +31,9 @@ if (getApps().length === 0) {
 }
 
 export const clientAuth: Auth = getAuth(app);
+if (import.meta.env.DEV && import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL) {
+  connectAuthEmulator(clientAuth, import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL, { disableWarnings: true });
+}
 const databaseId = configData.firestoreDatabaseId && configData.firestoreDatabaseId !== '(default)'
   ? configData.firestoreDatabaseId
   : undefined;

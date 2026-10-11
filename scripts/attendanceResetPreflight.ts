@@ -2,18 +2,23 @@
 import { databaseId, getFirestoreDb, projectId } from '../server/firebaseAdmin.js';
 import { planAttendanceMarkReset, type ResetDocument } from '../server/attendanceResetPlan.js';
 import { planFinanceTestReset } from '../server/rolloutResetPlan.js';
+import { validDate } from '../server/finance.js';
 
 const requestedProject = process.argv.find((arg) => arg.startsWith('--project='))?.slice(10);
 const requestedDatabase = process.argv.find((arg) => arg.startsWith('--database='))?.slice(11);
 const environment = process.argv.find((arg) => arg.startsWith('--environment='))?.slice(14);
-const goLiveDate = process.argv.find((arg) => arg.startsWith('--go-live-date='))?.slice(15);
+const billingBaselineDate = process.argv.find((arg) => arg.startsWith('--billing-baseline-date='))?.slice(24);
+const attendanceGoLiveDate = process.argv.find((arg) => arg.startsWith('--attendance-go-live-date='))?.slice(26);
+const testTransactionCutoffDate = process.argv.find((arg) => arg.startsWith('--test-transaction-cutoff-date='))?.slice(31);
 if (!requestedProject || !requestedDatabase || requestedProject !== projectId || requestedDatabase !== databaseId || !['production', 'emulator'].includes(environment || '')) {
   throw new Error('Specify --project and --database matching FIREBASE_PROJECT_ID and FIREBASE_DATABASE_ID exactly. No data was read or changed.');
 }
-if (!goLiveDate) throw new Error('Specify --go-live-date=YYYY-MM-DD. No data was read or changed.');
-planFinanceTestReset({ payments: [], adjustments: [], fees: [], goLiveDate });
+if (!billingBaselineDate) throw new Error('Specify --billing-baseline-date=YYYY-MM-01. No data was read or changed.');
+planFinanceTestReset({ payments: [], adjustments: [], fees: [], billingBaselineDate, testTransactionCutoffDate });
+if (attendanceGoLiveDate && !validDate(attendanceGoLiveDate)) throw new Error('Attendance go-live date is invalid. No data was read or changed.');
 if (environment === 'emulator' !== Boolean(process.env.FIRESTORE_EMULATOR_HOST)) throw new Error('Environment does not match FIRESTORE_EMULATOR_HOST. No data was read or changed.');
-if (process.env.ACADEMY_GO_LIVE_DATE && process.env.ACADEMY_GO_LIVE_DATE !== goLiveDate) throw new Error('Go-live date differs from ACADEMY_GO_LIVE_DATE. No data was read or changed.');
+if (process.env.ACADEMY_GO_LIVE_DATE && process.env.ACADEMY_GO_LIVE_DATE !== billingBaselineDate) throw new Error('Billing baseline differs from ACADEMY_GO_LIVE_DATE. No data was read or changed.');
+if (process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE && process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE !== attendanceGoLiveDate) throw new Error('Attendance start differs from ACADEMY_ATTENDANCE_GO_LIVE_DATE. No data was read or changed.');
 
 const firestore = getFirestoreDb();
 const names = ['attendance', 'sessions', 'students', 'classes', 'memberships', 'studentPauses', '_student_pause_locks', 'replacementCredits',
@@ -30,20 +35,27 @@ const plan = planAttendanceMarkReset({ attendance, sessions: docs.sessions, clas
   replacementAdvanceCommitments: docs.replacementAdvanceCommitments,
   studentFees: docs.studentFees, studentPayments: docs.studentPayments,
   studentAdjustments: docs.studentAdjustments });
-const financePlan = planFinanceTestReset({ payments: docs.studentPayments, adjustments: docs.studentAdjustments, fees: docs.studentFees, goLiveDate });
+const financePlan = planFinanceTestReset({ payments: docs.studentPayments, adjustments: docs.studentAdjustments, fees: docs.studentFees, billingBaselineDate, testTransactionCutoffDate });
 const sessionIds = new Set(marked.map((row) => row.session_id));
 const classIds = new Set(docs.sessions.filter((row) => sessionIds.has(row.id)).map((row) => row.class_id));
 const completed = docs.sessions.filter((row) => row.status === 'COMPLETED' && sessionIds.has(row.id));
+const counts = (items: string[]) => Object.fromEntries([...new Set(items)].sort().map(key => [key, items.filter(item => item === key).length]));
+const attendanceMonths = marked.map(row => docs.sessions.find(session => session.id === row.session_id)?.session_date)
+  .filter((date): date is string => typeof date === 'string').map(date => date.slice(0, 7));
 
 console.log(JSON.stringify({
   generated_at: new Date().toISOString(), project_id: projectId, database_id: databaseId,
-  environment, go_live_date: goLiveDate,
+  environment, billing_baseline_date: billingBaselineDate, attendance_go_live_date: attendanceGoLiveDate || null,
   read_only: true, collection_counts: Object.fromEntries(names.map((name) => [name, docs[name].length])),
   attendance_documents: attendance.length, marked_attendance_documents: marked.length,
+  attendance_status_counts: counts(attendance.map(row => String(row.status))),
+  marked_month_counts: counts(attendanceMonths),
+  attendance_field_counts: counts(attendance.flatMap(row => Object.keys(row))),
   booked_records_preserved: plan.bookedIds.length,
   isolated_mark_candidates: plan.candidateIds.length,
   ambiguous_markings_requiring_review: plan.blockers.length,
   blocker_details: plan.blockers,
+  blocker_reason_counts: counts(plan.blockers.flatMap(row => row.reasons)),
   affected_students: new Set(marked.map((row) => row.student_id)).size,
   affected_classes: classIds.size, affected_occurrences: sessionIds.size,
   completed_sessions_requiring_review: completed.length,

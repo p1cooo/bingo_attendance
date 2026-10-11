@@ -23,9 +23,12 @@ import {
   StudentPause,
 } from '../src/types.js';
 import { pauseOnDate } from './studentPauses.js';
+import { attendanceExpectedOn } from './attendanceGoLive.js';
 
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
-const DB_FILE_PATH = isServerless
+const DB_FILE_PATH = process.env.NODE_ENV !== 'production' && process.env.ACADEMY_LOCAL_DB_PATH
+  ? path.resolve(process.env.ACADEMY_LOCAL_DB_PATH)
+  : isServerless
   ? path.join('/tmp', 'database_state.json')
   : path.join(process.cwd(), 'database_state.json');
 
@@ -273,6 +276,7 @@ class DatabaseStore {
       scheduled_coach: defaultCoach,
       actual_coach: teachingCoach,
       expected_students_count: expectedStudentsCount,
+      attendance_expected: attendanceExpectedOn(session.session_date),
       enrolled_students: enrolledStudents,
       enrolled_memberships: enrolledMemberships.map(m => ({ student_id: m.student_id, membership_id: m.id })),
       paused_students: pausedStudents,

@@ -47,6 +47,7 @@ import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } f
 import type { StudentFee, StudentPayment, StudentAdjustment } from '../src/types.js';
 import type { StudentPause, PauseReason } from '../src/types.js';
 import { commitPauseDeclaration, commitPauseBillingReview } from './pausePersistence.js';
+import { attendanceExpectedOn } from './attendanceGoLive.js';
 
 export const router = Router();
 
@@ -2483,6 +2484,10 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     return res.status(409).json({ error: 'Attendance is not required for a cancelled session or planned off-day.' });
   }
 
+  if (!attendanceExpectedOn(session.session_date)) {
+    return res.status(409).json({ error: 'Electronic attendance is not required before the configured attendance go-live date.' });
+  }
+
   // Security check: Coach can only take attendance for assigned sessions!
   if (!verifySessionAttendanceAccess(id, user)) {
     return res.status(403).json({
@@ -2784,6 +2789,12 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
   const session = db.sessions.get(id);
   if (!session) {
     return res.status(404).json({ error: 'Session not found' });
+  }
+  if (!attendanceExpectedOn(session.session_date)) {
+    return res.status(409).json({ error: 'Electronic attendance is not required before the configured attendance go-live date.' });
+  }
+  if (['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'].includes(session.status)) {
+    return res.status(409).json({ error: 'Attendance is not required for a cancelled session or planned off-day.' });
   }
 
   if (!verifySessionAttendanceAccess(id, user)) {

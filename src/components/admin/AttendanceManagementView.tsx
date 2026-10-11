@@ -393,6 +393,11 @@ export const AttendanceManagementView: React.FC<AttendanceManagementViewProps> =
                     text: 'Planned Off-Day',
                     bgClass: 'bg-slate-200 text-slate-800 border-slate-300 dark:bg-neutral-800 dark:text-slate-300',
                   };
+                } else if (sess.attendance_expected === false) {
+                  statusBadge = {
+                    text: 'Before attendance go-live',
+                    bgClass: 'bg-sky-50 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300',
+                  };
                 } else if (markedCount > 0 && markedCount < expectedCount) {
                   statusBadge = {
                     text: `In Progress (${markedCount}/${expectedCount})`,

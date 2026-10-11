@@ -311,6 +311,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             No Attendance
                           </span>
                         </>
+                      ) : sess.attendance_expected === false ? (
+                        <span className="text-xs font-semibold text-sky-700 block">Before attendance go-live</span>
                       ) : (
                         <>
                           <span className="text-xs font-semibold text-neutral-900 dark:text-white block">

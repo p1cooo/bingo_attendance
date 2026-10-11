@@ -5,9 +5,9 @@ const paymentFields = new Set(['id', 'student_id', 'amount_cents', 'payment_date
 const adjustmentFields = new Set(['id', 'student_id', 'month', 'amount_cents', 'type', 'reason', 'created_by_user_id', 'created_by_name', 'created_at']);
 
 /** Dry-run classification only. Fee versions are configuration, not disposable charges. */
-export function planFinanceTestReset(input: { payments: ResetDocument[]; adjustments: ResetDocument[]; fees: ResetDocument[]; goLiveDate: string }) {
-  if (!validDate(input.goLiveDate)) throw new Error('An explicit valid go-live date is required.');
-  if (!input.goLiveDate.endsWith('-01')) throw new Error('Finance go-live boundary must start a billing month until a partial-month baseline policy is approved.');
+export function planFinanceTestReset(input: { payments: ResetDocument[]; adjustments: ResetDocument[]; fees: ResetDocument[]; billingBaselineDate: string; testTransactionCutoffDate?: string }) {
+  if (!validDate(input.billingBaselineDate) || !input.billingBaselineDate.endsWith('-01')) throw new Error('Finance billing baseline must be the first day of a month.');
+  if (input.testTransactionCutoffDate && !validDate(input.testTransactionCutoffDate)) throw new Error('Test transaction cutoff must be a valid date.');
   const eligible: Record<'studentPayments' | 'studentAdjustments', string[]> = { studentPayments: [], studentAdjustments: [] };
   const blockers: Array<{ collection: string; id: string; reasons: string[] }> = [];
   const students = new Set<string>();
@@ -28,13 +28,14 @@ export function planFinanceTestReset(input: { payments: ResetDocument[]; adjustm
       if (collection === 'studentPayments') {
         if (typeof row.method !== 'string' || !row.method.trim() || !['MANUAL', 'ONLINE_PARENT_PORTAL', 'OTHER'].includes(String(row.source)) ||
           !validAllocations(row.allocations, Number(row.amount_cents))) reasons.push('invalid payment structure');
-        if (!validDate(row.payment_date) || String(row.payment_date) >= input.goLiveDate) reasons.push('not a verified pre-go-live payment');
+        if (!input.testTransactionCutoffDate || !validDate(row.payment_date) || String(row.payment_date) >= input.testTransactionCutoffDate) reasons.push('payment has no approved test-data cutoff or is after it');
         if (!Array.isArray(row.allocations) || row.allocations.some((allocation: any) =>
-          !validMonth(allocation.month) || allocation.month >= input.goLiveDate.slice(0, 7))) reasons.push('allocation period requires review');
+          !validMonth(allocation.month) || input.testTransactionCutoffDate && allocation.month > input.testTransactionCutoffDate.slice(0, 7))) reasons.push('allocation period requires review');
       } else {
         if (!Number.isSafeInteger(row.amount_cents) || row.amount_cents === 0 || !['DISCOUNT', 'CREDIT', 'WAIVER', 'CORRECTION'].includes(String(row.type)) ||
           typeof row.reason !== 'string' || !row.reason.trim()) reasons.push('invalid adjustment structure');
-        if (!validMonth(row.month) || row.month >= input.goLiveDate.slice(0, 7)) reasons.push('not a verified pre-go-live adjustment');
+        if (!input.testTransactionCutoffDate || !validDate(String(row.created_at).slice(0, 10)) || String(row.created_at).slice(0, 10) >= input.testTransactionCutoffDate ||
+          !validMonth(row.month) || row.month > input.testTransactionCutoffDate.slice(0, 7)) reasons.push('adjustment has no approved test-data cutoff or is after it');
       }
       if (reasons.length) blockers.push({ collection, id: row.id, reasons });
       else {
@@ -48,5 +49,6 @@ export function planFinanceTestReset(input: { payments: ResetDocument[]; adjustm
   return { provisional_candidate_ids: eligible, blockers, affected_student_count: students.size,
     payment_amount_cents: paymentAmountCents, adjustment_amount_cents: adjustmentAmountCents,
     fee_versions_preserved: input.fees.length,
-    note: 'Candidates are inventory only. No Finance transaction is approved for deletion without source classification, a signed document manifest, and restore verification.' };
+    billing_baseline_date: input.billingBaselineDate, test_transaction_cutoff_date: input.testTransactionCutoffDate || null,
+    note: 'Candidates are inventory only. A date cannot prove that a transaction was a test. No Finance transaction is approved for deletion without source classification, a signed document manifest, and restore verification.' };
 }

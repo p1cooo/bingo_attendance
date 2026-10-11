@@ -118,15 +118,19 @@ test('Finance zeroes only a fully paused class and flags partial months until a 
 });
 
 test('Finance dry-run inventory preserves fee versions and blocks unknown or post-live transactions', () => {
-  assert.throws(() => planFinanceTestReset({ goLiveDate: '2026-11-15', fees: [], payments: [], adjustments: [] }), /start a billing month/);
+  assert.throws(() => planFinanceTestReset({ billingBaselineDate: '2026-11-15', fees: [], payments: [], adjustments: [] }), /first day of a month/);
   const input = {
-    goLiveDate: '2026-11-01', fees: [{ id: 'standard-fee' }],
+    billingBaselineDate: '2026-10-01', testTransactionCutoffDate: '2026-11-01', fees: [{ id: 'standard-fee' }],
     payments: [{ id: 'old-payment', student_id: 's', amount_cents: 1000, payment_date: '2026-10-01', method: 'Cash', source: 'MANUAL', allocations: [{ month: '2026-10', amount_cents: 1000 }], recorded_by_user_id: 'admin', created_at: '2026-10-01' },
       { id: 'new-payment', student_id: 's', amount_cents: 1000, payment_date: '2026-11-01', allocations: [{ month: '2026-11', amount_cents: 1000 }] }],
     adjustments: [{ id: 'old-adjustment', student_id: 's', month: '2026-10', amount_cents: 500, type: 'WAIVER', reason: 'test', created_by_user_id: 'admin', created_at: '2026-10-01' },
       { id: 'unknown', student_id: 's', month: '2026-10', amount_cents: 500, protected_link: 'x' }],
   };
   const unchanged = JSON.stringify(input);
+  const withoutApprovedCutoff = planFinanceTestReset({ ...input, testTransactionCutoffDate: undefined });
+  assert.deepEqual(withoutApprovedCutoff.provisional_candidate_ids.studentPayments, []);
+  assert.deepEqual(withoutApprovedCutoff.provisional_candidate_ids.studentAdjustments, []);
+  assert.equal(withoutApprovedCutoff.blockers.length, 4);
   const result = planFinanceTestReset(input);
   assert.equal(JSON.stringify(input), unchanged);
   assert.deepEqual(result.provisional_candidate_ids.studentPayments, ['old-payment']);
