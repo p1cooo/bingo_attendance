@@ -1,0 +1,33 @@
+# Attendance markings reset: preparation only
+
+## Storage and dependencies
+
+The application uses the Firestore project in `FIREBASE_PROJECT_ID` and the named database in `FIREBASE_DATABASE_ID` (defaulting to `(default)` in `server/firebaseAdmin.ts`). `attendance` documents contain a `status` (`BOOKED`, `PRESENT`, `ABSENT`, `EXCUSED`, or `LATE`), mark attribution and time, stars, portal award state, and replacement credit links. `sessions` contain occurrence dates, times, mode, coach assignment and status. Attendance counts shown on sessions are computed from `attendance` in `server/db.ts`; report routes compute their summaries from the same records. Firestore `_academy_state` stores a cached copy of collections, including attendance, and `_system/academy` stores the cache revision. `database_state.json` is an application-local cache, not a Firestore backup.
+
+`replacementCredits` and `replacementAdvanceCommitments` can be driven by attendance transitions. A synced attendance award may already have changed Bingo Space state. `auditLogs`, `activityLogs`, and `notificationLogs` are historical evidence and must remain untouched. `studentFees`, `studentPayments`, and `studentAdjustments` are protected Finance records. `BOOKED` attendance documents may represent operational replacement bookings and must remain untouched.
+
+The Bingo Space bridge uses `attendance:<attendance id>` as an award event ID. Bingo Space stores that event in its own `stars_transactions` ledger; clearing the Attendance document does not undo its award. Group absences can create replacement credits, and replacement attendance can debit them. Coach utilization, student attendance reports, and portal progress derive values from attendance rows, so an approved reset changes those derived views. **Finance per-session charges derive from `PRESENT`, `LATE`, and `ABSENT` attendance rows in `server/finance.ts`.** Clearing marks could alter charges and balances even if fee, payment, and adjustment documents remain intact. The classifier blocks students with Finance history until a reconciliation and historical snapshot policy is approved.
+
+## Exact preservation policy
+
+`server/attendanceResetPlan.ts` classifies rows without mutating input. `BOOKED` rows are always preserved. Only a `REGULAR` mark with a recognized attendance status, known student and scheduled occurrence, known class, recognized attendance-only fields, no portal award, no replacement credit or advance commitment link, no Finance-linked student, and no trial link can be a *candidate*. Group absences are blocked even without an explicit credit link because legacy credit history may be incomplete. Completed/cancelled/off-day occurrences and any unknown field block a row. The classifier reports each blocked document ID and reason.
+
+No field in `sessions`, `classes`, `schedules`, `memberships`, `students`, `coaches`, `users`, `studentFees`, `studentPayments`, `studentAdjustments`, `replacementCredits`, `replacementAdvanceCommitments`, `auditLogs`, `activityLogs`, `notificationLogs`, or Bingo Space is an approved deletion target. `_academy_state/attendance` is a cache and `_system/academy` is its revision marker; both require controlled invalidation after a future reset. A local `database_state.json` also contains cached attendance and would need controlled refresh. Candidate classification does **not** authorize deletion: a production executor must reconcile external awards, credit history, backup, cache invalidation, and concurrent writes first.
+
+Student Pause Management has no separate dated-pause collection in the inspected checkout. `memberships.status === 'PAUSED'` exists, but it does not implement a dated student-specific pause. Integrate that feature separately if its branch is introduced.
+
+## Read-only production inventory
+
+An authorized operator may run `npx tsx scripts/attendanceResetPreflight.ts --project=PROJECT_ID --database=DATABASE_ID` with read-only Firebase credentials and both explicit target identifiers. The script reads collections, prints counts and ambiguity indicators, and has no write path. Record its dated JSON output outside the repository. Compare the target to the live Hostinger configuration before trusting it. The counts are not a deletion plan.
+
+## Release sequence
+
+1. Review and test the feature branch. Obtain separate approval for a Hostinger deployment. Keep the deployment rollback commit and verify the live checkout SHA and functionality.
+2. Before any real attendance starts, schedule a maintenance window and prevent attendance writes at the application and server boundary. Wait for in-flight writes to finish.
+3. Confirm the exact Firestore project and named database. Take a fresh full Firestore export to a restricted bucket; record operation completion, timestamp, path, document counts, and integrity metadata. Verify the export is readable and rehearse restoration into an isolated project and named database. Include any other persistent store needed for recovery. A VPS backup alone is insufficient.
+4. Run the read-only preflight against that same target. Reconcile all synced portal awards, replacement credits, commitments, completed sessions, and bookings. Define an exact field/document allowlist and post-reset counts. Reject ambiguous rows.
+5. Implement and test a narrowly scoped, resumable execution tool only after the preceding dependencies have a verified reconciliation plan. Its default must be dry-run; execution must require an independent authorization artifact, explicit target match and backup reference. Do not use collection-wide deletion.
+6. Present the actual counts, target, backup reference, precise operations and restore evidence. Obtain separate explicit approval for the destructive reset. A code or deployment approval is insufficient.
+7. Execute during the maintenance window, verify attendance is unmarked while schedules, students, Finance, Bingo Space links, audits, cancellations and off days are intact, and reopen attendance writes only after verification. If verification fails, keep writes closed and restore in isolation before deciding on production recovery.
+
+**Current gate:** No production reset executor is supplied because deleting or rewriting marked attendance documents would currently orphan replacement-credit and Bingo Space award effects. Production counts, backup and restore readiness have not been verified. Do not begin coach rollout until this gate is resolved.

@@ -169,6 +169,7 @@ export interface StudentClassMembership {
 
 export interface ClassSession {
   id: string;
+  occurrence_revision?: string;
   schedule_id: string;
   class_id: string;
   session_date: string; // YYYY-MM-DD
@@ -251,6 +252,9 @@ export interface ActivityLog {
   entity_id: string;
   class_id?: string;
   summary?: string;
+  previous_values?: unknown;
+  new_values?: unknown;
+  notes?: string;
   created_at: string;
 }
 

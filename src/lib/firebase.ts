@@ -5,12 +5,12 @@ import appletConfig from '../../firebase-applet-config.json';
 
 const configData: Record<string, string | undefined> = (appletConfig as Record<string, string | undefined>) || {};
 
-const apiKey = import.meta.env.VITE_FIREBASE_API_KEY || configData.apiKey || '';
-const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || configData.authDomain || '';
-const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || configData.projectId || '';
-const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || configData.storageBucket || '';
-const messagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || configData.messagingSenderId || '';
-const appId = import.meta.env.VITE_FIREBASE_APP_ID || configData.appId || '';
+const apiKey = import.meta.env?.VITE_FIREBASE_API_KEY || configData.apiKey || '';
+const authDomain = import.meta.env?.VITE_FIREBASE_AUTH_DOMAIN || configData.authDomain || '';
+const projectId = import.meta.env?.VITE_FIREBASE_PROJECT_ID || configData.projectId || '';
+const storageBucket = import.meta.env?.VITE_FIREBASE_STORAGE_BUCKET || configData.storageBucket || '';
+const messagingSenderId = import.meta.env?.VITE_FIREBASE_MESSAGING_SENDER_ID || configData.messagingSenderId || '';
+const appId = import.meta.env?.VITE_FIREBASE_APP_ID || configData.appId || '';
 
 export const isFirebaseAuthAvailable = Boolean(apiKey && apiKey.length > 5 && projectId);
 

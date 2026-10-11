@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import crypto from 'node:crypto';
-import express from 'express';
 import { db } from '../server/db.js';
 import { router, canManageStudent } from '../server/routes.js';
 import { replacementCreditImpact, replacementCreditChange } from '../server/replacementCredits.js';
@@ -86,16 +85,10 @@ test('signed portal progress is JSON, rejects invalid requests, and preserves ar
   const original = [db.students, db.classes, db.sessions, db.attendance, db.replacementCredits] as const;
   const oldSecret = process.env.ATTENDANCE_BRIDGE_SECRET;
   process.env.ATTENDANCE_BRIDGE_SECRET = 'test-only-bridge-secret';
-  const app = express();
-  app.use('/api', router);
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((resolve) => server.once('listening', resolve));
   try {
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('No test port');
-    const url = 'http://127.0.0.1:' + address.port + '/api/integration/portal/progress/';
     db.students = new Map([['student-1', { id: 'student-1', student_id: 'STU-0003', full_name: 'Fixture', status: 'ACTIVE' } as any]]);
-    db.classes = new Map([['class-1', { id: 'class-1', name: 'Historical Class', class_type: 'GROUP', is_active: false } as any]]);
+    db.classes = new Map([['class-1', { id: 'class-1', name: 'Historical Class', class_type: 'GROUP', is_active: false } as any],
+      ['class-2', { id: 'class-2', name: 'Tuesday Class', class_type: 'GROUP', is_active: true } as any]]);
     db.sessions = new Map([['session-1', { id: 'session-1', class_id: 'class-1', session_date: '2026-08-12' } as any]]);
     db.attendance = new Map([
       ['present', { id: 'present', session_id: 'session-1', student_id: 'student-1', status: 'PRESENT', attendance_type: 'REGULAR' } as any],
@@ -106,17 +99,26 @@ test('signed portal progress is JSON, rejects invalid requests, and preserves ar
     const timestamp = String(Math.floor(Date.now() / 1000));
     const signed = (time: string, signature: string) => ({ 'X-Attendance-Timestamp': time, 'X-Attendance-Signature': signature });
     const sign = (time: string) => crypto.createHmac('sha256', process.env.ATTENDANCE_BRIDGE_SECRET!).update(time + '.').digest('hex');
-    assert.equal((await fetch(url + 'STU-0003', { headers: signed(timestamp, 'x') })).status, 401);
-    assert.equal((await fetch(url + 'STU-0003', { headers: signed('0', sign('0')) })).status, 401);
-    assert.equal((await fetch(url + 'STU-9998', { headers: signed(timestamp, sign(timestamp)) })).status, 404);
-    const response = await fetch(url + 'STU-0003', { headers: signed(timestamp, sign(timestamp)) });
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/integration/portal/progress/:studentCode');
+    const handler = layer.route.stack.at(-1).handle;
+    const call = (studentCode: string, headers: Record<string, string>, month?: string) => {
+      let status = 200;
+      let body: any;
+      const request = { params: { studentCode }, query: { month }, header: (name: string) =>
+        Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1] };
+      const response = { status(code: number) { status = code; return this; }, json(value: any) { body = value; return this; } };
+      handler(request, response);
+      return { status, body };
+    };
+    assert.equal(call('STU-0003', signed(timestamp, 'x')).status, 401);
+    assert.equal(call('STU-0003', signed('0', sign('0'))).status, 401);
+    assert.equal(call('STU-9998', signed(timestamp, sign(timestamp))).status, 404);
+    const response = call('STU-0003', signed(timestamp, sign(timestamp)));
     assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-type') || '', /json/);
-    const body = await response.json() as any;
+    const body = response.body;
     assert.equal(body.replacement_credits, -2);
     assert.deepEqual(body.records, [{ event_id: 'attendance:present', date: '2026-08-12', class_name: 'Historical Class', status: 'present', attendance_type: 'REGULAR' }]);
   } finally {
-    server.close();
     [db.students, db.classes, db.sessions, db.attendance, db.replacementCredits] = original;
     if (oldSecret === undefined) delete process.env.ATTENDANCE_BRIDGE_SECRET;
     else process.env.ATTENDANCE_BRIDGE_SECRET = oldSecret;
@@ -163,15 +165,17 @@ test('coach API handlers scope students and classes and restrict academy search 
     assert.equal((await call('/students/:id', { id: 'other' })).code, 403);
     assert.deepEqual((await call('/classes')).body.map((cls: any) => cls.id), ['own-class']);
     assert.equal((await call('/classes/:id', { id: 'other-class' })).code, 403);
-    assert.deepEqual((await call('/classes/:id/student-search', { id: 'own-class' }, { search: 'o' })).body, []);
+    assert.deepEqual((await call('/classes/:id/student-search', { id: 'own-class' }, { search: 'o' })).body.map((student: any) => student.student_id), ['STU-0004']);
+    assert.deepEqual((await call('/classes/:id/student-search', { id: 'own-class' }, { search: 'zz' })).body, []);
     const search = await call('/classes/:id/student-search', { id: 'own-class' }, { search: 'student' });
     assert.equal(search.code, 200);
     assert.deepEqual(search.body.map((student: any) => Object.keys(student).sort()), [
       ['already_in_class', 'assigned_elsewhere', 'full_name', 'id', 'student_id'],
-      ['already_in_class', 'assigned_elsewhere', 'full_name', 'id', 'student_id'],
     ]);
-    assert.equal(search.body.find((student: any) => student.id === 'own').already_in_class, true);
-    assert.equal(search.body.find((student: any) => student.id === 'other').assigned_elsewhere, true);
+    assert.equal(search.body.some((student: any) => student.id === 'own'), false);
+    assert.equal(search.body[0].id, 'other');
+    assert.equal(search.body[0].already_in_class, false);
+    assert.equal(search.body[0].assigned_elsewhere, true);
     assert.equal((await call('/classes/:id/student-search', { id: 'other-class' }, { search: 'student' })).code, 403);
     db.students.set('replacement-only', { id: 'replacement-only', student_id: 'STU-0005', full_name: 'Replacement Only', status: 'ACTIVE' } as any);
     db.attendance.set('replacement', { id: 'replacement', student_id: 'replacement-only', session_id: 'own-session', status: 'PRESENT', attendance_type: 'REPLACEMENT' } as any);

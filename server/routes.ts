@@ -34,8 +34,9 @@ import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged, 
 import { awardPortalStars, getPortalLink, managePortalAccount, portalAccountStatuses, syncPortalCoachLinksForStudent } from './portalBridge.js';
 import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from './studentIds.js';
 import { academyMonth, academyToday } from './academyDate.js';
-import { recordActivity } from './activity.js';
-import { OccurrenceError, planOccurrence } from './sessionOccurrence.js';
+import { recordActivity, activityEntry } from './activity.js';
+import { OccurrenceError, planOccurrence, applyOccurrenceMode } from './sessionOccurrence.js';
+import { commitOccurrence } from './occurrencePersistence.js';
 import { reconcileRecurringSessions } from './recurringSessions.js';
 import { planStudentMemberships } from './studentMemberships.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError } from './replacementCredits.js';
@@ -2257,8 +2258,35 @@ router.put('/sessions/:id', authenticateUser, requireCoachOrAdmin, async (req: A
     return res.status(404).json({ error: 'Session not found' });
   }
   if (!canManageClass(req.user!, existingSession.class_id)) return res.status(403).json({ error: 'Forbidden: you do not manage this session.' });
-  // Vercel instances load sessions from Firestore, so a replacement assignment
-  // must be durable before the substitute coach can reliably see it.
+  if (req.body.expected_occurrence_revision !== null && typeof req.body.expected_occurrence_revision !== 'string') {
+    return res.status(428).json({ error: 'Reload this occurrence before saving.' });
+  }
+  if (req.body.session_type !== undefined && !['NORMAL', 'REPLACEMENT_COACH', 'COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(req.body.session_type)) {
+    return res.status(400).json({ error: 'Invalid session mode.' });
+  }
+  if (req.body.status !== undefined && !['SCHEDULED', 'COMPLETED', 'CANCELLED', 'OFF_DAY', 'COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(req.body.status)) {
+    return res.status(400).json({ error: 'Invalid session status.' });
+  }
+  if (req.body.session_type && req.body.status && (
+    ['COACH_CANCELLED', 'CANCELLED'].includes(req.body.status) && req.body.session_type !== 'COACH_CANCELLED' ||
+    ['PLANNED_OFF_DAY', 'OFF_DAY'].includes(req.body.status) && req.body.session_type !== 'PLANNED_OFF_DAY' ||
+    ['NORMAL', 'REPLACEMENT_COACH'].includes(req.body.session_type) &&
+      ['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'].includes(req.body.status) ||
+    req.body.session_type === 'COACH_CANCELLED' && !['COACH_CANCELLED', 'CANCELLED'].includes(req.body.status) ||
+    req.body.session_type === 'PLANNED_OFF_DAY' && !['PLANNED_OFF_DAY', 'OFF_DAY'].includes(req.body.status))) {
+    return res.status(400).json({ error: 'Session mode and status conflict.' });
+  }
+  if (['session_date', 'start_time', 'end_time', 'notes', 'cancellation_reason'].some((field) => req.body[field] !== undefined && typeof req.body[field] !== 'string') ||
+      req.body.replacement_coach_id !== undefined && req.body.replacement_coach_id !== null && typeof req.body.replacement_coach_id !== 'string' ||
+      req.body.reset_to_regular_schedule !== undefined && typeof req.body.reset_to_regular_schedule !== 'boolean') {
+    return res.status(400).json({ error: 'Invalid occurrence update.' });
+  }
+  if (req.user!.role === 'COACH' && (req.body.status !== undefined && !['SCHEDULED', 'COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(req.body.status) ||
+      req.body.actual_coach_id !== undefined || req.body.scheduled_coach_id !== undefined || req.body.default_coach_id !== undefined)) {
+    return res.status(400).json({ error: 'Invalid occurrence update.' });
+  }
+  // A replacement assignment must be durable before the substitute coach can
+  // reliably see the occurrence on another server instance.
   let session: ClassSession = { ...existingSession };
 
   const {
@@ -2274,76 +2302,53 @@ router.put('/sessions/:id', authenticateUser, requireCoachOrAdmin, async (req: A
     reset_to_regular_schedule,
   } = req.body;
 
-  const defaultCoachId = session.default_coach_id || session.scheduled_coach_id;
   const sessionClass = db.classes.get(session.class_id);
+  const hasTakenAttendance = Array.from(db.attendance.values()).some((record) => record.session_id === id && record.status !== 'BOOKED');
+  if (hasTakenAttendance && (['COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(session_type) ||
+      ['CANCELLED', 'OFF_DAY', 'COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(status))) {
+    return res.status(409).json({ error: 'Attendance already exists. Resolve existing markings before cancelling or declaring an off-day.' });
+  }
   try {
     session = planOccurrence(session, sessionClass, { session_date, start_time, end_time, replacement_coach_id, actual_coach_id, session_type, reset_to_regular_schedule },
-      db.sessions.values(), Array.from(db.attendance.values()).some((record) => record.session_id === id && record.status !== 'BOOKED'));
+      db.sessions.values(), hasTakenAttendance);
   } catch (error) {
     if (error instanceof OccurrenceError) return res.status(400).json({ error: error.message, code: error.code });
     throw error;
   }
 
-  // Handle Session Type transitions
-  if (session_type === 'COACH_CANCELLED' || status === 'COACH_CANCELLED' || status === 'CANCELLED') {
-    session.status = 'COACH_CANCELLED';
-    session.session_type = 'COACH_CANCELLED';
-    session.cancellation_reason = cancellation_reason || 'Coach cancelled';
-    session.replacement_coach_id = null;
-    session.actual_coach_id = defaultCoachId;
-  } else if (session_type === 'PLANNED_OFF_DAY' || status === 'PLANNED_OFF_DAY' || status === 'OFF_DAY') {
-    session.status = 'PLANNED_OFF_DAY';
-    session.session_type = 'PLANNED_OFF_DAY';
-    session.cancellation_reason = cancellation_reason || 'Academy planned off-day';
-    session.replacement_coach_id = null;
-    session.actual_coach_id = defaultCoachId;
-  } else if (session_type === 'REPLACEMENT_COACH' || (replacement_coach_id && session_type !== 'NORMAL')) {
-    const replCoach = replacement_coach_id || actual_coach_id;
-    if (!replCoach || replCoach === defaultCoachId) {
-      return res.status(400).json({
-        error: 'Select a different active coach as the replacement. The default coach cannot replace themselves.',
-        code: 'INVALID_REPLACEMENT_COACH',
-      });
-    }
-    const replacementCoach = db.coaches.get(replCoach);
-    if (!replacementCoach || !replacementCoach.is_active) {
-      return res.status(400).json({ error: 'Select an active Academy coach as the replacement.', code: 'INVALID_REPLACEMENT_COACH' });
-    }
-    session.actual_coach_id = replCoach;
-    session.replacement_coach_id = replCoach;
-    session.session_type = 'REPLACEMENT_COACH';
-    session.status = status && status !== 'COACH_CANCELLED' && status !== 'PLANNED_OFF_DAY' ? status : 'SCHEDULED';
-    session.cancellation_reason = undefined;
-  } else if (session_type === 'NORMAL') {
-    session.actual_coach_id = defaultCoachId;
-    session.replacement_coach_id = null;
-    session.session_type = 'NORMAL';
-    if (session.status === 'COACH_CANCELLED' || session.status === 'PLANNED_OFF_DAY') {
-      session.status = 'SCHEDULED';
-    } else if (status && status !== 'COACH_CANCELLED' && status !== 'PLANNED_OFF_DAY') {
-      session.status = status;
-    }
-    session.cancellation_reason = undefined;
-  } else {
-    if (actual_coach_id !== undefined && actual_coach_id !== session.actual_coach_id) {
-      return res.status(400).json({ error: 'Use a replacement coach assignment for this occurrence.', code: 'INVALID_REPLACEMENT_COACH' });
-    }
-    if (status !== undefined) session.status = status;
-    if (cancellation_reason !== undefined) session.cancellation_reason = cancellation_reason;
-  }
-
-  if (notes !== undefined) session.notes = notes;
-  if (reset_to_regular_schedule) {
-    session.replacement_coach_id = null;
-    session.actual_coach_id = defaultCoachId;
-    session.session_type = 'NORMAL';
-    if (session.status === 'COACH_CANCELLED' || session.status === 'PLANNED_OFF_DAY') session.status = 'SCHEDULED';
+  try {
+    session = applyOccurrenceMode(session, { session_type, replacement_coach_id, actual_coach_id, status,
+      cancellation_reason, notes, reset_to_regular_schedule }, db.coaches, isAdmin(req.user!));
+  } catch (error) {
+    if (error instanceof OccurrenceError) return res.status(400).json({ error: error.message, code: error.code });
+    throw error;
   }
 
   try {
+    const changedDate = session.session_date !== existingSession.session_date;
+    const changedTime = session.start_time !== existingSession.start_time || session.end_time !== existingSession.end_time;
+    const previousMode = existingSession.session_type || 'NORMAL';
+    const mode = session.session_type || 'NORMAL';
+    const action = mode !== previousMode || session.replacement_coach_id !== existingSession.replacement_coach_id
+      ? mode === 'REPLACEMENT_COACH' ? (previousMode === mode ? 'REPLACEMENT_COACH_CHANGED' : 'REPLACEMENT_COACH_ASSIGNED')
+      : mode === 'COACH_CANCELLED' ? 'OCCURRENCE_COACH_CANCELLED'
+      : mode === 'PLANNED_OFF_DAY' ? /5th\s*week/i.test(session.cancellation_reason || '') ? 'OCCURRENCE_FIFTH_WEEK_OFF_DAY' : 'OCCURRENCE_PLANNED_OFF_DAY'
+      : previousMode === 'REPLACEMENT_COACH' ? 'REPLACEMENT_COACH_REMOVED' : 'OCCURRENCE_RESTORED'
+      : changedDate && changedTime ? 'OCCURRENCE_RESCHEDULED' : changedDate ? 'OCCURRENCE_DATE_CHANGED' : changedTime ? 'OCCURRENCE_TIME_CHANGED' : 'OCCURRENCE_UPDATED';
+    const values = (value: ClassSession) => ({ session_date: value.session_date, start_time: value.start_time, end_time: value.end_time,
+      session_type: value.session_type || 'NORMAL', status: value.status, replacement_coach_id: value.replacement_coach_id || null,
+      cancellation_reason: value.cancellation_reason || null, notes: value.notes || '' });
+    const activity = activityEntry(req.user!, action, 'session', id, { classId: session.class_id,
+      summary: `${session.session_date} ${session.start_time}-${session.end_time}`, previous_values: values(existingSession),
+      new_values: values(session), notes: session.notes });
+    const requireUnmarked = changedDate || changedTime || session.replacement_coach_id !== existingSession.replacement_coach_id ||
+      ['COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(mode) && mode !== previousMode;
+    const saved = await commitOccurrence(getFirestoreDb(), session, activity, req.body.expected_occurrence_revision, requireUnmarked);
+    if (saved.kind === 'stale') return res.status(409).json({ error: 'This occurrence changed elsewhere. Reload before saving.' });
+    if (saved.kind === 'marked') return res.status(409).json({ error: 'Attendance was recorded while this occurrence was being edited. Reload before saving.' });
+    session = saved.session;
     db.sessions.set(id, session);
-    await recordActivity(req.user!, 'CLASS_DATE_CHANGED', 'session', id, { classId: session.class_id, summary: `${session.session_date} ${session.start_time}-${session.end_time}` });
-    await persistMutation([['sessions', id, session]]);
+    db.activityLogs.unshift(activity);
     db.saveToDisk();
     return res.json(db.getPopulatedSession(id));
   } catch (error: any) {
@@ -2374,6 +2379,10 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     return res.status(404).json({ error: 'Session not found' });
   }
 
+  if (['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'].includes(session.status)) {
+    return res.status(409).json({ error: 'Attendance is not required for a cancelled session or planned off-day.' });
+  }
+
   // Security check: Coach can only take attendance for assigned sessions!
   if (!verifySessionAttendanceAccess(id, user)) {
     return res.status(403).json({
@@ -2393,10 +2402,25 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   const existingRecord = Array.from(db.attendance.values()).find(
     (a) => a.session_id === id && a.student_id === student_id
   );
+  const classMemberships = Array.from(db.memberships.values()).filter((membership) =>
+    membership.student_id === student_id && (membership.schedule_id === session.schedule_id || membership.schedule_id === session.class_id));
+  if (classMemberships.some((membership) => membership.status === 'PAUSED')) {
+    return res.status(409).json({ error: 'Attendance is not required for a paused student.' });
+  }
+  if (!db.students.has(student_id) || !existingRecord && !classMemberships.some((membership) => membership.status === 'ACTIVE')) {
+    return res.status(403).json({ error: 'The student is not enrolled or booked for this occurrence.' });
+  }
 
   const prevStatus: AttendanceStatus | 'NOT_MARKED' = existingRecord ? existingRecord.status : 'NOT_MARKED';
   const newStatus = status as AttendanceStatus;
+  if (!['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'].includes(newStatus)) {
+    return res.status(400).json({ error: 'Invalid attendance mark.' });
+  }
   const attType = (attendance_type as AttendanceType) || (existingRecord ? existingRecord.attendance_type : 'REGULAR');
+  if (!['REGULAR', 'REPLACEMENT'].includes(attType) || existingRecord && attendance_type && attendance_type !== existingRecord.attendance_type ||
+      !existingRecord && attType !== 'REGULAR') {
+    return res.status(400).json({ error: 'Invalid attendance type for this occurrence.' });
+  }
   const suppliedStars = base_stars === undefined || base_stars === '' ? undefined : Number(base_stars);
   if (suppliedStars !== undefined && (!Number.isFinite(suppliedStars) || suppliedStars < 0 || suppliedStars > 10000)) {
     return res.status(400).json({ error: 'Stars must be a number from 0 to 10,000.' });
@@ -3247,7 +3271,9 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 
   // 1. Get all sessions for this month
   let monthSessions = Array.from(db.sessions.values()).filter((s) =>
-    s.session_date.startsWith(targetMonth) && Array.from(db.attendance.values()).some((a) => a.session_id === s.id && a.status !== 'BOOKED')
+    s.session_date.startsWith(targetMonth) && (
+      ['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'].includes(s.status) ||
+      Array.from(db.attendance.values()).some((a) => a.session_id === s.id && a.status !== 'BOOKED'))
   );
 
   if (coach_id) {

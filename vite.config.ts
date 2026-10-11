@@ -7,6 +7,9 @@ export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
+      // Windows sandboxed Node can deny realpathSync.native for ordinary files.
+      // The project does not rely on symlink identity for module resolution.
+      preserveSymlinks: true,
       alias: {
         '@': path.resolve(__dirname, '.'),
       },

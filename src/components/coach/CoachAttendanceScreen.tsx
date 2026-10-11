@@ -27,6 +27,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { Modal } from '../common/Modal.js';
+import { OccurrenceEditor } from '../common/OccurrenceEditor.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 
 interface CoachAttendanceScreenProps {
@@ -50,11 +51,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [tshirtByStudent, setTshirtByStudent] = useState<Record<string, boolean>>({});
   const [creatingPortalInviteFor, setCreatingPortalInviteFor] = useState<string | null>(null);
   const [editingOccurrence, setEditingOccurrence] = useState(false);
-  const [occurrenceDate, setOccurrenceDate] = useState('');
-  const [occurrenceStart, setOccurrenceStart] = useState('');
-  const [occurrenceCoach, setOccurrenceCoach] = useState('');
   const [availableCoaches, setAvailableCoaches] = useState<Coach[]>([]);
-  const [savingOccurrence, setSavingOccurrence] = useState(false);
 
   // Replacement student modal
   const [isReplacementModalOpen, setIsReplacementModalOpen] = useState(false);
@@ -225,44 +222,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
 
   const openOccurrence = () => {
     if (!session) return;
-    setOccurrenceDate(session.session_date);
-    setOccurrenceStart(session.start_time);
-    setOccurrenceCoach(session.replacement_coach_id || '');
     setEditingOccurrence(true);
-    api.getCoaches().then((coaches) => setAvailableCoaches(coaches.filter((coach) => coach.is_active && coach.id !== (session.default_coach_id || session.scheduled_coach_id))))
+    api.getCoaches().then(setAvailableCoaches)
       .catch(() => showToast('Could not load replacement coaches', 'error'));
-  };
-
-  const saveOccurrence = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!session) return;
-    const toMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
-    const endMinutes = toMinutes(occurrenceStart) + toMinutes(session.end_time) - toMinutes(session.start_time);
-    if (endMinutes >= 24 * 60) { showToast('Choose an earlier start time', 'error'); return; }
-    const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-    setSavingOccurrence(true);
-    try {
-      await api.updateSession(sessionId, {
-        session_date: occurrenceDate, start_time: occurrenceStart, end_time: endTime,
-        session_type: occurrenceCoach ? 'REPLACEMENT_COACH' : 'NORMAL',
-        replacement_coach_id: occurrenceCoach || null,
-      });
-      await fetchSession();
-      setEditingOccurrence(false);
-      showToast('Session occurrence updated', 'success');
-    } catch (error: any) { showToast(error.message || 'Could not update occurrence', 'error'); }
-    finally { setSavingOccurrence(false); }
-  };
-
-  const resetOccurrence = async () => {
-    setSavingOccurrence(true);
-    try {
-      await api.updateSession(sessionId, { reset_to_regular_schedule: true });
-      await fetchSession();
-      setEditingOccurrence(false);
-      showToast('Regular schedule restored', 'success');
-    } catch (error: any) { showToast(error.message || 'Could not reset occurrence', 'error'); }
-    finally { setSavingOccurrence(false); }
   };
 
   if (loading) {
@@ -448,10 +410,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               </span>
               {session.room_location && <span>• Venue: {session.room_location}</span>}
             </div>
-            {isRegularCoach && <div className="mt-3 text-xs">
-              {hasTakenAttendance
-                ? <span className="text-slate-500">Date, time, and replacement coach are locked because attendance has been taken.</span>
-                : <button type="button" onClick={openOccurrence} className="rounded-xl border border-slate-900 px-3 py-1.5 font-black text-slate-900 dark:border-white dark:text-white">Edit this occurrence</button>}
+            {isRegularCoach && <div className="mt-3 text-xs flex flex-wrap items-center gap-2">
+              {hasTakenAttendance && <span className="text-slate-500">Date, time, and replacement coach are locked because attendance has been taken.</span>}
+              <button type="button" onClick={openOccurrence} className="rounded-xl border border-slate-900 px-3 py-1.5 font-black text-slate-900 dark:border-white dark:text-white">Edit this occurrence</button>
             </div>}
           </div>
 
@@ -485,22 +446,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         </div>
       </div>
 
-      <Modal isOpen={editingOccurrence} onClose={() => setEditingOccurrence(false)} title="Edit this occurrence" subtitle="Only this session changes. The recurring class remains unchanged.">
-        <form onSubmit={saveOccurrence} className="space-y-4">
-          <label className="block text-xs font-bold">Date<input type="date" required value={occurrenceDate} onChange={(event) => setOccurrenceDate(event.target.value)} className="mt-1 w-full rounded-xl border p-2 text-slate-900" /></label>
-          <label className="block text-xs font-bold">Start time<input type="time" required value={occurrenceStart} onChange={(event) => setOccurrenceStart(event.target.value)} className="mt-1 w-full rounded-xl border p-2 text-slate-900" /></label>
-          <label className="block text-xs font-bold">Replacement coach for this occurrence
-            <select value={occurrenceCoach} onChange={(event) => setOccurrenceCoach(event.target.value)} className="mt-1 w-full rounded-xl border p-2 text-slate-900">
-              <option value="">Regular coach</option>
-              {availableCoaches.map((coach) => <option key={coach.id} value={coach.id}>{coach.name}</option>)}
-            </select>
-          </label>
-          <div className="flex flex-wrap justify-between gap-2">
-            <div>{(isRescheduled || session.replacement_coach_id) && <button type="button" disabled={savingOccurrence} onClick={resetOccurrence} className="rounded-xl border border-slate-900 px-3 py-2 text-xs font-black">Reset to regular schedule</button>}</div>
-            <button type="submit" disabled={savingOccurrence} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white">{savingOccurrence ? 'Saving…' : 'Save occurrence'}</button>
-          </div>
-        </form>
-      </Modal>
+      {editingOccurrence && <OccurrenceEditor session={session} coaches={availableCoaches} onClose={() => setEditingOccurrence(false)} onSaved={async () => {
+        const updated = await api.getSession(sessionId);
+        setSession(updated);
+      }} />}
 
       {/* Future Session Notification Banner */}
       {isFutureSession && (
@@ -525,7 +474,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               Reason: <span className="font-bold">{session.cancellation_reason || 'Coach is unavailable / on leave.'}</span>
             </p>
             <p className="text-[11px] opacity-80">
-              Roll call is disabled for this session. To restore or assign a replacement coach, change the session type in Admin Sessions Management.
+              Roll call is disabled for this session. Use Edit this occurrence to restore it or assign a replacement coach.
             </p>
           </div>
         </div>
