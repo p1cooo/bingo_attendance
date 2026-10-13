@@ -31,7 +31,7 @@ if (getApps().length === 0) {
 }
 
 export const clientAuth: Auth = getAuth(app);
-if (import.meta.env.DEV && import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL) {
+if (import.meta.env?.DEV && import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL) {
   connectAuthEmulator(clientAuth, import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL, { disableWarnings: true });
 }
 const databaseId = configData.firestoreDatabaseId && configData.firestoreDatabaseId !== '(default)'
