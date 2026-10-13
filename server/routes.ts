@@ -47,7 +47,7 @@ import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } f
 import type { StudentFee, StudentPayment, StudentAdjustment } from '../src/types.js';
 import type { StudentPause, PauseReason } from '../src/types.js';
 import { commitPauseDeclaration, commitPauseBillingReview } from './pausePersistence.js';
-import { attendanceExpectedOn } from './attendanceGoLive.js';
+import { attendanceExpectedOn, replacementBookingEnabled } from './attendanceGoLive.js';
 
 export const router = Router();
 
@@ -296,7 +296,7 @@ router.get('/integration/portal/progress/:studentCode', (req, res) => {
   const student = Array.from(db.students.values()).find((item) => item.student_id === req.params.studentCode);
   if (!student) return res.status(404).json({ error: 'Student not found' });
   const records = Array.from(db.attendance.values())
-    .filter((record) => record.student_id === student.id && record.status !== 'BOOKED')
+    .filter((record) => record.student_id === student.id && record.status !== 'BOOKED' && attendanceExpectedOn(db.sessions.get(record.session_id)?.session_date || ''))
     .map((record) => {
       const session = db.sessions.get(record.session_id);
       const classItem = session ? db.classes.get(session.class_id) : undefined;
@@ -2525,6 +2525,9 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     return res.status(400).json({ error: 'Invalid attendance mark.' });
   }
   const attType = (attendance_type as AttendanceType) || (existingRecord ? existingRecord.attendance_type : 'REGULAR');
+  if (attType === 'REPLACEMENT' && !replacementBookingEnabled()) {
+    return res.status(409).json({ error: 'Replacement attendance is temporarily closed.' });
+  }
   if (!['REGULAR', 'REPLACEMENT'].includes(attType) || existingRecord && attendance_type && attendance_type !== existingRecord.attendance_type ||
       !existingRecord && attType !== 'REGULAR') {
     return res.status(400).json({ error: 'Invalid attendance type for this occurrence.' });
@@ -2670,6 +2673,10 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
   const { id } = req.params;
   const user = req.user!;
   const { student_id, replacement_note, advance_future_session_id } = req.body;
+
+  if (!replacementBookingEnabled()) {
+    return res.status(409).json({ error: 'Replacement booking is temporarily closed.' });
+  }
 
   if (!student_id) {
     return res.status(400).json({ error: 'Student ID is required' });
@@ -3295,7 +3302,7 @@ router.get('/coach/breakdown', authenticateUser, requireCoachOrAdmin, (req: Auth
 
   // Get all sessions taught or scheduled for this coach in this month
   const sessions = Array.from(db.sessions.values()).filter((s) => {
-    if (!s.session_date.startsWith(targetMonth)) return false;
+    if (!s.session_date.startsWith(targetMonth) || !attendanceExpectedOn(s.session_date)) return false;
     return s.actual_coach_id === coachId || s.scheduled_coach_id === coachId || s.default_coach_id === coachId;
   });
 
@@ -3388,7 +3395,7 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 
   // 1. Get all sessions for this month
   let monthSessions = Array.from(db.sessions.values()).filter((s) =>
-    s.session_date.startsWith(targetMonth) && (
+    s.session_date.startsWith(targetMonth) && attendanceExpectedOn(s.session_date) && (
       ['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'].includes(s.status) ||
       Array.from(db.attendance.values()).some((a) => a.session_id === s.id && a.status !== 'BOOKED'))
   );
@@ -3509,7 +3516,7 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
     const stuAttendances = Array.from(db.attendance.values()).filter((a) => {
       if (a.student_id !== stu.id || a.status === 'BOOKED') return false;
       const sess = db.sessions.get(a.session_id);
-      return sess && sess.session_date.startsWith(targetMonth);
+      return sess && sess.session_date.startsWith(targetMonth) && attendanceExpectedOn(sess.session_date);
     });
 
     const attendedCount = stuAttendances.filter(
@@ -3573,10 +3580,10 @@ const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
     const students = db?.students ? Array.from(db.students.values()) : [];
     const coaches = db?.coaches ? Array.from(db.coaches.values()) : [];
 
-    const monthSessions = sessions.filter((s) => s?.session_date && s.session_date.startsWith(currentMonth));
+    const monthSessions = sessions.filter((s) => s?.session_date && s.session_date.startsWith(currentMonth) && attendanceExpectedOn(s.session_date));
     const monthAttendances = attendance.filter((a) => {
       const sess = db.sessions.get(a.session_id);
-      return sess && sess.session_date && sess.session_date.startsWith(currentMonth) && (a.status === 'PRESENT' || a.status === 'LATE');
+      return sess && sess.session_date && sess.session_date.startsWith(currentMonth) && attendanceExpectedOn(sess.session_date) && (a.status === 'PRESENT' || a.status === 'LATE');
     });
 
     const monthReplacements = attendance.filter((a) => {
@@ -3584,7 +3591,7 @@ const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
       return (
         sess &&
         sess.session_date &&
-        sess.session_date.startsWith(currentMonth) &&
+        sess.session_date.startsWith(currentMonth) && attendanceExpectedOn(sess.session_date) &&
         a.attendance_type === 'REPLACEMENT' &&
         (a.status === 'PRESENT' || a.status === 'LATE')
       );

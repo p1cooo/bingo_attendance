@@ -30,6 +30,112 @@ test('October billing and electronic attendance use independent date boundaries'
   }
 });
 
+test('regular launch preserves old marks but excludes them from official monthly reports and student totals', () => {
+  const keys = ['students', 'coaches', 'classes', 'sessions', 'attendance', 'memberships', 'schedules'] as const;
+  const previous = keys.map(key => db[key]);
+  const oldAttendance = process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
+  try {
+    process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE = '2026-10-14';
+    db.students = new Map([['student', { id: 'student', student_id: 'STU-UAT01', full_name: 'Fixture Student', status: 'ACTIVE' } as any]]);
+    db.coaches = new Map([['coach', { id: 'coach', name: 'Fixture Coach' } as any]]);
+    db.classes = new Map([['class', { id: 'class', name: 'Fixture Class', class_type: 'GROUP' } as any]]);
+    db.schedules = new Map([['schedule', { id: 'schedule', class_id: 'class', coach_id: 'coach' } as any]]);
+    db.memberships = new Map();
+    db.sessions = new Map([
+      ['old', { id: 'old', session_date: '2026-10-11', class_id: 'class', schedule_id: 'schedule', status: 'SCHEDULED', start_time: '09:00', end_time: '10:00', actual_coach_id: 'coach' } as any],
+      ['new', { id: 'new', session_date: '2026-10-14', class_id: 'class', schedule_id: 'schedule', status: 'SCHEDULED', start_time: '09:00', end_time: '10:00', actual_coach_id: 'coach' } as any],
+    ]);
+    db.attendance = new Map([
+      ['old-mark', { id: 'old-mark', student_id: 'student', session_id: 'old', status: 'PRESENT', attendance_type: 'REGULAR' } as any],
+      ['new-mark', { id: 'new-mark', student_id: 'student', session_id: 'new', status: 'PRESENT', attendance_type: 'REGULAR' } as any],
+    ]);
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/reports/monthly' && item.route.methods.get);
+    const res: any = { json(value: unknown) { this.body = value; return this; } };
+    layer.route.stack.at(-1).handle({ query: { month: '2026-10' }, user: { id: 'admin', role: 'ADMIN' } }, res);
+    assert.equal(db.attendance.size, 2);
+    assert.equal(res.body.coaches_summary.find((c: any) => c.coach_id === 'coach').total_sessions_taught, 1);
+    assert.equal(res.body.students_summary.find((s: any) => s.student_id === 'student').attended_count, 1);
+    assert.equal(db.getPopulatedStudent('student')?.attendance_summary?.present_count, 1);
+  } finally {
+    keys.forEach((key, index) => (db[key] as any) = previous[index]);
+    if (oldAttendance === undefined) delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE; else process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE = oldAttendance;
+  }
+});
+
+test('restricted launch blocks replacement booking without changing old credit entries', async () => {
+  const previousCredits = db.replacementCredits;
+  const oldSetting = process.env.ACADEMY_REPLACEMENT_BOOKING_ENABLED;
+  try {
+    process.env.ACADEMY_REPLACEMENT_BOOKING_ENABLED = 'false';
+    db.replacementCredits = new Map([['old-credit', { id: 'old-credit', student_id: 'student', amount: 1 } as any]]);
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/replacement-student' && item.route.methods.post);
+    const res: any = { statusCode: 200, status(code: number) { this.statusCode = code; return this; }, json(value: unknown) { this.body = value; return this; } };
+    await layer.route.stack.at(-1).handle({ params: { id: 'anything' }, body: { student_id: 'student' }, user: { id: 'coach', role: 'COACH' } }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(db.replacementCredits.get('old-credit')?.amount, 1);
+  } finally {
+    db.replacementCredits = previousCredits;
+    if (oldSetting === undefined) delete process.env.ACADEMY_REPLACEMENT_BOOKING_ENABLED; else process.env.ACADEMY_REPLACEMENT_BOOKING_ENABLED = oldSetting;
+  }
+});
+
+test('replacement booking cannot recreate pre-launch operational state', async () => {
+  const previousSessions = db.sessions;
+  const previousAttendance = db.attendance;
+  const oldBilling = process.env.ACADEMY_GO_LIVE_DATE;
+  const oldAttendance = process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
+  try {
+    process.env.ACADEMY_GO_LIVE_DATE = '2026-10-01';
+    delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
+    db.sessions = new Map([['old', { id: 'old', session_date: '2026-10-10' } as any]]);
+    db.attendance = new Map();
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/replacement-student' && item.route.methods.post);
+    const handler = layer.route.stack.at(-1).handle;
+    const response: any = { statusCode: 200, status(code: number) { this.statusCode = code; return this; }, json(value: unknown) { this.body = value; return this; } };
+    await handler({ params: { id: 'old' }, body: { student_id: 'student' }, user: { id: 'coach', role: 'COACH' } }, response);
+    assert.equal(response.statusCode, 409);
+    assert.equal(db.attendance.size, 0);
+  } finally {
+    db.sessions = previousSessions;
+    db.attendance = previousAttendance;
+    if (oldBilling === undefined) delete process.env.ACADEMY_GO_LIVE_DATE; else process.env.ACADEMY_GO_LIVE_DATE = oldBilling;
+    if (oldAttendance === undefined) delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE; else process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE = oldAttendance;
+  }
+});
+
+test('pre-launch regular and trial marks cannot recreate old credits or rewards', async () => {
+  const previous = { sessions: db.sessions, attendance: db.attendance, replacementCredits: db.replacementCredits,
+    students: db.students };
+  const oldBilling = process.env.ACADEMY_GO_LIVE_DATE;
+  const oldAttendance = process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
+  try {
+    process.env.ACADEMY_GO_LIVE_DATE = '2026-10-01';
+    delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
+    db.sessions = new Map([['old', { id: 'old', session_date: '2026-09-26', status: 'SCHEDULED' } as any]]);
+    db.attendance = new Map(); db.replacementCredits = new Map(); db.students = new Map();
+    const response = (): any => ({ statusCode: 200, status(code: number) { this.statusCode = code; return this; },
+      json(value: unknown) { this.body = value; return this; } });
+    for (const [path, body] of [
+      ['/sessions/:id/attendance', { student_id: 'student', status: 'ABSENT', base_stars: 0 }],
+      ['/sessions/:id/unregistered-student', { full_name: 'Fixture Student', status: 'PRESENT' }],
+    ] as const) {
+      const layer = (router as any).stack.find((item: any) => item.route?.path === path && item.route.methods.post);
+      const handler = layer.route.stack.at(-1).handle;
+      const res = response();
+      await handler({ params: { id: 'old' }, body, user: { id: 'coach', role: 'COACH' } }, res);
+      assert.equal(res.statusCode, 409);
+    }
+    assert.equal(db.attendance.size, 0);
+    assert.equal(db.replacementCredits.size, 0);
+    assert.equal(db.students.size, 0);
+  } finally {
+    db.sessions = previous.sessions; db.attendance = previous.attendance;
+    db.replacementCredits = previous.replacementCredits; db.students = previous.students;
+    if (oldBilling === undefined) delete process.env.ACADEMY_GO_LIVE_DATE; else process.env.ACADEMY_GO_LIVE_DATE = oldBilling;
+    if (oldAttendance === undefined) delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE; else process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE = oldAttendance;
+  }
+});
+
 test('pre-launch lessons remain scheduled without invented attendance; October billing is provisional where lesson delivery is unknown', () => {
   const keys = ['students', 'memberships', 'schedules', 'classes', 'sessions', 'attendance', 'studentFees', 'studentPayments', 'studentAdjustments', 'studentPauses', 'coaches'] as const;
   const previous = keys.map(key => db[key]);

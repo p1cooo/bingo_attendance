@@ -113,7 +113,7 @@ class DatabaseStore {
 
     // Attendance stats
     const studentAttendances = Array.from(this.attendance.values()).filter(
-      (a) => a.student_id === id && a.status !== 'BOOKED'
+      (a) => a.student_id === id && a.status !== 'BOOKED' && attendanceExpectedOn(this.sessions.get(a.session_id)?.session_date || '')
     );
     const presentCount = studentAttendances.filter((a) => a.status === 'PRESENT' || a.status === 'LATE').length;
     const replacementCount = studentAttendances.filter((a) => a.attendance_type === 'REPLACEMENT').length;

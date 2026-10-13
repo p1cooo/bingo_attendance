@@ -15,3 +15,8 @@ export function attendanceExpectedOn(sessionDate: string): boolean {
   // Once October billing is enabled, an unset attendance date keeps roll-call closed.
   return start ? sessionDate >= start : !process.env.ACADEMY_GO_LIVE_DATE;
 }
+
+/** Keep replacement use closed during a regular-attendance-only launch. */
+export function replacementBookingEnabled(): boolean {
+  return process.env.ACADEMY_REPLACEMENT_BOOKING_ENABLED !== 'false';
+}
