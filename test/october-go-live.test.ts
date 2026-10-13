@@ -4,6 +4,7 @@ import { db } from '../server/db.js';
 import { attendanceExpectedOn, configuredAttendanceGoLiveDate } from '../server/attendanceGoLive.js';
 import { configuredGoLiveDate, financeDetail } from '../server/finance.js';
 import { getAccountantReport } from '../server/accountantExport.js';
+import { router } from '../server/routes.js';
 import type { StudentPause } from '../src/types.js';
 
 test('October billing and electronic attendance use independent date boundaries', () => {
@@ -184,6 +185,10 @@ test('pre-launch lessons remain scheduled without invented attendance; October b
     assert.equal(oct.status, 'Pending Finance Review');
     assert.equal(financeDetail('student', '2026-11')!.months.find(month => month.month === '2026-11')?.charges_cents, 25000);
     assert.equal(getAccountantReport('2026-10')[0]?.sessions.length, 1);
+
+    db.attendance.get('live-mark')!.attendance_type = 'REPLACEMENT';
+    assert.equal(financeDetail('student', '2026-10')!.months[0].lines.find(line => line.membership_id === 'individual-m')?.amount_cents, 0);
+    db.attendance.get('live-mark')!.attendance_type = 'REGULAR';
 
     const pause: StudentPause = { id: 'pause', student_id: 'student', membership_id: 'group-m', schedule_id: 'group', class_id: 'group', start_date: '2026-10-01', end_date: '2026-10-31', reason: 'EXAMINATION', declared_by_user_id: 'coach', declared_by_name: 'Fixture Coach', declared_by_role: 'COACH', created_at: '2026-10-01', updated_at: '2026-10-01', history: [] };
     db.studentPauses.set('pause', pause);

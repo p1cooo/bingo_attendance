@@ -36,7 +36,8 @@ export function financeDetail(studentId: string, through = academyMonth()) {
   const sessions = [...db.sessions.values()];
   const attendance = [...db.attendance.values()].filter(a => a.student_id === studentId);
   // A recorded absence still represents a class that took place. Excused and merely booked dates do not bill.
-  const billableSessionIds = new Set(attendance.filter(a => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'ABSENT').map(a => a.session_id));
+  const billableSessionIds = new Set(attendance.filter(a => a.attendance_type !== 'REPLACEMENT' &&
+    (a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'ABSENT')).map(a => a.session_id));
   const months: Array<{month: string; lines: Array<{membership_id: string; class_name: string; coach_name: string; mode: string; unit_cents: number; dates: string[]; amount_cents: number; pending_finance_review?: boolean; pre_go_live_dates?: string[]}>; charges_cents: number; paid_cents: number; adjustments_cents: number; outstanding_cents: number; status: string}> = [];
   for (let month = startMonth, count = 0; month <= final && count < 240; month = nextMonth(month), count++) {
     const lines = [] as typeof months[number]['lines'];

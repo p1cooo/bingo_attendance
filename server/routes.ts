@@ -2687,6 +2687,10 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
     return res.status(404).json({ error: 'Session not found' });
   }
 
+  if (!attendanceExpectedOn(session.session_date)) {
+    return res.status(409).json({ error: 'Replacement bookings are not open before the configured attendance go-live date.' });
+  }
+
   if (!verifySessionAttendanceAccess(id, user)) {
     return res.status(403).json({
       error: 'Forbidden: You are not authorized to manage attendance for this session',
