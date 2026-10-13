@@ -39,7 +39,7 @@ import { OccurrenceError, planOccurrence, applyOccurrenceMode } from './sessionO
 import { commitOccurrence } from './occurrencePersistence.js';
 import { reconcileRecurringSessions } from './recurringSessions.js';
 import { planStudentMemberships } from './studentMemberships.js';
-import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError } from './replacementCredits.js';
+import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 import { financeDetail, validMonth, validDate, cents, validAllocations } from './finance.js';
@@ -296,7 +296,7 @@ router.get('/integration/portal/progress/:studentCode', (req, res) => {
   const student = Array.from(db.students.values()).find((item) => item.student_id === req.params.studentCode);
   if (!student) return res.status(404).json({ error: 'Student not found' });
   const records = Array.from(db.attendance.values())
-    .filter((record) => record.student_id === student.id && record.status !== 'BOOKED' && attendanceExpectedOn(db.sessions.get(record.session_id)?.session_date || ''))
+    .filter((record) => record.student_id === student.id && record.status !== 'BOOKED')
     .map((record) => {
       const session = db.sessions.get(record.session_id);
       const classItem = session ? db.classes.get(session.class_id) : undefined;
@@ -2550,7 +2550,7 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     return res.status(400).json({ error: 'This attendance already awarded stars. Correct star mistakes manually in Bingo Space.' });
   }
 
-  const recordId = existingRecord?.id || `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  const recordId = existingRecord?.id || attendanceRecordId(id, student_id);
   const attendanceToPersist: AttendanceRecord = {
     ...(existingRecord || {}),
     id: recordId,
@@ -2574,11 +2574,13 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     await persistAttendanceWithReplacementReconciliation({
       attendance: attendanceToPersist,
       classType: attendanceClass.class_type,
+      expectedMarkedAt: existingRecord?.marked_at ?? null,
       pauseMembershipIds: classMemberships.map(m => m.id).filter(Boolean),
       sessionDate: session.session_date,
     });
   } catch (error: any) {
     if (error instanceof PauseAttendanceError) return res.status(409).json({ error: error.message });
+    if (error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
     console.error('[Attendance] Durable attendance/credit transaction failed:', error?.message || error);
     return res.status(503).json({ error: 'Attendance could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
@@ -2637,7 +2639,7 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   // Attendance always wins: the record above is created first. A portal outage
   // only makes the reward pending; it can never undo or block roll-call.
   const record = db.attendance.get(recordId)!;
-  if (!portalAwardLocked && (newStatus === 'PRESENT' || newStatus === 'LATE') && suppliedStars !== undefined && suppliedStars > 0 && student) {
+  if (record.portal_sync_status !== 'SYNCED' && (newStatus === 'PRESENT' || newStatus === 'LATE') && suppliedStars !== undefined && suppliedStars > 0 && student) {
     const portalStartedAt = performance.now();
     const teachingCoach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
     const portalResult = await awardPortalStars({
@@ -2732,7 +2734,7 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
 
   if (Array.from(db.attendance.values()).some((record) => record.session_id === id && record.student_id === student_id)) return res.status(409).json({ error: 'Student is already in this session.' });
   // Booking does not mark attendance or consume a replacement credit.
-  const recordId = `att-rep-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  const recordId = attendanceRecordId(id, student_id);
   const newRecord: AttendanceRecord = {
     id: recordId,
     session_id: id,
@@ -2749,9 +2751,9 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
   const replacementClass = db.classes.get(session.class_id);
   if (!replacementClass) return res.status(409).json({ error: 'The session class is unavailable. Replacement attendance was not changed.' });
   try {
-    await persistAttendanceWithReplacementReconciliation({ attendance: newRecord, classType: replacementClass.class_type, advanceCommitment });
+    await persistAttendanceWithReplacementReconciliation({ attendance: newRecord, classType: replacementClass.class_type, expectedMarkedAt: null, advanceCommitment });
   } catch (error: any) {
-    if (error instanceof ReplacementCreditError) return res.status(409).json({ error: error.message });
+    if (error instanceof ReplacementCreditError || error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
     console.error('[Replacement Attendance] Durable attendance/credit transaction failed:', error?.message || error);
     return res.status(503).json({ error: 'Replacement attendance could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
@@ -3070,8 +3072,9 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, async (req: Authen
   const correctionClass = correctionSession && db.classes.get(correctionSession.class_id);
   if (!correctionClass) return res.status(409).json({ error: 'The attendance session class is unavailable. Correction was not saved.' });
   try {
-    await persistAttendanceWithReplacementReconciliation({ attendance: correctedRecord, classType: correctionClass.class_type });
+    await persistAttendanceWithReplacementReconciliation({ attendance: correctedRecord, classType: correctionClass.class_type, expectedMarkedAt: record.marked_at ?? null });
   } catch (error: any) {
+    if (error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
     console.error('[Attendance Correction] Durable attendance/credit transaction failed:', error?.message || error);
     return res.status(503).json({ error: 'Attendance correction could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
@@ -3306,7 +3309,7 @@ router.get('/coach/breakdown', authenticateUser, requireCoachOrAdmin, (req: Auth
 
   // Get all sessions taught or scheduled for this coach in this month
   const sessions = Array.from(db.sessions.values()).filter((s) => {
-    if (!s.session_date.startsWith(targetMonth) || !attendanceExpectedOn(s.session_date)) return false;
+    if (!s.session_date.startsWith(targetMonth) || !attendanceExpectedOn(s.session_date) && !Array.from(db.attendance.values()).some(a => a.session_id === s.id && a.status !== 'BOOKED')) return false;
     return s.actual_coach_id === coachId || s.scheduled_coach_id === coachId || s.default_coach_id === coachId;
   });
 
@@ -3399,7 +3402,7 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
 
   // 1. Get all sessions for this month
   let monthSessions = Array.from(db.sessions.values()).filter((s) =>
-    s.session_date.startsWith(targetMonth) && attendanceExpectedOn(s.session_date) && (
+    s.session_date.startsWith(targetMonth) && (
       ['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'].includes(s.status) ||
       Array.from(db.attendance.values()).some((a) => a.session_id === s.id && a.status !== 'BOOKED'))
   );
@@ -3520,7 +3523,7 @@ router.get('/reports/monthly', authenticateUser, requireAdmin, (req: Authenticat
     const stuAttendances = Array.from(db.attendance.values()).filter((a) => {
       if (a.student_id !== stu.id || a.status === 'BOOKED') return false;
       const sess = db.sessions.get(a.session_id);
-      return sess && sess.session_date.startsWith(targetMonth) && attendanceExpectedOn(sess.session_date);
+      return sess && sess.session_date.startsWith(targetMonth);
     });
 
     const attendedCount = stuAttendances.filter(
@@ -3584,10 +3587,10 @@ const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
     const students = db?.students ? Array.from(db.students.values()) : [];
     const coaches = db?.coaches ? Array.from(db.coaches.values()) : [];
 
-    const monthSessions = sessions.filter((s) => s?.session_date && s.session_date.startsWith(currentMonth) && attendanceExpectedOn(s.session_date));
+    const monthSessions = sessions.filter((s) => s?.session_date && s.session_date.startsWith(currentMonth) && (attendanceExpectedOn(s.session_date) || attendance.some(a => a.session_id === s.id && a.status !== 'BOOKED')));
     const monthAttendances = attendance.filter((a) => {
       const sess = db.sessions.get(a.session_id);
-      return sess && sess.session_date && sess.session_date.startsWith(currentMonth) && attendanceExpectedOn(sess.session_date) && (a.status === 'PRESENT' || a.status === 'LATE');
+      return sess && sess.session_date && sess.session_date.startsWith(currentMonth) && (a.status === 'PRESENT' || a.status === 'LATE');
     });
 
     const monthReplacements = attendance.filter((a) => {
@@ -3595,7 +3598,7 @@ const getDashboardStatsHandler = (req: AuthenticatedRequest, res: Response) => {
       return (
         sess &&
         sess.session_date &&
-        sess.session_date.startsWith(currentMonth) && attendanceExpectedOn(sess.session_date) &&
+        sess.session_date.startsWith(currentMonth) &&
         a.attendance_type === 'REPLACEMENT' &&
         (a.status === 'PRESENT' || a.status === 'LATE')
       );

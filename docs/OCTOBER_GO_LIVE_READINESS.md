@@ -1,5 +1,7 @@
 # October 2026 go-live checkpoint (11 October 2026)
 
+**Owner decision, 13 October 2026:** All historical attendance is genuine and must be preserved and included in applicable attendance reports. The reset candidate analysis and deletion sequence below are superseded; no attendance or Finance reset is part of this launch. See `OCTOBER_13_QA.md` for the current release assessment.
+
 This is a preparation record, not authorization to deploy or delete data. Hostinger is the production application host. The production Firestore source was read but never modified.
 
 ## Date and billing model

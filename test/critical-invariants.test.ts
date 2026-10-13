@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { academyMonth, academyToday } from '../server/academyDate.js';
 import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from '../server/studentIds.js';
+import { attendanceRecordId } from '../server/replacementCredits.js';
 
 test('STU allocation reuses the lowest available formal number', () => {
   assert.equal(nextUnusedStudentCode(['STU-0001', 'STU-0003', 'stu-0100', 'legacy-9']), 'STU-0002');
@@ -16,4 +17,10 @@ test('STU allocation reuses the lowest available formal number', () => {
 test('academy dates use Malaysia calendar boundaries instead of UTC', () => {
   assert.equal(academyToday(new Date('2026-09-21T16:30:00.000Z')), '2026-09-22');
   assert.equal(academyMonth(new Date('2026-09-30T16:30:00.000Z')), '2026-10');
+});
+
+test('attendance retries use one durable document ID per student and occurrence', () => {
+  assert.equal(attendanceRecordId('session-1', 'student-1'), attendanceRecordId('session-1', 'student-1'));
+  assert.notEqual(attendanceRecordId('session-1', 'student-1'), attendanceRecordId('session-1', 'student-2'));
+  assert.notEqual(attendanceRecordId('session-1', 'student-1'), attendanceRecordId('session-2', 'student-1'));
 });

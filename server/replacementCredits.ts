@@ -4,6 +4,7 @@ import { AttendanceRecord, ClassType, ReplacementAdvanceCommitment, ReplacementC
 import { markFirestoreStateChanged, publishFirestoreRevision } from './firestoreSync.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import type { Firestore } from 'firebase-admin/firestore';
+import crypto from 'node:crypto';
 
 export function replacementCreditBalance(studentId: string): number {
   return [...db.replacementCredits.values()].filter(x => x.student_id === studentId).reduce((sum, x) => sum + x.amount, 0);
@@ -55,6 +56,7 @@ function ledgerReason(nextImpact: number): ReplacementCreditReason {
 export interface AttendanceReconciliationInput {
   attendance: AttendanceRecord;
   classType: ClassType;
+  expectedMarkedAt?: string | null;
   pauseMembershipIds?: string[];
   sessionDate?: string;
   /** Required only when this replacement attendance is an approved advance use. */
@@ -69,6 +71,12 @@ export interface AttendanceReconciliationResult {
 
 export class ReplacementCreditError extends Error {}
 export class PauseAttendanceError extends Error {}
+export class AttendanceConflictError extends Error {}
+
+/** Stable across requests and server instances, including a retry after timeout. */
+export function attendanceRecordId(sessionId: string, studentId: string): string {
+  return `att-${crypto.createHash('sha256').update(`${sessionId}\0${studentId}`).digest('hex')}`;
+}
 
 /**
  * Atomically persists an attendance mutation and its ledger delta.  The
@@ -83,11 +91,33 @@ export async function persistAttendanceWithReplacementReconciliation(
   const attendanceRef = firestore.collection('attendance').doc(input.attendance.id);
   const transactionStartedAt = performance.now();
   const result = await firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(attendanceRef);
+    const matchingQuery = firestore.collection('attendance').where('session_id', '==', input.attendance.session_id)
+      .where('student_id', '==', input.attendance.student_id);
+    const [snapshot, matches] = await Promise.all([transaction.get(attendanceRef), transaction.get(matchingQuery)]);
+    if (matches.docs.some(document => document.id !== input.attendance.id)) {
+      throw new AttendanceConflictError('Attendance already exists for this student and occurrence. Reload before saving.');
+    }
     const previous = snapshot.exists ? snapshot.data() as AttendanceRecord : undefined;
+    if (input.expectedMarkedAt !== undefined && (previous?.marked_at ?? null) !== input.expectedMarkedAt) {
+      throw new AttendanceConflictError('Attendance changed since this occurrence was loaded. Reload before saving.');
+    }
+    if (previous?.portal_sync_status === 'SYNCED' &&
+        (!['PRESENT', 'LATE'].includes(input.attendance.status) ||
+          input.attendance.base_stars !== previous.base_stars ||
+          Boolean(input.attendance.lucky_tshirt_worn) !== Boolean(previous.lucky_tshirt_worn))) {
+      throw new AttendanceConflictError('This attendance already awarded stars. Reload before making a correction.');
+    }
     const { nextImpact, changed, revision, delta } = replacementCreditChange(previous, input.attendance, input.classType);
     const attendance = withoutUndefined({
+      ...previous,
       ...input.attendance,
+      ...(previous ? {
+        portal_sync_status: previous.portal_sync_status,
+        portal_transaction_id: previous.portal_transaction_id,
+        portal_awarded_stars: previous.portal_awarded_stars,
+        portal_multiplier: previous.portal_multiplier,
+        portal_sync_message: previous.portal_sync_message,
+      } : {}),
       replacement_credit_impact: nextImpact,
       ...(revision === undefined ? {} : { replacement_credit_revision: revision }),
     });

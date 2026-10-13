@@ -1,8 +1,6 @@
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { db } from './db.js';
-import { configuredGoLiveDate } from './finance.js';
-import { attendanceExpectedOn } from './attendanceGoLive.js';
 
 type AccountantSession = { date: string; className: string; classType: 'GROUP' | 'INDIVIDUAL'; startTime: string; endTime: string; durationHours: number; studentAttendances: { name: string; attended: boolean }[]; };
 export type AccountantCoach = { id: string; name: string; sessions: AccountantSession[]; totalHours: number };
@@ -13,9 +11,8 @@ const shortDate = (value: string) => { const [, m, d] = value.split('-'); return
 /** Only sessions with at least one attendance record are auditable teaching sessions. */
 export function getAccountantReport(month: string, coachId?: string, classId?: string): AccountantCoach[] {
   const byCoach = new Map<string, AccountantCoach>();
-  const goLiveDate = configuredGoLiveDate();
   for (const session of db.sessions.values()) {
-    if (!session.session_date.startsWith(month) || goLiveDate && session.session_date < goLiveDate || !attendanceExpectedOn(session.session_date) || (classId && session.class_id !== classId)) continue;
+    if (!session.session_date.startsWith(month) || (classId && session.class_id !== classId)) continue;
     const records = Array.from(db.attendance.values()).filter((record) => record.session_id === session.id && record.status !== 'BOOKED');
     if (!records.length) continue;
     const actualCoachId = session.actual_coach_id || session.scheduled_coach_id || session.default_coach_id;

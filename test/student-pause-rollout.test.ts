@@ -141,7 +141,7 @@ test('Finance dry-run inventory preserves fee versions and blocks unknown or pos
   assert.equal(result.adjustment_amount_cents, 500);
 });
 
-test('accountant report ignores operational bookings and pre-go-live test attendance', () => {
+test('accountant report includes recorded history but ignores operational bookings', () => {
   const previous = [db.sessions, db.attendance, db.coaches, db.classes, db.students] as const;
   const oldBoundary = process.env.ACADEMY_GO_LIVE_DATE;
   try {
@@ -153,7 +153,7 @@ test('accountant report ignores operational bookings and pre-go-live test attend
     db.classes = new Map([['class', { id: 'class', name: 'Class', class_type: 'GROUP' } as any]]);
     db.students = new Map([['student', { id: 'student', full_name: 'Alex' } as any]]);
     process.env.ACADEMY_GO_LIVE_DATE = '2026-11-01';
-    assert.deepEqual(getAccountantReport('2026-10'), []);
+    assert.equal(getAccountantReport('2026-10')[0]?.sessions[0]?.date, '2026-10-15');
     assert.deepEqual(getAccountantReport('2026-11'), []);
   } finally {
     [db.sessions, db.attendance, db.coaches, db.classes, db.students] = previous;

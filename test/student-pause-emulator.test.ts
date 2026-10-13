@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { commitPauseDeclaration, commitPauseBillingReview } from '../server/pausePersistence.js';
-import { persistAttendanceWithReplacementReconciliation, PauseAttendanceError } from '../server/replacementCredits.js';
+import { persistAttendanceWithReplacementReconciliation, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from '../server/replacementCredits.js';
 import { db } from '../server/db.js';
 import type { StudentPause, ActivityLog } from '../src/types.js';
 
@@ -63,6 +63,28 @@ test('attendance transaction rejects a concurrent pause lock and resumes after i
     await persistAttendanceWithReplacementReconciliation({ attendance: record, classType: 'INDIVIDUAL',
       pauseMembershipIds: [membership], sessionDate: '2026-11-01' }, firestore, async () => {});
     assert.equal((await firestore.collection('attendance').doc(attendanceId).get()).exists, true);
+  } finally { db.attendance = previousAttendance; await deleteApp(app); }
+});
+
+test('concurrent attendance submissions keep one document and preserve existing marks', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {
+  const app = initializeApp({ projectId: 'bingo-rollout-isolated' }, `attendance-unique-${crypto.randomUUID()}`);
+  const firestore = getFirestore(app, 'bingo-rollout-test');
+  const previousAttendance = db.attendance;
+  const sessionId = `session-${crypto.randomUUID()}`;
+  const studentId = `student-${crypto.randomUUID()}`;
+  const id = attendanceRecordId(sessionId, studentId);
+  const record = { id, session_id: sessionId, student_id: studentId, status: 'PRESENT', attendance_type: 'REGULAR',
+    marked_at: new Date().toISOString(), marked_by_user_id: 'coach' } as const;
+  try {
+    db.attendance = new Map();
+    const outcomes = await Promise.allSettled([1, 2].map(() => persistAttendanceWithReplacementReconciliation(
+      { attendance: record, classType: 'INDIVIDUAL', expectedMarkedAt: null }, firestore, async () => {})));
+    assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1);
+    assert.equal(outcomes.filter(outcome => outcome.status === 'rejected').length, 1);
+    assert.equal((await firestore.collection('attendance').where('session_id', '==', sessionId).where('student_id', '==', studentId).get()).size, 1);
+    await assert.rejects(() => persistAttendanceWithReplacementReconciliation(
+      { attendance: { ...record, id: `legacy-${crypto.randomUUID()}` }, classType: 'INDIVIDUAL', expectedMarkedAt: null },
+      firestore, async () => {}), AttendanceConflictError);
   } finally { db.attendance = previousAttendance; await deleteApp(app); }
 });
 

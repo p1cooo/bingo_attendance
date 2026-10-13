@@ -31,7 +31,7 @@ test('October billing and electronic attendance use independent date boundaries'
   }
 });
 
-test('regular launch preserves old marks but excludes them from official monthly reports and student totals', () => {
+test('regular launch preserves old marks in monthly reports and student totals', () => {
   const keys = ['students', 'coaches', 'classes', 'sessions', 'attendance', 'memberships', 'schedules'] as const;
   const previous = keys.map(key => db[key]);
   const oldAttendance = process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
@@ -54,9 +54,10 @@ test('regular launch preserves old marks but excludes them from official monthly
     const res: any = { json(value: unknown) { this.body = value; return this; } };
     layer.route.stack.at(-1).handle({ query: { month: '2026-10' }, user: { id: 'admin', role: 'ADMIN' } }, res);
     assert.equal(db.attendance.size, 2);
-    assert.equal(res.body.coaches_summary.find((c: any) => c.coach_id === 'coach').total_sessions_taught, 1);
-    assert.equal(res.body.students_summary.find((s: any) => s.student_id === 'student').attended_count, 1);
-    assert.equal(db.getPopulatedStudent('student')?.attendance_summary?.present_count, 1);
+    assert.equal(res.body.coaches_summary.find((c: any) => c.coach_id === 'coach').total_sessions_taught, 2);
+    assert.equal(res.body.students_summary.find((s: any) => s.student_id === 'student').attended_count, 2);
+    assert.equal(db.getPopulatedStudent('student')?.attendance_summary?.present_count, 2);
+    assert.equal(getAccountantReport('2026-10')[0]?.sessions.length, 2);
   } finally {
     keys.forEach((key, index) => (db[key] as any) = previous[index]);
     if (oldAttendance === undefined) delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE; else process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE = oldAttendance;
