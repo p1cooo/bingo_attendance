@@ -14,29 +14,6 @@ const SNAPSHOT_DOCUMENTS = ['users', 'coaches', 'parents', 'students', 'classes'
 
 type SnapshotDocument = typeof SNAPSHOT_DOCUMENTS[number];
 
-function snapshotValue(name: SnapshotDocument): unknown {
-  switch (name) {
-    case 'users': return Array.from(db.users.entries());
-    case 'coaches': return Array.from(db.coaches.entries());
-    case 'parents': return Array.from(db.parents.entries());
-    case 'students': return Array.from(db.students.entries());
-    case 'classes': return Array.from(db.classes.entries());
-    case 'schedules': return Array.from(db.schedules.entries());
-    case 'memberships': return Array.from(db.memberships.entries());
-    case 'studentPauses': return Array.from(db.studentPauses.entries());
-    case 'sessions': return Array.from(db.sessions.entries());
-    case 'attendance': return Array.from(db.attendance.entries());
-    case 'replacementCredits': return Array.from(db.replacementCredits.entries());
-    case 'replacementAdvanceCommitments': return Array.from(db.replacementAdvanceCommitments.entries());
-    case 'studentFees': return Array.from(db.studentFees.entries());
-    case 'studentPayments': return Array.from(db.studentPayments.entries());
-    case 'studentAdjustments': return Array.from(db.studentAdjustments.entries());
-    case 'auditLogs': return db.auditLogs;
-    case 'activityLogs': return db.activityLogs;
-    case 'notificationLogs': return db.notificationLogs;
-  }
-}
-
 function restoreSnapshot(name: SnapshotDocument, value: unknown): void {
   if (!Array.isArray(value)) throw new Error(`Invalid ${name} snapshot.`);
   switch (name) {
@@ -61,15 +38,6 @@ function restoreSnapshot(name: SnapshotDocument, value: unknown): void {
   }
 }
 
-async function writeStateSnapshots(revision: string): Promise<void> {
-  const firestore = getFirestoreDb();
-  const writer = firestore.bulkWriter();
-  SNAPSHOT_DOCUMENTS.forEach((name) => {
-    writer.set(firestore.collection(SNAPSHOT_COLLECTION).doc(name), removeUndefinedValues({ revision, value: snapshotValue(name) }));
-  });
-  await writer.close();
-}
-
 // The academy administrator confirmed that these are accidental duplicates of
 // the retained Wei Yuan coach record. Keeping this migration here makes the
 // merge atomic from the application's perspective and, importantly, moves all
@@ -86,20 +54,16 @@ let weiYuanMergePromise: Promise<void> | null = null;
 let hasVerifiedWeiYuanMerge = false;
 
 export async function markFirestoreStateChanged(): Promise<void> {
-  const snapshotStartedAt = performance.now();
-  const revision = new Date().toISOString();
-  await writeStateSnapshots(revision);
-  attendanceTiming('snapshot_14_docs', snapshotStartedAt);
-  const revisionStartedAt = performance.now();
-  await getFirestoreDb().collection(STATE_COLLECTION).doc(STATE_DOCUMENT).set({ revision }, { merge: true });
-  attendanceTiming('revision', revisionStartedAt);
+  // Canonical collection writes are already durable. Firestore cannot store the
+  // nested [id, document] arrays used by the optional boot-cache snapshots.
+  await publishFirestoreRevision();
 }
 
 /**
  * Attendance and its credit ledger are already durable in their Firestore
  * transaction. Publish a new revision without rebuilding all 14 boot-cache
  * snapshots. A cold instance sees the revision mismatch and reloads canonical
- * collections, then refreshes the cache during initialization.
+ * collections.
  */
 export async function publishFirestoreRevision(): Promise<void> {
   const startedAt = performance.now();
@@ -163,7 +127,7 @@ export function initializeFirestoreSync(): Promise<void> {
     lastDurableRevision = revision;
     // Canonical collections are ready to serve. A cache miss must never make
     // startup depend on 14 optional writes (or fail when write quota is full).
-    // The next ordinary full-snapshot mutation may refresh this boot cache.
+    // Canonical collection reads remain the source of truth for later reloads.
     console.log(`[Firestore] Sync complete: ${db.users.size} users, ${db.coaches.size} coaches, ${db.students.size} students.`);
   })().finally(() => { syncPromise = null; });
   return syncPromise;
