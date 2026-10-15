@@ -116,8 +116,8 @@ export const CoachWorkspace: React.FC = () => {
   // Compute daily totals
   const exemptModes = ['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'];
   const rollCallDue = (s: ClassSession) => s.attendance_expected !== false && !exemptModes.includes(s.status) && !exemptModes.includes(s.session_type || '');
-  const totalStudents = sessions.reduce((acc, s) => acc + (rollCallDue(s) ? s.expected_students_count || 0 : 0), 0);
-  const totalMarked = sessions.reduce((acc, s) => acc + (rollCallDue(s) ? s.marked_attendance_count || 0 : 0), 0);
+  const totalStudents = sessions.reduce((acc, s) => acc + (!exemptModes.includes(s.status) && !exemptModes.includes(s.session_type || '') ? s.expected_students_count || 0 : 0), 0);
+  const rosteredStudents = sessions.reduce((acc, s) => acc + (s.expected_students_count || 0), 0);
   const totalPresent = sessions.reduce((acc, s) => acc + (rollCallDue(s) ? s.present_count || 0 : 0), 0);
 
   const isSelectedToday = selectedDate === getTodayDateString();
@@ -125,13 +125,13 @@ export const CoachWorkspace: React.FC = () => {
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 transition-colors pb-16">
       <Header workspaceTitle="Coach Roll Call" />
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-        <div className="flex justify-end">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
+        <div className="flex justify-end gap-2">
           <button onClick={() => setShowClasses(true)} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black">My Classes</button>
           <button onClick={() => setShowStudents(true)} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] hover:bg-slate-50 dark:bg-neutral-800 dark:text-white">My Students</button>
         </div>
         {/* Welcome Coach Bento Hero */}
-        <div className="bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-5 sm:p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden">
+        <div className="bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 rounded-3xl p-4 sm:p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden">
           {/* Coach Color Accent Strip */}
           <div
             className="absolute top-0 left-0 right-0 h-2"
@@ -149,7 +149,7 @@ export const CoachWorkspace: React.FC = () => {
                   {coachColorName} Lead Coach
                 </span>
               </div>
-              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+              <h2 className="text-xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
                 Welcome, Coach {coachDisplayName}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
@@ -169,10 +169,10 @@ export const CoachWorkspace: React.FC = () => {
               </div>
               <div className="bg-[#ecfdf5] dark:bg-emerald-950/40 border-2 border-slate-900 dark:border-neutral-700 px-3.5 py-2 rounded-2xl text-center shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
                 <span className="block text-[9px] font-black uppercase text-emerald-800 dark:text-emerald-300">
-                  Students Present
+                  {sessions.some(s => s.attendance_expected === false) ? 'Rostered today' : 'Students Present'}
                 </span>
                 <span className="text-base font-black text-emerald-700 dark:text-emerald-300">
-                  {totalPresent}/{totalStudents}
+                  {sessions.some(s => s.attendance_expected === false) ? rosteredStudents : `${totalPresent}/${totalStudents}`}
                 </span>
               </div>
             </div>
@@ -180,7 +180,7 @@ export const CoachWorkspace: React.FC = () => {
         </div>
 
         {/* Horizontal Dynamic Date Strip & Custom Calendar Navigation */}
-        <div className="p-4 rounded-3xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] space-y-3">
+        <div className="p-3 sm:p-4 rounded-3xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] space-y-2 sm:space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
@@ -191,7 +191,7 @@ export const CoachWorkspace: React.FC = () => {
               </span>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:flex-wrap">
               <button
                 type="button"
                 onClick={() => handleShiftDay(-1)}
@@ -199,19 +199,18 @@ export const CoachWorkspace: React.FC = () => {
                 title="Previous Day"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Prev</span>
+                <span>Prev</span>
               </button>
 
-              {!isSelectedToday && (
-                <button
+              <button
                   type="button"
                   onClick={handleJumpToday}
-                  className="px-2.5 py-1.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 text-xs font-black bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 transition cursor-pointer flex items-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
+                  disabled={isSelectedToday}
+                  className="px-2.5 py-1.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 text-xs font-black bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 transition cursor-pointer flex items-center justify-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] disabled:opacity-50"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                   Today
                 </button>
-              )}
 
               <button
                 type="button"
@@ -219,7 +218,7 @@ export const CoachWorkspace: React.FC = () => {
                 className="px-2.5 py-1.5 rounded-xl border-2 border-slate-900 dark:border-neutral-700 text-xs font-black bg-slate-50 dark:bg-neutral-800 text-slate-800 dark:text-slate-200 hover:bg-slate-100 transition cursor-pointer flex items-center gap-1 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]"
                 title="Next Day"
               >
-                <span className="hidden sm:inline">Next</span>
+                <span>Next</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
 
@@ -227,11 +226,13 @@ export const CoachWorkspace: React.FC = () => {
                 value={selectedDate}
                 onChange={handleCustomDateSelect}
                 compact
+                className="col-span-3 sm:col-auto"
+                buttonClassName="w-full sm:w-auto"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-7 gap-2 pt-1">
+          <div className="grid grid-cols-7 gap-1 sm:gap-2 pt-1">
             {weekDays.map((wd) => {
               const isSelected = selectedDate === wd.dateStr;
               return (
@@ -239,7 +240,9 @@ export const CoachWorkspace: React.FC = () => {
                   key={wd.dateStr}
                   type="button"
                   onClick={() => handleSelectDay(wd.dateStr)}
-                  className={`flex flex-col items-center justify-center py-2 px-1 rounded-2xl transition-all cursor-pointer ${
+                  aria-label={wd.dateStr}
+                  aria-current={isSelected ? 'date' : undefined}
+                  className={`min-w-0 flex flex-col items-center justify-center py-2 px-0.5 sm:px-1 rounded-2xl transition-all cursor-pointer ${
                     isSelected
                       ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-[1.02]'
                       : wd.isToday
@@ -299,7 +302,7 @@ export const CoachWorkspace: React.FC = () => {
                 };
               } else if (sess.attendance_expected === false) {
                 statusBadge = {
-                  text: 'Before attendance go-live',
+                  text: 'Attendance not activated',
                   bgClass: 'bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 border-sky-300',
                 };
               } else if (markedCount > 0 && markedCount < expectedCount) {
@@ -318,7 +321,7 @@ export const CoachWorkspace: React.FC = () => {
                 <div
                   key={sess.id}
                   id={`session-card-${sess.id}`}
-                  className={`rounded-3xl border-2 border-slate-900 dark:border-neutral-700 p-5 sm:p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden transition-all ${
+                  className={`rounded-3xl border-2 border-slate-900 dark:border-neutral-700 p-4 sm:p-6 shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.06)] relative overflow-hidden transition-all ${
                     isCancelled
                       ? 'bg-rose-50/40 dark:bg-rose-950/20'
                       : isOffDay
@@ -332,7 +335,7 @@ export const CoachWorkspace: React.FC = () => {
                     style={{ backgroundColor: sessionCoachColor }}
                   />
 
-                  <div className="pl-3 flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+                  <div className="pl-2 sm:pl-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-5">
                     <div className="space-y-2">
                       {/* Time & Badges */}
                       <div className="flex items-center gap-2 flex-wrap">
@@ -367,7 +370,7 @@ export const CoachWorkspace: React.FC = () => {
 
                         {isOffDay && (
                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-200 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 text-slate-800 dark:text-slate-200">
-                            5th-Week Off Day
+                            Planned Off-Day
                           </span>
                         )}
                       </div>
@@ -384,7 +387,7 @@ export const CoachWorkspace: React.FC = () => {
                       )}
 
                       {/* Coach & Enrolled Student Count */}
-                      <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-400 font-medium">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-600 dark:text-slate-400 font-medium">
                         <span className="flex items-center gap-1 font-bold">
                           <Users className="w-3.5 h-3.5 text-slate-400" />
                           <span>{expectedCount} chess students rostered</span>
@@ -405,7 +408,7 @@ export const CoachWorkspace: React.FC = () => {
                     </div>
 
                     {/* Action Button & Status */}
-                    <div className="flex flex-col sm:items-end gap-2.5 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200 dark:border-neutral-800">
+                    <div className="flex flex-col items-start sm:items-end gap-2.5 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-200 dark:border-neutral-800">
                       <span
                         className={`inline-flex items-center gap-1 text-xs font-black px-3 py-1 rounded-full border ${statusBadge.bgClass}`}
                       >
@@ -415,19 +418,18 @@ export const CoachWorkspace: React.FC = () => {
                       <button
                         id={`take-attendance-btn-${sess.id}`}
                         onClick={() => setActiveSessionId(sess.id)}
-                        disabled={isOffDay || isCancelled}
-                        className="py-2.5 px-5 rounded-2xl text-xs font-black bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex items-center gap-2 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                        className="w-full sm:w-auto justify-center py-2.5 px-5 rounded-2xl text-xs font-black bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex items-center gap-2 cursor-pointer"
                       >
                         <span>
                           {isCancelled
-                            ? 'Cancelled (No Roll Call)'
+                            ? 'Manage cancelled session'
                             : isOffDay
-                            ? 'Off-Day (No Roll Call)'
+                            ? 'Manage off-day'
                             : markedCount > 0
                             ? 'Open Attendance Sheet'
-                            : 'Take Roll Call'}
+                            : sess.attendance_expected === false ? 'View roster' : 'Take Roll Call'}
                         </span>
-                        {!isCancelled && !isOffDay && <ChevronRight className="w-4 h-4" />}
+                        <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
                   </div>

@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useToast } from '../common/Toast.js';
 import { api } from '../../lib/api.js';
 import { getTodayDateString } from '../../lib/dateUtils.js';
 import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import { attendanceSaves } from '../../lib/attendanceSaves.js';
+import { coachAttendanceCounts } from '../../lib/coachAttendanceCounts.js';
 import { useAttendanceSaves } from '../common/AttendanceSaveStatus.js';
-import { ClassSession, Student, AttendanceRecord, AttendanceStatus, Coach } from '../../types.js';
+import { ClassSession, Student, StudentPause, AttendanceRecord, AttendanceStatus, Coach } from '../../types.js';
 import {
   ArrowLeft,
   Check,
@@ -60,6 +61,11 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [pauseReason, setPauseReason] = useState('EXAMINATION');
   const [pauseNote, setPauseNote] = useState('');
   const [pauseBusy, setPauseBusy] = useState(false);
+  const [actionStudentId, setActionStudentId] = useState<string | null>(null);
+  const [actionPauses, setActionPauses] = useState<StudentPause[]>([]);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [resumingPauseId, setResumingPauseId] = useState<string | null>(null);
+  const pauseRequest = useRef(0);
 
   // Replacement student modal
   const [isReplacementModalOpen, setIsReplacementModalOpen] = useState(false);
@@ -152,8 +158,36 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       showToast('Student pause saved. Finance has a billing review item.', 'success');
       setPauseStudent(null); setPauseNote(''); setPauseEnd('');
       await fetchSession();
+      if (actionStudentId === pauseStudent.id) await loadStudentPauses(pauseStudent.id);
     } catch (error: any) { showToast(error.message || 'Could not save pause', 'error'); }
     finally { setPauseBusy(false); }
+  };
+
+  const loadStudentPauses = async (studentId: string) => {
+    const request = ++pauseRequest.current;
+    setActionLoading(true);
+    try {
+      const result = await api.getStudentPauses(studentId);
+      if (request === pauseRequest.current) setActionPauses(result.pauses || []);
+    } catch (error: any) { if (request === pauseRequest.current) showToast(error.message || 'Could not load student pauses', 'error'); }
+    finally { if (request === pauseRequest.current) setActionLoading(false); }
+  };
+
+  const toggleStudentActions = (studentId: string) => {
+    if (actionStudentId === studentId) { pauseRequest.current++; setActionStudentId(null); return; }
+    setActionStudentId(studentId);
+    setActionPauses([]);
+    void loadStudentPauses(studentId);
+  };
+
+  const resumePause = async (pause: StudentPause) => {
+    setResumingPauseId(pause.id);
+    try {
+      await api.resumeStudentPause(pause.id, getTodayDateString());
+      showToast('Student resumes this class today', 'success');
+      await Promise.all([fetchSession(), loadStudentPauses(pause.student_id)]);
+    } catch (error: any) { showToast(error.message || 'Could not resume student pause', 'error'); }
+    finally { setResumingPauseId(null); }
   };
 
   const handleAddReplacement = async (e: React.FormEvent) => {
@@ -332,16 +366,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     );
   });
 
-  // Stats calculation: Present + Absent + Unmarked = Expected / Total Students
-  const totalStudents = rollList.filter(item => !session.paused_students?.some(p => p.student_id === item.student.id)).length;
-  const presentCount = rollList.filter((item) => item.record?.status === 'PRESENT').length;
-  const absentCount = rollList.filter((item) => item.record?.status === 'ABSENT').length;
+  const { eligible: totalStudents, present: presentCount, absent: absentCount, excused: excusedCount, unmarked: unmarkedCount } = coachAttendanceCounts(session);
   const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
   const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
   const beforeGoLive = session.attendance_expected === false;
-  const unmarkedCount = beforeGoLive || isCancelled || isOffDay ? 0 : rollList.filter(
-    (item) => !session.paused_students?.some(p => p.student_id === item.student.id) && (!item.record || (item.record.status !== 'PRESENT' && item.record.status !== 'ABSENT'))
-  ).length;
 
   const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
   const hasTakenAttendance = (session.attendance_records || []).some((record) => record.status !== 'BOOKED');
@@ -386,7 +414,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             <span>Back to Sessions</span>
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span
               className="w-2.5 h-2.5 rounded-full border border-slate-900"
               style={{ backgroundColor: coachColor }}
@@ -410,7 +438,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               )}
               {isOffDay && (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-200 dark:bg-neutral-800 border border-slate-300 dark:border-neutral-700 text-slate-800 dark:text-slate-200">
-                  5th-Week Off Day
+                  Planned Off-Day
                 </span>
               )}
               {isReplacementCoach && (
@@ -425,7 +453,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   Future Session
                 </span>
               )}
-              {beforeGoLive && <span className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-0.5 text-[10px] font-black text-sky-800">Before attendance go-live</span>}
+              {beforeGoLive && !isCancelled && !isOffDay && <span className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-0.5 text-[10px] font-black text-sky-800">Attendance not yet activated</span>}
             </div>
 
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500 dark:text-slate-400">
@@ -435,14 +463,14 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               </span>
               {session.room_location && <span>• Venue: {session.room_location}</span>}
             </div>
-            {isRegularCoach && <div className="mt-3 text-xs flex flex-wrap items-center gap-2">
+            {(isRegularCoach || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && <div className="mt-3 text-xs flex flex-wrap items-center gap-2">
               {hasTakenAttendance && <span className="text-slate-500">Date, time, and replacement coach are locked because attendance has been taken.</span>}
               <button type="button" onClick={openOccurrence} className="rounded-xl border border-slate-900 px-3 py-1.5 font-black text-slate-900 dark:border-white dark:text-white">Edit this occurrence</button>
             </div>}
           </div>
 
           {/* Quick Roll Summary Badges */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="bg-[#ecfdf5] dark:bg-emerald-950/40 border-2 border-slate-900 dark:border-neutral-700 px-3.5 py-1.5 rounded-2xl text-center shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
               <span className="block text-[9px] font-black uppercase text-emerald-800 dark:text-emerald-300">
                 Present
@@ -467,8 +495,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                 {unmarkedCount}
               </span>
             </div>
+            {excusedCount > 0 && <div className="rounded-2xl border-2 border-slate-900 bg-sky-50 px-3.5 py-1.5 text-center shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:border-neutral-700 dark:bg-sky-950/40"><span className="block text-[9px] font-black uppercase text-sky-800 dark:text-sky-300">Excused</span><span className="text-sm font-black text-sky-800 dark:text-sky-300">{excusedCount}</span></div>}
           </div>
         </div>
+        {beforeGoLive && !isCancelled && !isOffDay && <p className="mt-4 text-xs font-semibold text-sky-800 dark:text-sky-300">{unmarkedCount} of {totalStudents} eligible students await a mark. Attendance recording opens after academy activation.</p>}
       </div>
 
       {editingOccurrence && <OccurrenceEditor session={session} coaches={availableCoaches} onClose={() => setEditingOccurrence(false)} onSaved={async () => {
@@ -564,6 +594,9 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         ) : (
           filteredRoll.map(({ student, record, isReplacement, isUnregistered }) => {
             const pause = session.paused_students?.find(p => p.student_id === student.id);
+            const membershipId = session.enrolled_memberships?.find(m => m.student_id === student.id)?.membership_id;
+            const canManageStudentPause = !!membershipId && !isReplacement && !isUnregistered && (isRegularCoach || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN');
+            const classPauses = actionPauses.filter(p => p.membership_id === membershipId).sort((a, b) => b.start_date.localeCompare(a.start_date));
             const status = record?.status;
             const isSaving = attendanceSaves.isPending(sessionId, student.id);
             const studentFullName = student?.full_name || 'Student';
@@ -593,12 +626,12 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               >
                 <div className="flex flex-col gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-3">
                   {/* Student Details */}
-                  <div className="flex items-start gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-xs flex items-center justify-center border-2 border-slate-900 flex-shrink-0">
                       {initials}
                     </div>
 
-                    <div className="space-y-0.5">
+                    <div className="min-w-0 space-y-0.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
                           {studentFullName}
@@ -619,10 +652,11 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           </span>
                         )}
                         {isReplacement && record?.replacement_advance_commitment_id && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">Advance</span>}
-                        {pause && <span className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800">ON PAUSE</span>}
+                        {pause && <span className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800">PAUSED FOR THIS SESSION</span>}
+                        {status === 'EXCUSED' && <span className="rounded-full border border-sky-300 bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-800">EXCUSED</span>}
+                        {status === 'LATE' && <span className="rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800">LATE</span>}
                       </div>
                       {pause && <p className="text-[11px] font-bold text-violet-700">Student on Pause: {pause.start_date}–{pause.end_date || 'Until Further Notice'}{pause.end_date ? ` · Expected return ${dayAfter(pause.end_date)}` : ''}</p>}
-                      {!pause && !isReplacement && !isUnregistered && (isRegularCoach || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && <button type="button" onClick={() => setPauseStudent(student)} className="text-[11px] font-bold text-violet-700 underline">Declare class pause</button>}
 
                       <div className="flex items-center gap-2.5 text-xs text-slate-500 font-bold flex-wrap">
                         {studentId && <span className="font-mono">{studentId}</span>}
@@ -634,6 +668,23 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           <span>• Tel: {student.parent.phone}</span>
                         )}
                       </div>
+                      {canManageStudentPause && <div className="mt-2">
+                        <button type="button" aria-expanded={actionStudentId === student.id} aria-controls={`student-actions-${student.id}`} onClick={() => toggleStudentActions(student.id)} className="min-h-10 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-neutral-600 dark:text-slate-200">Student options</button>
+                        {actionStudentId === student.id && <div id={`student-actions-${student.id}`} className="mt-2 max-w-md space-y-2 rounded-xl border border-slate-300 bg-slate-50 p-3 text-xs dark:border-neutral-700 dark:bg-neutral-800">
+                          <p className="font-black">Participation in this class</p>
+                          {actionLoading ? <p>Loading pauses…</p> : <>
+                            {classPauses.length > 0 ? classPauses.map(p => {
+                              const activeToday = p.start_date <= todayStr && (!p.end_date || todayStr <= p.end_date);
+                              return <div key={p.id} className="rounded-lg bg-white p-2 dark:bg-neutral-900">
+                                <p className="font-bold">{activeToday ? 'Active pause' : p.start_date > todayStr ? 'Upcoming pause' : 'Past pause'} · {p.start_date}–{p.end_date || 'Until further notice'}</p>
+                                {activeToday && todayStr > p.start_date && <button type="button" disabled={resumingPauseId === p.id} onClick={() => resumePause(p)} className="mt-2 rounded-lg border border-violet-600 px-3 py-2 font-black text-violet-700 disabled:opacity-50">{resumingPauseId === p.id ? 'Resuming…' : 'Resume in this class today'}</button>}
+                                {activeToday && todayStr === p.start_date && <p className="mt-1 text-slate-500">Resumption is available from tomorrow.</p>}
+                              </div>;
+                            }) : <p className="text-slate-500">No pauses recorded for this class.</p>}
+                            {!classPauses.some(p => p.start_date <= todayStr && (!p.end_date || todayStr <= p.end_date)) && <button type="button" onClick={() => setPauseStudent(student)} className="min-h-10 rounded-lg bg-violet-700 px-3 py-2 font-black text-white">Pause student in this class</button>}
+                          </>}
+                        </div>}
+                      </div>}
 
                       {record?.replacement_note && (
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold italic mt-1">
@@ -665,7 +716,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   </div>
 
                   {/* 2 Direct 1-Tap Attendance Actions: [ ✓ Present ] [ ✕ Absent ] */}
-                  <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                  <div className="flex w-full items-center gap-2 sm:w-auto sm:self-auto">
                     {/* PRESENT */}
                     <button
                       type="button"
@@ -680,7 +731,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           shirtWorn,
                         )
                       }
-                      className={`h-9 px-4 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
+                      className={`h-10 flex-1 sm:flex-none px-3 sm:px-4 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all border-2 border-slate-900 ${
                         status === 'PRESENT'
                           ? 'bg-emerald-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
                           : 'bg-white hover:bg-emerald-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer'
@@ -702,7 +753,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           isReplacement ? 'REPLACEMENT' : 'REGULAR'
                         )
                       }
-                      className={`h-9 px-4 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all border-2 border-slate-900 ${
+                      className={`h-10 flex-1 sm:flex-none px-3 sm:px-4 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all border-2 border-slate-900 ${
                         status === 'ABSENT'
                           ? 'bg-rose-600 text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105'
                           : 'bg-white hover:bg-rose-50 text-slate-900 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer'
@@ -715,7 +766,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
 
                   {/* Stars follow attendance in the action flow. The portal
                       remains the source of truth for pet bonuses. */}
-                  <div className="flex h-9 shrink-0 items-center self-end overflow-hidden rounded-xl border-2 border-slate-900 bg-amber-50 dark:bg-amber-950/20 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.08)] sm:self-auto">
+                  <div className="flex h-10 shrink-0 items-center self-start overflow-hidden rounded-xl border-2 border-slate-900 bg-amber-50 dark:bg-amber-950/20 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.08)] sm:self-auto">
                     <Sparkles className="ml-2.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
                     <input
                       type="number"
@@ -735,7 +786,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
                       title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
                       aria-pressed={shirtWorn}
-                      className={`flex h-full w-9 items-center justify-center border-l-2 border-slate-900 text-sm transition-colors disabled:opacity-50 ${shirtWorn ? 'bg-amber-400' : 'bg-white hover:bg-amber-100 dark:bg-neutral-800 dark:hover:bg-neutral-700'}`}
+                      aria-label={`Lucky T-shirt for ${studentFullName}`}
+                      className={`flex h-full w-10 items-center justify-center border-l-2 border-slate-900 text-sm transition-colors disabled:opacity-50 ${shirtWorn ? 'bg-amber-400' : 'bg-white hover:bg-amber-100 dark:bg-neutral-800 dark:hover:bg-neutral-700'}`}
                     >👕</button>
                   </div>
                 </div>

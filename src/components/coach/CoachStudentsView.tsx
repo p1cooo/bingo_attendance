@@ -72,31 +72,31 @@ export const CoachStudentsView: React.FC = () => {
       showToast('Bingo Space link copied', 'success');
     } catch (error: any) { showToast(error.message || 'Could not copy link', 'error'); }
   };
-  return <main className="mx-auto max-w-6xl p-5 text-slate-950">
-    <header className="mb-5 flex items-center justify-between">
+  return <main className="mx-auto max-w-6xl min-w-0 p-4 sm:p-5 text-slate-950">
+    <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="text-2xl font-black tracking-tight">My Students</h2><p className="text-sm text-slate-500">Students in your normal classes.</p></div>
       <button className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black" onClick={() => { setSelected(null); setForm(emptyForm); setScheduleIds([]); setEditing(true); }}>Add Student</button>
     </header>
     <input aria-label="Search student name or Attendance student ID" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or Attendance ID (STU-0001)" className="mb-3 w-full rounded-xl border-2 border-slate-900 bg-white p-3 text-sm" />
     <div className="mb-4 space-y-2">
-      <div aria-label="Student credit and link filters" className="overflow-x-auto pb-1"><div className="flex w-max gap-2">
+      <div aria-label="Student credit and link filters" className="min-w-0"><div className="flex flex-wrap gap-2">
         <CoachFilterChip label="All" active={!query && creditFilter === 'ALL' && linkFilter === 'ALL' && days.length === 0} onClick={resetFilters} />
         <CoachFilterChip label="Has Credit" active={creditFilter === 'POSITIVE'} onClick={() => setCreditFilter((current) => current === 'POSITIVE' ? 'ALL' : 'POSITIVE')} />
         <CoachFilterChip label="Negative Credit" active={creditFilter === 'NEGATIVE'} onClick={() => setCreditFilter((current) => current === 'NEGATIVE' ? 'ALL' : 'NEGATIVE')} />
         <CoachFilterChip label="Linked" active={linkFilter === 'REGISTERED'} onClick={() => setLinkFilter((current) => current === 'REGISTERED' ? 'ALL' : 'REGISTERED')} />
         <CoachFilterChip label="Not Linked" active={linkFilter === 'NOT_REGISTERED'} onClick={() => setLinkFilter((current) => current === 'NOT_REGISTERED' ? 'ALL' : 'NOT_REGISTERED')} />
       </div></div>
-      <div aria-label="Normal class day filters" className="overflow-x-auto pb-1"><div className="flex w-max gap-2">
+      <div aria-label="Normal class day filters" className="min-w-0"><div className="flex flex-wrap gap-2">
         {WEEK_DAYS.map((day) => <CoachFilterChip key={day.value} label={day.short} active={days.includes(day.value)} onClick={() => toggleDay(day.value)} />)}
       </div></div>
     </div>
     <section className="space-y-3">{visible.length === 0 && <p className="rounded-2xl border-2 border-slate-900 bg-white p-4 text-sm font-bold text-slate-500">No students match your search and filters.</p>}{visible.map((student) => <article key={student.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0_#e2e8f0]">
-      <div><h3 className="font-black">{student.full_name}</h3><p className="text-xs text-slate-500">{student.student_id} · {student.replacement_credits} replacement credits</p></div>
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => openStudent(student.id)} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Bingo</button>
-        <button onClick={() => openStudent(student.id, true)} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button>
+      <div className="min-w-0"><h3 className="break-words font-black">{student.full_name}</h3><p className="text-xs text-slate-500">{student.student_id} · {student.replacement_credits} replacement credits</p></div>
+      <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+        <button onClick={() => openStudent(student.id)} className="min-h-10 rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Bingo</button>
+        <button onClick={() => openStudent(student.id, true)} className="min-h-10 rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button>
         {student.portal_account_status === 'REGISTERED' ? <span className="rounded-lg bg-emerald-100 px-3 py-2 text-xs font-black text-emerald-800">Linked</span> :
-          student.portal_account_status === 'NOT_REGISTERED' ? <button onClick={() => links[student.id] ? navigator.clipboard.writeText(links[student.id]).then(() => showToast('Link copied', 'success')) : invite(student)} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white">Copy Link</button> :
+          student.portal_account_status === 'NOT_REGISTERED' ? <button onClick={() => links[student.id] ? navigator.clipboard.writeText(links[student.id]).then(() => showToast('Link copied', 'success')) : invite(student)} className="min-h-10 rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white">Copy Link</button> :
           <span className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-black">Status unavailable</span>}
       </div>
     </article>)}</section>

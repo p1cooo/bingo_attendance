@@ -235,7 +235,7 @@ class DatabaseStore {
     );
     const pausedStudents = enrolledMemberships.flatMap((membership) => {
       const pause = pauseOnDate(this.studentPauses.values(), membership.id, session.session_date);
-      return pause ? [{ student_id: membership.student_id, membership_id: membership.id, start_date: pause.start_date, end_date: pause.end_date }] : [];
+      return pause ? [{ id: pause.id, student_id: membership.student_id, membership_id: membership.id, start_date: pause.start_date, end_date: pause.end_date }] : [];
     });
     const expectedStudentsCount = enrolledMemberships.length - pausedStudents.length + additionalSessionStudentIds.size;
 

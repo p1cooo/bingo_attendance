@@ -223,7 +223,7 @@ export interface ClassSession {
   present_count?: number;
   attendance_records?: AttendanceRecord[];
   enrolled_students?: Student[];
-  paused_students?: Array<{ student_id: string; membership_id: string; start_date: string; end_date: string | null }>;
+  paused_students?: Array<{ id: string; student_id: string; membership_id: string; start_date: string; end_date: string | null }>;
   enrolled_memberships?: Array<{ student_id: string; membership_id: string }>;
 }
 

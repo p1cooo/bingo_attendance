@@ -13,15 +13,15 @@ export const Header: React.FC<HeaderProps> = ({ workspaceTitle }) => {
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 dark:bg-neutral-900/95 backdrop-blur border-b-2 border-slate-900 dark:border-neutral-800 transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div className={`max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 ${isAdmin ? 'h-16' : 'min-h-16 py-2 sm:py-0'}`}>
         {/* Brand & Workspace Title */}
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <div className="flex items-center justify-center w-9 h-9 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-sm tracking-tight border-2 border-slate-900 dark:border-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.1)]">
             <Crown className="w-5 h-5 text-amber-400 dark:text-amber-500" />
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="font-black text-slate-900 dark:text-white text-base leading-tight tracking-tight">
+              <h1 className="font-black text-slate-900 dark:text-white text-xs sm:text-base leading-tight tracking-tight whitespace-nowrap">
                 BINGO CHESS ACADEMY
               </h1>
               {workspaceTitle && (
@@ -37,10 +37,10 @@ export const Header: React.FC<HeaderProps> = ({ workspaceTitle }) => {
         </div>
 
         {/* Right side: User pill, Theme toggle, Logout */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
           {/* User profile identifier */}
           {user && (
-            <div className="flex items-center gap-2.5 py-1.5 px-3 rounded-2xl bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 text-xs shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.06)]">
+            <div role="group" aria-label={isAdmin ? 'Administrator profile' : `Coach ${coachProfile?.name || user.name} profile`} className={`flex items-center gap-2.5 rounded-2xl bg-slate-50 dark:bg-neutral-800 border-2 border-slate-900 dark:border-neutral-700 text-xs shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,0.06)] ${isAdmin ? 'py-1.5 px-3' : 'p-2 sm:py-1.5 sm:px-3'}`} title={isAdmin ? 'Administrator' : `Coach ${coachProfile?.name || user.name}`}>
               {isAdmin ? (
                 <div className="w-5 h-5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 flex items-center justify-center font-black text-[10px]">
                   AD
@@ -51,7 +51,7 @@ export const Header: React.FC<HeaderProps> = ({ workspaceTitle }) => {
                   style={{ backgroundColor: coachProfile?.color || '#3b82f6' }}
                 />
               )}
-              <div className="flex flex-col text-left">
+              <div className={`${isAdmin ? 'flex' : 'hidden sm:flex'} flex-col text-left`}>
                 <span className="font-black text-slate-900 dark:text-white leading-tight">
                   {isAdmin ? 'Administrator' : `Coach ${coachProfile?.name || user.name}`}
                 </span>
