@@ -725,21 +725,19 @@ router.post('/admin/users/:id/reset-password', authenticateUser, requireAdmin, a
     return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
   }
 
+  if (!hasAdminCredentials || !adminAuth) {
+    return res.status(503).json({ error: 'Password reset is temporarily unavailable.' });
+  }
+
   try {
-    if (hasAdminCredentials && adminAuth) {
-      try {
-        await adminAuth.updateUser(user.id, { password: newPassword });
-      } catch (fbErr) {
-        console.warn('[Admin Reset Password] Firebase Auth note:', fbErr);
-      }
-    }
+    await adminAuth.updateUser(user.id, { password: newPassword });
     return res.json({
       success: true,
       message: `Password for ${user.name} (${user.email}) has been reset successfully.`,
     });
   } catch (err: any) {
-    console.error('[Admin Reset Password] Error:', err);
-    return res.status(500).json({ error: err.message || 'Failed to reset password.' });
+    console.error('[Admin Reset Password] Firebase Auth failed:', err?.code || 'unknown');
+    return res.status(502).json({ error: 'Could not confirm the password reset in Firebase Authentication. Please verify the account before retrying.' });
   }
 });
 

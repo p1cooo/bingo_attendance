@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { sendPasswordResetEmail } from 'firebase/auth';
 import { useAuth } from '../../context/AuthContext.js';
 import { useTheme } from '../../context/ThemeContext.js';
+import { clientAuth, isFirebaseAuthAvailable } from '../../lib/firebase.js';
 import {
   Lock,
   User as UserIcon,
@@ -21,7 +23,39 @@ export const LoginView: React.FC = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  const handleForgotPassword = async () => {
+    const email = identifier.trim();
+    setError(null);
+    setRecoveryNotice(null);
+    if (!email.includes('@')) {
+      setError('Enter your registered email address above to receive a password reset link.');
+      return;
+    }
+    if (!isFirebaseAuthAvailable) {
+      setError('Password recovery is unavailable. Please contact an administrator.');
+      return;
+    }
+
+    setIsResetting(true);
+    try {
+      await sendPasswordResetEmail(clientAuth, email);
+      setRecoveryNotice('If this email has an account, a password reset link is on its way. Check your inbox and spam folder.');
+    } catch (err: any) {
+      if (err?.code === 'auth/user-not-found') {
+        setRecoveryNotice('If this email has an account, a password reset link is on its way. Check your inbox and spam folder.');
+      } else {
+        setError(err?.code === 'auth/invalid-email'
+          ? 'Enter a valid email address.'
+          : 'Could not send a reset link. Please try again later or contact an administrator.');
+      }
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +65,7 @@ export const LoginView: React.FC = () => {
     }
 
     setError(null);
+    setRecoveryNotice(null);
     setIsSubmitting(true);
 
     try {
@@ -88,6 +123,7 @@ export const LoginView: React.FC = () => {
                 <span>{error}</span>
               </div>
             )}
+            {recoveryNotice && <p role="status" className="mb-5 rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-3 text-xs font-bold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200">{recoveryNotice}</p>}
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -142,7 +178,7 @@ export const LoginView: React.FC = () => {
               <button
                 id="sign-in-submit-btn"
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isResetting}
                 className="w-full mt-2 py-3 px-4 rounded-2xl text-xs font-black uppercase tracking-widest bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 border-2 border-slate-900 dark:border-white shadow-[4px_4px_0px_0px_rgba(15,23,42,1)] dark:shadow-[4px_4px_0px_0px_rgba(255,255,255,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
               >
                 {isSubmitting ? (
@@ -153,6 +189,9 @@ export const LoginView: React.FC = () => {
                     <ArrowRight className="w-4 h-4 stroke-[3]" />
                   </>
                 )}
+              </button>
+              <button type="button" onClick={handleForgotPassword} disabled={isSubmitting || isResetting} className="w-full text-center text-xs font-bold text-slate-700 underline underline-offset-2 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white disabled:opacity-50">
+                {isResetting ? 'Sending reset link…' : 'Forgot password?'}
               </button>
             </form>
           </div>
