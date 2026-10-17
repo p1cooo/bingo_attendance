@@ -1040,7 +1040,11 @@ router.get('/sessions/:id/replacement-candidates', authenticateUser, requireCoac
   if (!session) return res.status(404).json({ error: 'Session not found' });
   if (!verifySessionAttendanceAccess(session.id, req.user!)) return res.status(403).json({ error: 'Forbidden' });
   const q = String(req.query.search || '').trim().toLowerCase();
-  const candidates = Array.from(db.students.values()).filter((student) => student.status === 'ACTIVE' && (!q || student.full_name.toLowerCase().includes(q) || student.student_id.toLowerCase().includes(q))).map((student) => ({
+  const candidates = Array.from(db.students.values()).filter((student) => student.status === 'ACTIVE' && !student.is_unregistered &&
+    Array.from(db.memberships.values()).some((membership) => membership.student_id === student.id && membership.status === 'ACTIVE' &&
+      Boolean(db.schedules.get(membership.schedule_id)) && db.schedules.get(membership.schedule_id)!.class_id !== session.class_id) &&
+    !db.getPopulatedSession(session.id)?.enrolled_students?.some((item) => item.id === student.id) &&
+    (!q || student.full_name.toLowerCase().includes(q) || student.student_id.toLowerCase().includes(q))).map((student) => ({
     id: student.id, full_name: student.full_name, student_id: student.student_id,
     replacement_credits: replacementCreditBalance(student.id),
   }));
@@ -2464,14 +2468,17 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   const requestStartedAt = performance.now();
   res.once('finish', () => attendanceTiming('request_total', requestStartedAt));
   next();
-}, authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
+}, authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
   const { student_id, status, attendance_type, replacement_note, base_stars, lucky_tshirt_worn } = req.body;
 
-  if (!student_id || !status) {
+  if (typeof student_id !== 'string' || !student_id || !status) {
     return res.status(400).json({ error: 'Student ID and attendance status are required' });
   }
+  if (!['PRESENT', 'ABSENT'].includes(status)) return res.status(400).json({ error: 'Choose Present or Absent.' });
+  if (attendance_type !== undefined && !['REGULAR', 'REPLACEMENT'].includes(attendance_type)) return res.status(400).json({ error: 'Invalid attendance type.' });
+  if (lucky_tshirt_worn !== undefined && typeof lucky_tshirt_worn !== 'boolean') return res.status(400).json({ error: 'Lucky T-shirt must be true or false.' });
 
   const session = db.sessions.get(id);
   if (!session) {
@@ -2491,6 +2498,10 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     return res.status(403).json({
       error: 'Forbidden: You are not authorized to mark attendance for this session',
     });
+  }
+  if (['CANCELLED', 'COACH_CANCELLED', 'OFF_DAY', 'PLANNED_OFF_DAY'].includes(session.status) ||
+      ['COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(session.session_type || '')) {
+    return res.status(409).json({ error: 'Roll call is closed for this occurrence.' });
   }
 
   // Future session attendance restriction (attendance only opens on or after session date)
@@ -2513,8 +2524,14 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   if (classMemberships.some((membership) => pauseOnDate(db.studentPauses.values(), membership.id, session.session_date))) {
     return res.status(409).json({ error: 'Attendance is not required while this student is on pause for this class.' });
   }
-  if (!db.students.has(student_id) || !existingRecord && !classMemberships.some((membership) => membership.status === 'ACTIVE')) {
-    return res.status(403).json({ error: 'The student is not enrolled or booked for this occurrence.' });
+  const studentForRoll = db.students.get(student_id);
+  if (!studentForRoll || studentForRoll.status !== 'ACTIVE') return res.status(404).json({ error: 'Active student not found.' });
+  const enrolled = db.getPopulatedSession(id)?.enrolled_students?.some((item) => item.id === student_id);
+  if (!existingRecord && !enrolled) return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
+  if (!existingRecord && attendance_type === 'REPLACEMENT') return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
+  if (existingRecord && attendance_type && attendance_type !== existingRecord.attendance_type) return res.status(409).json({ error: 'Attendance type cannot be changed during roll call.' });
+  if (existingRecord && existingRecord.status !== 'BOOKED' && existingRecord.status !== status) {
+    return res.status(409).json({ error: 'Attendance is already recorded. Ask an admin to correct it.' });
   }
 
   const prevStatus: AttendanceStatus | 'NOT_MARKED' = existingRecord ? existingRecord.status : 'NOT_MARKED';
@@ -2531,6 +2548,11 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     return res.status(400).json({ error: 'Invalid attendance type for this occurrence.' });
   }
   const suppliedStars = base_stars === undefined || base_stars === '' ? undefined : Number(base_stars);
+  if (existingRecord && existingRecord.status !== 'BOOKED' &&
+      (suppliedStars !== undefined && suppliedStars !== existingRecord.base_stars ||
+       lucky_tshirt_worn !== undefined && Boolean(lucky_tshirt_worn) !== Boolean(existingRecord.lucky_tshirt_worn))) {
+    return res.status(409).json({ error: 'Attendance is already recorded. Ask an admin to correct it.' });
+  }
   if (suppliedStars !== undefined && (!Number.isFinite(suppliedStars) || suppliedStars < 0 || suppliedStars > 10000)) {
     return res.status(400).json({ error: 'Stars must be a number from 0 to 10,000.' });
   }
@@ -2567,44 +2589,45 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   };
   const attendanceClass = db.classes.get(session.class_id);
   if (!attendanceClass) return res.status(409).json({ error: 'The session class is unavailable. Attendance was not changed.' });
+  const auditEntry = prevStatus !== newStatus ? {
+    id: `audit-${crypto.randomUUID()}`,
+    attendance_id: recordId,
+    session_id: id,
+    student_id,
+    student_name: studentForRoll.full_name,
+    changed_by_user_id: user.id,
+    changed_by_user_name: user.name,
+    changed_by_user_role: user.role,
+    previous_status: prevStatus,
+    new_status: newStatus,
+    reason: user.role === 'ADMIN' ? (req.body.audit_reason || 'Admin status update') : 'Roll-call marked by coach',
+    timestamp: new Date().toISOString(),
+  } : undefined;
   const persistStartedAt = performance.now();
+  let idempotentMark = false;
   try {
-    await persistAttendanceWithReplacementReconciliation({
+    const persisted = await persistAttendanceWithReplacementReconciliation({
       attendance: attendanceToPersist,
       classType: attendanceClass.class_type,
       expectedMarkedAt: existingRecord?.marked_at ?? null,
       pauseMembershipIds: classMemberships.map(m => m.id).filter(Boolean),
       sessionDate: session.session_date,
+      initialMarkOnly: true,
+      audit: auditEntry,
     });
+    idempotentMark = Boolean(persisted.idempotent);
+    if (idempotentMark && (persisted.attendance.portal_sync_status === 'SYNCED' ||
+        !['PRESENT', 'LATE'].includes(persisted.attendance.status) || !Number(persisted.attendance.base_stars))) {
+      return res.json({ success: true, idempotent: true, attendance_record: persisted.attendance, session: db.getPopulatedSession(id) });
+    }
   } catch (error: any) {
     if (error instanceof PauseAttendanceError) return res.status(409).json({ error: error.message });
     if (error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
+    if (error instanceof ReplacementCreditError) return res.status(409).json({ error: error.message });
     console.error('[Attendance] Durable attendance/credit transaction failed:', error?.message || error);
     return res.status(503).json({ error: 'Attendance could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
   attendanceTiming('attendance_persist', persistStartedAt);
-
-  // Create Audit Log if status changed
-  if (prevStatus !== newStatus) {
-    const studentObj = db.students.get(student_id);
-    const auditEntry = {
-      id: `audit-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      attendance_id: recordId,
-      session_id: id,
-      student_id,
-      student_name: studentObj?.full_name || 'Student',
-      changed_by_user_id: user.id,
-      changed_by_user_name: user.name,
-      changed_by_user_role: user.role,
-      previous_status: prevStatus,
-      new_status: newStatus,
-      reason: user.role === 'ADMIN' ? (req.body.audit_reason || 'Admin status update') : 'Roll-call marked by coach',
-      timestamp: new Date().toISOString(),
-    };
-    db.auditLogs.unshift(auditEntry);
-    syncDocToFirestore('auditLogs', auditEntry.id, auditEntry, false)
-      .then(publishFirestoreRevision).catch(console.error);
-  }
 
   // Parent Attendance Notification Trigger (via NotificationService)
   const student = db.students.get(student_id);
@@ -2612,7 +2635,7 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   const classItem = db.classes.get(session.class_id);
   const coach = db.coaches.get(session.actual_coach_id) || db.coaches.get(session.scheduled_coach_id);
 
-  if (student) {
+  if (student && !idempotentMark) {
     notificationService.sendAttendanceAlert({
       attendanceId: recordId,
       sessionId: id,
@@ -2645,19 +2668,35 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
       student,
       session: session as ClassSession,
       coachName: teachingCoach?.name,
-      baseStars: suppliedStars,
+      baseStars: Number(record.base_stars),
       luckyTshirtWorn: Boolean(record.lucky_tshirt_worn),
     });
     attendanceTiming('portal_award', portalStartedAt);
-    record.portal_sync_status = portalResult.status;
-    record.portal_transaction_id = portalResult.transactionId;
-    record.portal_awarded_stars = portalResult.awardedStars;
-    record.portal_multiplier = portalResult.multiplier;
-    record.portal_sync_message = portalResult.message;
-    db.attendance.set(recordId, record);
     const portalPersistStartedAt = performance.now();
-    await syncDocToFirestore('attendance', recordId, record, false)
-      .then(publishFirestoreRevision).catch(console.error);
+    try {
+      const ref = getFirestoreDb().collection('attendance').doc(recordId);
+      const durable = await getFirestoreDb().runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        const current = snapshot.data() as AttendanceRecord | undefined;
+        if (!current || current.portal_sync_status === 'SYNCED') return current;
+        const updated = removeUndefinedValues({ ...current,
+          portal_sync_status: portalResult.status,
+          portal_transaction_id: portalResult.transactionId,
+          portal_awarded_stars: portalResult.awardedStars,
+          portal_multiplier: portalResult.multiplier,
+          portal_sync_message: portalResult.message,
+        }) as AttendanceRecord;
+        transaction.set(ref, updated);
+        return updated;
+      });
+      if (durable) db.attendance.set(recordId, durable);
+    } catch (error) {
+      console.error('[Attendance] Portal result could not be persisted; retry by attendance event ID:', error);
+      record.portal_sync_status = 'PENDING';
+      record.portal_sync_message = 'Star status needs reconciliation. Attendance is saved.';
+      db.attendance.set(recordId, record);
+    }
+    await publishFirestoreRevision().catch((error) => console.error('[Attendance] Portal status revision publish failed:', error));
     attendanceTiming('portal_result_persist', portalPersistStartedAt);
   }
 
@@ -2669,7 +2708,7 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
 });
 
 // Coach adds a replacement student to session
-router.post('/sessions/:id/replacement-student', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/sessions/:id/replacement-student', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
   const { student_id, replacement_note, advance_future_session_id } = req.body;
@@ -2678,9 +2717,11 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
     return res.status(409).json({ error: 'Replacement booking is temporarily closed.' });
   }
 
-  if (!student_id) {
+  if (typeof student_id !== 'string' || !student_id) {
     return res.status(400).json({ error: 'Student ID is required' });
   }
+  if (replacement_note !== undefined && (typeof replacement_note !== 'string' || replacement_note.length > 500)) return res.status(400).json({ error: 'Invalid replacement note.' });
+  if (advance_future_session_id !== undefined && typeof advance_future_session_id !== 'string') return res.status(400).json({ error: 'Invalid advance class.' });
 
   const session = db.sessions.get(id);
   if (!session) {
@@ -2696,12 +2737,23 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
       error: 'Forbidden: You are not authorized to manage attendance for this session',
     });
   }
+  if (['CANCELLED', 'COACH_CANCELLED', 'OFF_DAY', 'PLANNED_OFF_DAY'].includes(session.status) ||
+      ['COACH_CANCELLED', 'PLANNED_OFF_DAY'].includes(session.session_type || '')) {
+    return res.status(409).json({ error: 'Replacement booking is closed for this occurrence.' });
+  }
 
   const todayStr = academyToday();
 
   const student = db.students.get(student_id);
-  if (!student) {
-    return res.status(404).json({ error: 'Student not found in academy directory' });
+  if (!student || student.status !== 'ACTIVE' || student.is_unregistered) {
+    return res.status(404).json({ error: 'Active registered student not found in academy directory' });
+  }
+  if (db.getPopulatedSession(id)?.enrolled_students?.some((item) => item.id === student_id)) {
+    return res.status(409).json({ error: 'Student is already enrolled in this occurrence.' });
+  }
+  if (!Array.from(db.memberships.values()).some((membership) => membership.student_id === student_id && membership.status === 'ACTIVE' &&
+      Boolean(db.schedules.get(membership.schedule_id)) && db.schedules.get(membership.schedule_id)!.class_id !== session.class_id)) {
+    return res.status(409).json({ error: 'Replacement student must have an active class outside this occurrence.' });
   }
 
   let advanceCommitment: ReplacementAdvanceCommitment | undefined;
@@ -2731,7 +2783,7 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
   }
 
   if (Array.from(db.attendance.values()).some((record) => record.session_id === id && record.student_id === student_id)) return res.status(409).json({ error: 'Student is already in this session.' });
-  // Booking does not mark attendance or consume a replacement credit.
+  // A stable document ID makes network retries and concurrent requests share one booking.
   const recordId = attendanceRecordId(id, student_id);
   const newRecord: AttendanceRecord = {
     id: recordId,
@@ -2748,8 +2800,9 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
 
   const replacementClass = db.classes.get(session.class_id);
   if (!replacementClass) return res.status(409).json({ error: 'The session class is unavailable. Replacement attendance was not changed.' });
+  let booked: AttendanceRecord;
   try {
-    await persistAttendanceWithReplacementReconciliation({ attendance: newRecord, classType: replacementClass.class_type, expectedMarkedAt: null, advanceCommitment });
+    booked = (await persistAttendanceWithReplacementReconciliation({ attendance: newRecord, classType: replacementClass.class_type, advanceCommitment, bookingOnly: true })).attendance;
   } catch (error: any) {
     if (error instanceof ReplacementCreditError || error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
     console.error('[Replacement Attendance] Durable attendance/credit transaction failed:', error?.message || error);
@@ -2758,7 +2811,7 @@ router.post('/sessions/:id/replacement-student', authenticateUser, async (req: A
 
   return res.json({
     success: true,
-    attendance_record: newRecord,
+    attendance_record: booked,
     session: db.getPopulatedSession(id),
   });
 });
@@ -3056,6 +3109,8 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, async (req: Authen
   if (!reason || String(reason).trim().length < 3) {
     return res.status(400).json({ error: 'Audit reason is required for administrative attendance corrections' });
   }
+  if (status !== undefined && !['BOOKED', 'PRESENT', 'ABSENT', 'EXCUSED', 'LATE'].includes(status)) return res.status(400).json({ error: 'Invalid attendance status.' });
+  if (attendance_type !== undefined && !['REGULAR', 'REPLACEMENT'].includes(attendance_type)) return res.status(400).json({ error: 'Invalid attendance type.' });
 
   const prevStatus = record.status;
   const correctedRecord: AttendanceRecord = {
@@ -3063,39 +3118,35 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, async (req: Authen
     ...(status !== undefined ? { status } : {}),
     ...(attendance_type !== undefined ? { attendance_type } : {}),
     ...(replacement_note !== undefined ? { replacement_note } : {}),
+    ...(record.portal_sync_status === 'SYNCED' ? { portal_sync_message: 'Original star award remains. Reconcile star corrections in Bingo Space.' } : {}),
     marked_at: new Date().toISOString(),
     marked_by_user_id: user.id,
   };
   const correctionSession = db.sessions.get(record.session_id);
   const correctionClass = correctionSession && db.classes.get(correctionSession.class_id);
   if (!correctionClass) return res.status(409).json({ error: 'The attendance session class is unavailable. Correction was not saved.' });
-  try {
-    await persistAttendanceWithReplacementReconciliation({ attendance: correctedRecord, classType: correctionClass.class_type, expectedMarkedAt: record.marked_at ?? null });
-  } catch (error: any) {
-    if (error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
-    console.error('[Attendance Correction] Durable attendance/credit transaction failed:', error?.message || error);
-    return res.status(503).json({ error: 'Attendance correction could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
-  }
-
-  // Audit log entry
   const student = db.students.get(record.student_id);
   const auditEntry = {
-    id: `audit-${Date.now()}`,
+    id: `audit-${crypto.randomUUID()}`,
     attendance_id: id,
     session_id: record.session_id,
     student_id: record.student_id,
     student_name: student?.full_name || 'Student',
     changed_by_user_id: user.id,
     changed_by_user_name: user.name,
-    changed_by_user_role: 'ADMIN' as const,
+    changed_by_user_role: user.role,
     previous_status: prevStatus,
     new_status: correctedRecord.status,
     reason: String(reason).trim(),
     timestamp: new Date().toISOString(),
   };
-  db.auditLogs.unshift(auditEntry);
-  syncDocToFirestore('auditLogs', auditEntry.id, auditEntry, false)
-    .then(publishFirestoreRevision).catch(console.error);
+  try {
+    await persistAttendanceWithReplacementReconciliation({ attendance: correctedRecord, classType: correctionClass.class_type, expectedMarkedAt: record.marked_at ?? null, audit: auditEntry });
+  } catch (error: any) {
+    if (error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
+    console.error('[Attendance Correction] Durable attendance/credit transaction failed:', error?.message || error);
+    return res.status(503).json({ error: 'Attendance correction could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 
   return res.json({
     success: true,

@@ -32,7 +32,7 @@ export type SessionType = 'NORMAL' | 'REPLACEMENT_COACH' | 'COACH_CANCELLED' | '
 export type AttendanceStatus = 'BOOKED' | 'PRESENT' | 'ABSENT' | 'EXCUSED' | 'LATE';
 
 export type AttendanceType = 'REGULAR' | 'REPLACEMENT';
-export type ReplacementCreditReason = 'GROUP_ABSENCE_CREDIT' | 'REPLACEMENT_ATTENDED_DEBIT' | 'OPENING_BALANCE_ADJUSTMENT' | 'ADMIN_ADJUSTMENT' | 'REVERSAL' | 'ADVANCE_REPLACEMENT_DEBIT';
+export type ReplacementCreditReason = 'GROUP_ABSENCE_CREDIT' | 'REPLACEMENT_ATTENDED_DEBIT' | 'REPLACEMENT_BOOKING_DEBIT' | 'OPENING_BALANCE_ADJUSTMENT' | 'ADMIN_ADJUSTMENT' | 'REVERSAL' | 'ADVANCE_REPLACEMENT_DEBIT';
 export interface ReplacementCredit { id:string; student_id:string; amount:number; reason:ReplacementCreditReason; attendance_id?:string; session_id?:string; advance_commitment_id?:string; created_by_user_id?:string; created_at:string; effective_at:string; idempotency_key:string; }
 export type ReplacementAdvanceCommitmentStatus = 'PENDING' | 'RECONCILED' | 'REVIEW_REQUIRED';
 export interface ReplacementAdvanceCommitment {

@@ -70,7 +70,8 @@ export async function awardPortalStars(params: {
       effective_at: params.session.session_date,
     });
     if (!result) return { status: 'DISABLED' };
-    if (result.response.status === 404) return { status: 'NOT_LINKED', message: 'This student has not registered their portal account yet.' };
+    if (result.response.status === 404 && result.data?.code === 'PORTAL_ACCOUNT_NOT_LINKED') return { status: 'NOT_LINKED', message: 'No Bingo Space account is linked to this Attendance ID.' };
+    if (result.response.status === 404) return { status: 'PENDING', message: 'Portal award endpoint or account lookup returned 404; reconciliation is required.' };
     if (!result.response.ok) return { status: 'PENDING', message: result.data?.message || 'Portal sync will need a retry.' };
     return {
       status: 'SYNCED',
@@ -103,6 +104,9 @@ export async function getPortalLink(student: Student): Promise<{ status: 'REGIST
     return { status: 'REGISTERED', portal_url: configuration()?.url ? `${configuration()!.url}/student` : undefined };
   }
   if (status[student.student_id] === 'UNKNOWN') throw new Error('Portal connection is unavailable. No invitation was created.');
+  const sameName = Array.from(db.students.values()).filter((candidate) =>
+    candidate.id !== student.id && candidate.full_name.trim().toLowerCase() === student.full_name.trim().toLowerCase());
+  if (sameName.length) throw Object.assign(new Error('Another Attendance student has the same name. An administrator must verify the existing portal account before creating an invitation.'), { status: 409, code: 'POSSIBLE_EXISTING_ACCOUNT' });
   const invite = await createPortalInvite(student);
   return { status: 'INVITED', invite_url: invite.invite_url };
 }

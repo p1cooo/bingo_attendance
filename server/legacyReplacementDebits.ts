@@ -17,7 +17,7 @@ export function legacyReplacementDebitRepair(
     const credit = credits[0];
     if (credit.amount !== -1 || credit.student_id !== attendance.student_id ||
         credit.session_id !== attendance.session_id ||
-        !['REPLACEMENT_ATTENDED_DEBIT', 'ADVANCE_REPLACEMENT_DEBIT'].includes(credit.reason)) return 'CONFLICT';
+        !['REPLACEMENT_ATTENDED_DEBIT', 'REPLACEMENT_BOOKING_DEBIT', 'ADVANCE_REPLACEMENT_DEBIT'].includes(credit.reason)) return 'CONFLICT';
     return impact === -1 ? 'NONE' : 'STAMP_IMPACT';
   }
   return 'CREATE_DEBIT';

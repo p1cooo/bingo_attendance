@@ -693,7 +693,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       )}
                       {record?.portal_sync_status === 'NOT_LINKED' && (
                         <div className="mt-1 flex items-center gap-2">
-                          <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold">Portal not registered yet — attendance is saved, but stars could not be added.</p>
+                          <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold">Attendance saved. No Bingo Space account is linked to this Attendance ID; stars were not added.</p>
                           <button type="button" onClick={() => handleCreatePortalInvite(student)} disabled={creatingPortalInviteFor === student.id} className="shrink-0 rounded-lg border border-amber-500 px-2 py-1 text-[10px] font-black text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-950/40">{creatingPortalInviteFor === student.id ? 'Creating…' : 'Copy registration link'}</button>
                         </div>
                       )}

@@ -1,6 +1,6 @@
 import { getFirestoreDb } from './firebaseAdmin.js';
 import { db } from './db.js';
-import { AttendanceRecord, ClassType, ReplacementAdvanceCommitment, ReplacementCredit, ReplacementCreditReason } from '../src/types.js';
+import { AttendanceAuditLog, AttendanceRecord, ClassType, ReplacementAdvanceCommitment, ReplacementCredit, ReplacementCreditReason } from '../src/types.js';
 import { markFirestoreStateChanged, publishFirestoreRevision } from './firestoreSync.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import type { Firestore } from 'firebase-admin/firestore';
@@ -27,11 +27,12 @@ export async function createReplacementCredit(entry: ReplacementCredit): Promise
 
 /**
  * Replacement credits are derived from attendance, never maintained as a
- * mutable balance.  LATE and EXCUSED deliberately remain neutral.
+ * mutable balance. A declared replacement consumes a credit at booking time;
+ * marking that booking Present or Absent does not consume another credit.
  */
 export function replacementCreditImpact(record: Pick<AttendanceRecord, 'status' | 'attendance_type'>, classType: ClassType): number {
   if (record.attendance_type === 'REGULAR' && classType === 'GROUP' && record.status === 'ABSENT') return 1;
-  if (record.attendance_type === 'REPLACEMENT' && record.status === 'PRESENT') return -1;
+  if (record.attendance_type === 'REPLACEMENT' && ['BOOKED', 'PRESENT', 'ABSENT', 'LATE', 'EXCUSED'].includes(record.status)) return -1;
   return 0;
 }
 
@@ -49,7 +50,7 @@ function withoutUndefined<T>(value: T): T {
 
 function ledgerReason(nextImpact: number): ReplacementCreditReason {
   if (nextImpact === 1) return 'GROUP_ABSENCE_CREDIT';
-  if (nextImpact === -1) return 'REPLACEMENT_ATTENDED_DEBIT';
+  if (nextImpact === -1) return 'REPLACEMENT_BOOKING_DEBIT';
   return 'REVERSAL';
 }
 
@@ -59,6 +60,12 @@ export interface AttendanceReconciliationInput {
   expectedMarkedAt?: string | null;
   pauseMembershipIds?: string[];
   sessionDate?: string;
+  /** Roll call marks a booking once; corrections use the audited admin route. */
+  initialMarkOnly?: boolean;
+  /** A replacement booking may never overwrite an existing attendance row. */
+  bookingOnly?: boolean;
+  /** Saved in the same Firestore transaction as the attendance correction. */
+  audit?: AttendanceAuditLog;
   /** Required only when this replacement attendance is an approved advance use. */
   advanceCommitment?: ReplacementAdvanceCommitment;
 }
@@ -67,6 +74,8 @@ export interface AttendanceReconciliationResult {
   attendance: AttendanceRecord;
   credit?: ReplacementCredit;
   commitments: ReplacementAdvanceCommitment[];
+  idempotent?: boolean;
+  audit?: AttendanceAuditLog;
 }
 
 export class ReplacementCreditError extends Error {}
@@ -101,6 +110,16 @@ export async function persistAttendanceWithReplacementReconciliation(
     if (input.expectedMarkedAt !== undefined && (previous?.marked_at ?? null) !== input.expectedMarkedAt) {
       throw new AttendanceConflictError('Attendance changed since this occurrence was loaded. Reload before saving.');
     }
+    if (input.bookingOnly && previous) {
+      if (previous.session_id !== input.attendance.session_id || previous.student_id !== input.attendance.student_id || previous.attendance_type !== 'REPLACEMENT') {
+        throw new ReplacementCreditError('This occurrence already has a different attendance record.');
+      }
+      return { attendance: previous, commitments: [], idempotent: true };
+    }
+    if (input.initialMarkOnly && previous && previous.status !== 'BOOKED') {
+      if (previous.status !== input.attendance.status) throw new ReplacementCreditError('Attendance is already recorded. Ask an admin to correct it.');
+      return { attendance: previous, commitments: [], idempotent: true };
+    }
     if (previous?.portal_sync_status === 'SYNCED' &&
         (!['PRESENT', 'LATE'].includes(input.attendance.status) ||
           input.attendance.base_stars !== previous.base_stars ||
@@ -108,6 +127,7 @@ export async function persistAttendanceWithReplacementReconciliation(
       throw new AttendanceConflictError('This attendance already awarded stars. Reload before making a correction.');
     }
     const { nextImpact, changed, revision, delta } = replacementCreditChange(previous, input.attendance, input.classType);
+    const audit = input.audit ? { ...input.audit, previous_status: previous?.status || 'NOT_MARKED', new_status: input.attendance.status } as AttendanceAuditLog : undefined;
     const attendance = withoutUndefined({
       ...previous,
       ...input.attendance,
@@ -170,6 +190,7 @@ export async function persistAttendanceWithReplacementReconciliation(
       );
       commitments.push(input.advanceCommitment);
     }
+    if (audit) transaction.create(firestore.collection('auditLogs').doc(audit.id), audit);
     // A linked future normal class is resolved only by its actual outcome.
     for (const document of futureCommitmentsSnapshot.docs) {
       if (input.classType !== 'GROUP' || attendance.attendance_type !== 'REGULAR') continue;
@@ -184,17 +205,22 @@ export async function persistAttendanceWithReplacementReconciliation(
       }
     }
     transaction.set(attendanceRef, attendance);
-    return { attendance, credit, commitments };
+    return { attendance, credit, commitments, audit };
   });
   attendanceTiming('transaction', transactionStartedAt);
 
   db.attendance.set(result.attendance.id, result.attendance);
   if (result.credit) db.replacementCredits.set(result.credit.id, result.credit);
   result.commitments.forEach((commitment) => db.replacementAdvanceCommitments.set(commitment.id, commitment));
+  if (result.audit) db.auditLogs.unshift(result.audit);
   // Canonical attendance and credit documents are committed above. Invalidate
   // cached snapshots and await the small revision write before reporting success.
   const publishStartedAt = performance.now();
-  await publishRevision();
+  await publishRevision().catch((error) => {
+    // The canonical transaction already committed. Reporting a failed save here
+    // would invite a misleading retry and could hide the true attendance state.
+    console.error('[Attendance] State revision publish failed after durable commit:', error);
+  });
   attendanceTiming('transaction_publish', publishStartedAt);
   return result;
 }

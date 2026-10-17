@@ -24,16 +24,19 @@ test('coach scope uses active normal class membership, not replacement attendanc
   }
 });
 
-test('booking does not debit; present debits once in impact model and negative balances are valid', () => {
-  assert.equal(replacementCreditImpact({ status: 'BOOKED', attendance_type: 'REPLACEMENT' }, 'GROUP'), 0);
+test('booking debits once; marking present or absent does not debit again', () => {
+  assert.equal(replacementCreditImpact({ status: 'BOOKED', attendance_type: 'REPLACEMENT' }, 'GROUP'), -1);
   assert.equal(replacementCreditImpact({ status: 'PRESENT', attendance_type: 'REPLACEMENT' }, 'GROUP'), -1);
+  assert.equal(replacementCreditImpact({ status: 'ABSENT', attendance_type: 'REPLACEMENT' }, 'GROUP'), -1);
   assert.equal(replacementCreditImpact({ status: 'PRESENT', attendance_type: 'REPLACEMENT' }, 'GROUP') - replacementCreditImpact({ status: 'PRESENT', attendance_type: 'REPLACEMENT' }, 'GROUP'), 0);
   assert.equal(0 + replacementCreditImpact({ status: 'PRESENT', attendance_type: 'REPLACEMENT' }, 'GROUP'), -1);
   assert.equal(-1 + replacementCreditImpact({ status: 'PRESENT', attendance_type: 'REPLACEMENT' }, 'GROUP'), -2);
   const booked = { status: 'BOOKED', attendance_type: 'REPLACEMENT' } as any;
   const present = { status: 'PRESENT', attendance_type: 'REPLACEMENT' } as any;
-  assert.equal(replacementCreditChange(undefined, booked, 'GROUP').delta, 0);
-  assert.deepEqual(replacementCreditChange(booked, present, 'GROUP'), { nextImpact: -1, changed: true, revision: 1, delta: -1 });
+  assert.equal(replacementCreditChange(undefined, booked, 'GROUP').delta, -1);
+  assert.deepEqual(replacementCreditChange({ ...booked, replacement_credit_impact: -1, replacement_credit_revision: 1 }, present, 'GROUP'), { nextImpact: -1, changed: false, revision: 1, delta: 0 });
+  assert.equal(replacementCreditChange({ ...booked, replacement_credit_impact: -1, replacement_credit_revision: 1 }, { ...booked, status: 'ABSENT' }, 'GROUP').delta, 0);
+  assert.equal(replacementCreditChange({ ...booked, replacement_credit_impact: -1, replacement_credit_revision: 1 }, { ...booked, attendance_type: 'REGULAR' }, 'GROUP').delta, 1);
   assert.deepEqual(replacementCreditChange({ ...present, replacement_credit_impact: -1, replacement_credit_revision: 1 }, present, 'GROUP'), { nextImpact: -1, changed: false, revision: 1, delta: 0 });
 });
 
@@ -54,7 +57,7 @@ test('legacy regular group absences earn one repair credit and never double cred
 test('advance replacement at zero credit debits once; later group absence restores zero', () => {
   const booked = { id: 'replacement-1', student_id: 'student-1', session_id: 'session-1', status: 'BOOKED', attendance_type: 'REPLACEMENT' } as any;
   const present = { ...booked, status: 'PRESENT' };
-  const first = replacementCreditChange(booked, present, 'GROUP');
+  const first = replacementCreditChange(undefined, booked, 'GROUP');
   assert.equal(first.delta, -1);
   const savedPresent = { ...present, replacement_credit_impact: first.nextImpact, replacement_credit_revision: first.revision };
   assert.equal(replacementCreditChange(savedPresent, savedPresent, 'GROUP').delta, 0);
