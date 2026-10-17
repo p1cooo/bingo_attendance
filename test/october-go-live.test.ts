@@ -31,6 +31,28 @@ test('October billing and electronic attendance use independent date boundaries'
   }
 });
 
+test('past roll call uses students enrolled on the occurrence date', () => {
+  const keys = ['students', 'classes', 'schedules', 'memberships', 'sessions', 'attendance', 'studentPauses'] as const;
+  const previous = keys.map(key => db[key]);
+  try {
+    db.students = new Map(['old', 'current', 'future'].map(id => [id, { id, student_id: id, full_name: id, status: 'ACTIVE' } as any]));
+    db.classes = new Map([['class', { id: 'class', name: 'Saturday class', class_type: 'GROUP' } as any]]);
+    db.schedules = new Map([['schedule', { id: 'schedule', class_id: 'class' } as any]]);
+    db.memberships = new Map([
+      ['old', { id: 'old', student_id: 'old', schedule_id: 'schedule', joined_date: '2026-09-01', ended_date: '2026-10-12', status: 'ENDED' } as any],
+      ['current', { id: 'current', student_id: 'current', schedule_id: 'schedule', joined_date: '2026-10-01', status: 'ACTIVE' } as any],
+      ['future', { id: 'future', student_id: 'future', schedule_id: 'schedule', joined_date: '2026-10-16', status: 'ACTIVE' } as any],
+    ]);
+    db.sessions = new Map([['session', { id: 'session', class_id: 'class', schedule_id: 'schedule', session_date: '2026-10-10', status: 'SCHEDULED' } as any]]);
+    db.attendance = new Map(); db.studentPauses = new Map();
+    const session = db.getPopulatedSession('session')!;
+    assert.deepEqual(session.enrolled_students?.map(student => student.id).sort(), ['current', 'old']);
+    assert.equal(session.expected_students_count, 2);
+  } finally {
+    keys.forEach((key, index) => (db[key] as any) = previous[index]);
+  }
+});
+
 test('regular launch preserves old marks in monthly reports and student totals', () => {
   const keys = ['students', 'coaches', 'classes', 'sessions', 'attendance', 'memberships', 'schedules'] as const;
   const previous = keys.map(key => db[key]);
@@ -81,7 +103,7 @@ test('restricted launch blocks replacement booking without changing old credit e
   }
 });
 
-test('replacement booking cannot recreate pre-launch operational state', async () => {
+test('past replacement booking reaches normal student validation without a rollout-date lock', async () => {
   const previousSessions = db.sessions;
   const previousAttendance = db.attendance;
   const oldBilling = process.env.ACADEMY_GO_LIVE_DATE;
@@ -89,13 +111,14 @@ test('replacement booking cannot recreate pre-launch operational state', async (
   try {
     process.env.ACADEMY_GO_LIVE_DATE = '2026-10-01';
     delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
-    db.sessions = new Map([['old', { id: 'old', session_date: '2026-10-10' } as any]]);
+    db.sessions = new Map([['old', { id: 'old', session_date: '2026-10-10', status: 'SCHEDULED', scheduled_coach_id: 'coach' } as any]]);
     db.attendance = new Map();
     const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/replacement-student' && item.route.methods.post);
     const handler = layer.route.stack.at(-1).handle;
     const response: any = { statusCode: 200, status(code: number) { this.statusCode = code; return this; }, json(value: unknown) { this.body = value; return this; } };
-    await handler({ params: { id: 'old' }, body: { student_id: 'student' }, user: { id: 'coach', role: 'COACH' } }, response);
-    assert.equal(response.statusCode, 409);
+    await handler({ params: { id: 'old' }, body: { student_id: 'student' }, user: { id: 'coach-user', role: 'COACH', coach_id: 'coach' } }, response);
+    assert.equal(response.statusCode, 404);
+    assert.match(response.body.error, /student/i);
     assert.equal(db.attendance.size, 0);
   } finally {
     db.sessions = previousSessions;
@@ -105,7 +128,7 @@ test('replacement booking cannot recreate pre-launch operational state', async (
   }
 });
 
-test('pre-launch regular and trial marks cannot recreate old credits or rewards', async () => {
+test('past regular attendance reaches student validation without a rollout-date lock', async () => {
   const previous = { sessions: db.sessions, attendance: db.attendance, replacementCredits: db.replacementCredits,
     students: db.students };
   const oldBilling = process.env.ACADEMY_GO_LIVE_DATE;
@@ -113,20 +136,16 @@ test('pre-launch regular and trial marks cannot recreate old credits or rewards'
   try {
     process.env.ACADEMY_GO_LIVE_DATE = '2026-10-01';
     delete process.env.ACADEMY_ATTENDANCE_GO_LIVE_DATE;
-    db.sessions = new Map([['old', { id: 'old', session_date: '2026-09-26', status: 'SCHEDULED' } as any]]);
+    db.sessions = new Map([['old', { id: 'old', session_date: '2026-09-26', status: 'SCHEDULED', scheduled_coach_id: 'coach' } as any]]);
     db.attendance = new Map(); db.replacementCredits = new Map(); db.students = new Map();
     const response = (): any => ({ statusCode: 200, status(code: number) { this.statusCode = code; return this; },
       json(value: unknown) { this.body = value; return this; } });
-    for (const [path, body] of [
-      ['/sessions/:id/attendance', { student_id: 'student', status: 'ABSENT', base_stars: 0 }],
-      ['/sessions/:id/unregistered-student', { full_name: 'Fixture Student', status: 'PRESENT' }],
-    ] as const) {
-      const layer = (router as any).stack.find((item: any) => item.route?.path === path && item.route.methods.post);
-      const handler = layer.route.stack.at(-1).handle;
-      const res = response();
-      await handler({ params: { id: 'old' }, body, user: { id: 'coach', role: 'COACH' } }, res);
-      assert.equal(res.statusCode, 409);
-    }
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/attendance' && item.route.methods.post);
+    const handler = layer.route.stack.at(-1).handle;
+    const res = response();
+    await handler({ params: { id: 'old' }, body: { student_id: 'student', status: 'ABSENT', base_stars: 0 }, user: { id: 'coach-user', role: 'COACH', coach_id: 'coach' } }, res);
+    assert.equal(res.statusCode, 404);
+    assert.match(res.body.error, /student/i);
     assert.equal(db.attendance.size, 0);
     assert.equal(db.replacementCredits.size, 0);
     assert.equal(db.students.size, 0);

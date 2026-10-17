@@ -213,9 +213,14 @@ class DatabaseStore {
     const teachingCoach = isReplacement ? replacementCoach : defaultCoach;
 
     // Expected regular students enrolled in class/schedule
-    const enrolledMemberships = Array.from(this.memberships.values()).filter(
-      (m) => (m.schedule_id === session.schedule_id || m.schedule_id === session.class_id) && m.status === 'ACTIVE'
-    );
+    const enrolledMemberships = Array.from(this.memberships.values()).filter((membership) => {
+      if (membership.schedule_id !== session.schedule_id && membership.schedule_id !== session.class_id) return false;
+      if (membership.joined_date && membership.joined_date > session.session_date) return false;
+      if (membership.ended_date && membership.ended_date < session.session_date) return false;
+      if (membership.status === 'ENDED') return Boolean(membership.ended_date);
+      if (membership.status === 'PAUSED') return Boolean(Array.from(this.studentPauses.values()).some(pause => pause.membership_id === membership.id));
+      return membership.status === 'ACTIVE';
+    });
     // A replacement or trial student is enrolled for this occurrence only.
     // Include each such attendee in the session denominator so roll call never
     // shows impossible totals such as 5/4 after additional students are added.

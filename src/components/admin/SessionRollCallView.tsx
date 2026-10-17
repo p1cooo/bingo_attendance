@@ -390,7 +390,6 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
     session.status === 'PLANNED_OFF_DAY' ||
     session.status === 'OFF_DAY' ||
     session.session_type === 'PLANNED_OFF_DAY';
-  const beforeGoLive = session.attendance_expected === false;
   const defaultCoach = session.default_coach || session.scheduled_coach;
   const actualCoach = session.teaching_coach || session.actual_coach || defaultCoach;
   const isReplacementCoach =
@@ -508,10 +507,6 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
               <span className="px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-slate-200 text-slate-800 dark:bg-neutral-800 dark:text-slate-300 border-2 border-slate-300 dark:border-neutral-700">
                 Planned Off-Day
               </span>
-            ) : beforeGoLive ? (
-              <span className="px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-sky-100 text-sky-800 border-2 border-sky-300">
-                Before attendance go-live
-              </span>
             ) : (
               <span className="px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-2 border-emerald-300 dark:border-emerald-800">
                 Active Session
@@ -614,6 +609,7 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
                   const isLate = item.status === 'LATE';
                   const isExcused = item.status === 'EXCUSED';
                   const isSaving = attendanceSaves.isPending(sessionId, item.studentId);
+                  const alreadyMarked = !!item.record && item.record.status !== 'BOOKED';
 
                   return (
                     <tr
@@ -730,7 +726,7 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
                           {/* Present Button */}
                           <button
                             type="button"
-                            disabled={isSaving || beforeGoLive}
+                            disabled={isSaving || alreadyMarked}
                             onClick={() =>
                               handleMarkStatus(
                                 item.studentId,
@@ -753,7 +749,7 @@ export const SessionRollCallView: React.FC<SessionRollCallViewProps> = ({
                           {/* Absent Button */}
                           <button
                             type="button"
-                            disabled={isSaving || beforeGoLive}
+                            disabled={isSaving || alreadyMarked}
                             onClick={() =>
                               handleMarkStatus(
                                 item.studentId,

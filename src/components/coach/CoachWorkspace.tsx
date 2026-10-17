@@ -115,10 +115,9 @@ export const CoachWorkspace: React.FC = () => {
 
   // Compute daily totals
   const exemptModes = ['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'];
-  const rollCallDue = (s: ClassSession) => s.attendance_expected !== false && !exemptModes.includes(s.status) && !exemptModes.includes(s.session_type || '');
+  const rollCallAvailable = (s: ClassSession) => !exemptModes.includes(s.status) && !exemptModes.includes(s.session_type || '');
   const totalStudents = sessions.reduce((acc, s) => acc + (!exemptModes.includes(s.status) && !exemptModes.includes(s.session_type || '') ? s.expected_students_count || 0 : 0), 0);
-  const rosteredStudents = sessions.reduce((acc, s) => acc + (s.expected_students_count || 0), 0);
-  const totalPresent = sessions.reduce((acc, s) => acc + (rollCallDue(s) ? s.present_count || 0 : 0), 0);
+  const totalPresent = sessions.reduce((acc, s) => acc + (rollCallAvailable(s) ? s.present_count || 0 : 0), 0);
 
   const isSelectedToday = selectedDate === getTodayDateString();
 
@@ -169,10 +168,10 @@ export const CoachWorkspace: React.FC = () => {
               </div>
               <div className="bg-[#ecfdf5] dark:bg-emerald-950/40 border-2 border-slate-900 dark:border-neutral-700 px-3.5 py-2 rounded-2xl text-center shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
                 <span className="block text-[9px] font-black uppercase text-emerald-800 dark:text-emerald-300">
-                  {sessions.some(s => s.attendance_expected === false) ? 'Rostered today' : 'Students Present'}
+                  Students Present
                 </span>
                 <span className="text-base font-black text-emerald-700 dark:text-emerald-300">
-                  {sessions.some(s => s.attendance_expected === false) ? rosteredStudents : `${totalPresent}/${totalStudents}`}
+                  {totalPresent}/{totalStudents}
                 </span>
               </div>
             </div>
@@ -300,11 +299,6 @@ export const CoachWorkspace: React.FC = () => {
                   text: 'Planned Off-Day',
                   bgClass: 'bg-slate-200 dark:bg-neutral-800 text-slate-800 dark:text-slate-300 border-slate-300',
                 };
-              } else if (sess.attendance_expected === false) {
-                statusBadge = {
-                  text: 'Attendance not activated',
-                  bgClass: 'bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 border-sky-300',
-                };
               } else if (markedCount > 0 && markedCount < expectedCount) {
                 statusBadge = {
                   text: `In Progress (${markedCount}/${expectedCount})`,
@@ -427,7 +421,7 @@ export const CoachWorkspace: React.FC = () => {
                             ? 'Manage off-day'
                             : markedCount > 0
                             ? 'Open Attendance Sheet'
-                            : sess.attendance_expected === false ? 'View roster' : 'Take Roll Call'}
+                            : sess.session_date > getTodayDateString() ? 'View roster' : 'Take Roll Call'}
                         </span>
                         <ChevronRight className="w-4 h-4" />
                       </button>

@@ -107,9 +107,6 @@ export async function persistAttendanceWithReplacementReconciliation(
       throw new AttendanceConflictError('Attendance already exists for this student and occurrence. Reload before saving.');
     }
     const previous = snapshot.exists ? snapshot.data() as AttendanceRecord : undefined;
-    if (input.expectedMarkedAt !== undefined && (previous?.marked_at ?? null) !== input.expectedMarkedAt) {
-      throw new AttendanceConflictError('Attendance changed since this occurrence was loaded. Reload before saving.');
-    }
     if (input.bookingOnly && previous) {
       if (previous.session_id !== input.attendance.session_id || previous.student_id !== input.attendance.student_id || previous.attendance_type !== 'REPLACEMENT') {
         throw new ReplacementCreditError('This occurrence already has a different attendance record.');
@@ -117,8 +114,16 @@ export async function persistAttendanceWithReplacementReconciliation(
       return { attendance: previous, commitments: [], idempotent: true };
     }
     if (input.initialMarkOnly && previous && previous.status !== 'BOOKED') {
-      if (previous.status !== input.attendance.status) throw new ReplacementCreditError('Attendance is already recorded. Ask an admin to correct it.');
+      if (previous.status !== input.attendance.status ||
+          previous.attendance_type !== input.attendance.attendance_type ||
+          previous.base_stars !== input.attendance.base_stars ||
+          Boolean(previous.lucky_tshirt_worn) !== Boolean(input.attendance.lucky_tshirt_worn)) {
+        throw new ReplacementCreditError('Attendance is already recorded. Ask an admin to correct it.');
+      }
       return { attendance: previous, commitments: [], idempotent: true };
+    }
+    if (input.expectedMarkedAt !== undefined && (previous?.marked_at ?? null) !== input.expectedMarkedAt) {
+      throw new AttendanceConflictError('Attendance changed since this occurrence was loaded. Reload before saving.');
     }
     if (previous?.portal_sync_status === 'SYNCED' &&
         (!['PRESENT', 'LATE'].includes(input.attendance.status) ||

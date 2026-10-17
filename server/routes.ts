@@ -2489,10 +2489,6 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     return res.status(409).json({ error: 'Attendance is not required for a cancelled session or planned off-day.' });
   }
 
-  if (!attendanceExpectedOn(session.session_date)) {
-    return res.status(409).json({ error: 'Electronic attendance is not required before the configured attendance go-live date.' });
-  }
-
   // Security check: Coach can only take attendance for assigned sessions!
   if (!verifySessionAttendanceAccess(id, user)) {
     return res.status(403).json({
@@ -2518,14 +2514,11 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   );
   const classMemberships = Array.from(db.memberships.values()).filter((membership) =>
     membership.student_id === student_id && (membership.schedule_id === session.schedule_id || membership.schedule_id === session.class_id));
-  if (classMemberships.some((membership) => membership.status === 'PAUSED')) {
-    return res.status(409).json({ error: 'Attendance is not required for a paused student.' });
-  }
   if (classMemberships.some((membership) => pauseOnDate(db.studentPauses.values(), membership.id, session.session_date))) {
     return res.status(409).json({ error: 'Attendance is not required while this student is on pause for this class.' });
   }
   const studentForRoll = db.students.get(student_id);
-  if (!studentForRoll || studentForRoll.status !== 'ACTIVE') return res.status(404).json({ error: 'Active student not found.' });
+  if (!studentForRoll) return res.status(404).json({ error: 'Student not found.' });
   const enrolled = db.getPopulatedSession(id)?.enrolled_students?.some((item) => item.id === student_id);
   if (!existingRecord && !enrolled) return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
   if (!existingRecord && attendance_type === 'REPLACEMENT') return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
@@ -2728,10 +2721,6 @@ router.post('/sessions/:id/replacement-student', authenticateUser, requireCoachO
     return res.status(404).json({ error: 'Session not found' });
   }
 
-  if (!attendanceExpectedOn(session.session_date)) {
-    return res.status(409).json({ error: 'Replacement bookings are not open before the configured attendance go-live date.' });
-  }
-
   if (!verifySessionAttendanceAccess(id, user)) {
     return res.status(403).json({
       error: 'Forbidden: You are not authorized to manage attendance for this session',
@@ -2853,9 +2842,6 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
   const session = db.sessions.get(id);
   if (!session) {
     return res.status(404).json({ error: 'Session not found' });
-  }
-  if (!attendanceExpectedOn(session.session_date)) {
-    return res.status(409).json({ error: 'Electronic attendance is not required before the configured attendance go-live date.' });
   }
   if (['COACH_CANCELLED', 'CANCELLED', 'PLANNED_OFF_DAY', 'OFF_DAY'].includes(session.status)) {
     return res.status(409).json({ error: 'Attendance is not required for a cancelled session or planned off-day.' });

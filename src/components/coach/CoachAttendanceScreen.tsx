@@ -369,7 +369,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const { eligible: totalStudents, present: presentCount, absent: absentCount, excused: excusedCount, unmarked: unmarkedCount } = coachAttendanceCounts(session);
   const isCancelled = session.status === 'COACH_CANCELLED' || session.status === 'CANCELLED' || session.session_type === 'COACH_CANCELLED';
   const isOffDay = session.status === 'PLANNED_OFF_DAY' || session.status === 'OFF_DAY' || session.session_type === 'PLANNED_OFF_DAY';
-  const beforeGoLive = session.attendance_expected === false;
 
   const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
   const hasTakenAttendance = (session.attendance_records || []).some((record) => record.status !== 'BOOKED');
@@ -453,7 +452,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                   Future Session
                 </span>
               )}
-              {beforeGoLive && !isCancelled && !isOffDay && <span className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-0.5 text-[10px] font-black text-sky-800">Attendance not yet activated</span>}
             </div>
 
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500 dark:text-slate-400">
@@ -498,7 +496,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             {excusedCount > 0 && <div className="rounded-2xl border-2 border-slate-900 bg-sky-50 px-3.5 py-1.5 text-center shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] dark:border-neutral-700 dark:bg-sky-950/40"><span className="block text-[9px] font-black uppercase text-sky-800 dark:text-sky-300">Excused</span><span className="text-sm font-black text-sky-800 dark:text-sky-300">{excusedCount}</span></div>}
           </div>
         </div>
-        {beforeGoLive && !isCancelled && !isOffDay && <p className="mt-4 text-xs font-semibold text-sky-800 dark:text-sky-300">{unmarkedCount} of {totalStudents} eligible students await a mark. Attendance recording opens after academy activation.</p>}
       </div>
 
       {editingOccurrence && <OccurrenceEditor session={session} coaches={availableCoaches} onClose={() => setEditingOccurrence(false)} onSaved={async () => {
@@ -565,7 +562,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         <button
           id="record-unregistered-student-btn"
           onClick={() => setIsUnregModalOpen(true)}
-          disabled={isCancelled || isOffDay || isFutureSession || beforeGoLive}
+          disabled={isCancelled || isOffDay || isFutureSession}
           className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl text-xs font-black bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border-2 border-slate-900 dark:border-amber-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
         >
           <UserCheck className="w-4 h-4 text-amber-700" />
@@ -598,6 +595,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             const canManageStudentPause = !!membershipId && !isReplacement && !isUnregistered && (isRegularCoach || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN');
             const classPauses = actionPauses.filter(p => p.membership_id === membershipId).sort((a, b) => b.start_date.localeCompare(a.start_date));
             const status = record?.status;
+            const alreadyMarked = !!record && record.status !== 'BOOKED';
             const isSaving = attendanceSaves.isPending(sessionId, student.id);
             const studentFullName = student?.full_name || 'Student';
             const studentId = student?.student_id || '';
@@ -720,7 +718,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* PRESENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause}
+                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -744,7 +742,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     {/* ABSENT */}
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause}
+                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause}
                       onClick={() =>
                         handleMarkStatus(
                           student.id,
@@ -774,7 +772,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       step="0.5"
                       inputMode="decimal"
                       value={starsValue}
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
                       onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
                       placeholder="Stars"
                       aria-label={`Base stars for ${studentFullName}`}
@@ -782,7 +780,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     />
                     <button
                       type="button"
-                      disabled={isSaving || isCancelled || isOffDay || isFutureSession || beforeGoLive || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
                       onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
                       title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
                       aria-pressed={shirtWorn}
