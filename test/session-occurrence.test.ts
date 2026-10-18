@@ -211,6 +211,63 @@ test('attendance rejects paused students, unrelated students and invalid marks',
   } finally { [db.sessions, db.students, db.memberships, db.attendance] = previous; }
 });
 
+test('admin roll call cannot record future attendance', async () => {
+  const previousSessions = db.sessions;
+  try {
+    db.sessions = new Map([[original.id, { ...original, session_date: '2099-01-01' }]]);
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/attendance' && item.route.methods.post);
+    let code = 200;
+    await layer.route.stack.at(-1).handle(
+      { params: { id: original.id }, user: { id: 'admin', role: 'ADMIN' }, body: { student_id: 'student-1', status: 'PRESENT' } },
+      { status(value: number) { code = value; return this; }, json() { return this; } },
+    );
+    assert.equal(code, 400);
+  } finally { db.sessions = previousSessions; }
+});
+
+test('admin cannot add a trial attendance mark for a future occurrence', async () => {
+  const previousSessions = db.sessions;
+  try {
+    db.sessions = new Map([[original.id, { ...original, session_date: '2099-01-01' }]]);
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/unregistered-student' && item.route.methods.post);
+    let code = 200;
+    await layer.route.stack.at(-1).handle(
+      { params: { id: original.id }, user: { id: 'admin', role: 'ADMIN' }, body: { full_name: 'Test Trial' } },
+      { status(value: number) { code = value; return this; }, json() { return this; } },
+    );
+    assert.equal(code, 400);
+  } finally { db.sessions = previousSessions; }
+});
+
+test('admin correction cannot turn a future booking into a recorded mark', async () => {
+  const previous = [db.classes, db.sessions, db.attendance] as const;
+  try {
+    db.classes = new Map([[cls.id, cls]]);
+    db.sessions = new Map([[original.id, { ...original, session_date: '2099-01-01' }]]);
+    db.attendance = new Map([['future-booking', { id: 'future-booking', session_id: original.id, student_id: 'student-1', status: 'BOOKED', attendance_type: 'REPLACEMENT' } as any]]);
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/attendance/:id' && item.route.methods.put);
+    let code = 200;
+    await layer.route.stack.at(-1).handle(
+      { params: { id: 'future-booking' }, user: { id: 'admin', role: 'ADMIN' }, body: { status: 'PRESENT', reason: 'Correction requested' } },
+      { status(value: number) { code = value; return this; }, json() { return this; } },
+    );
+    assert.equal(code, 400);
+    assert.equal(db.attendance.get('future-booking')?.status, 'BOOKED');
+  } finally { [db.classes, db.sessions, db.attendance] = previous; }
+});
+
+test('a later dated pause does not remove a student from an earlier occurrence', () => {
+  const previous = [db.classes, db.sessions, db.students, db.memberships, db.studentPauses] as const;
+  try {
+    db.classes = new Map([[cls.id, cls]]);
+    db.sessions = new Map([[original.id, original]]);
+    db.students = new Map([['student-1', { id: 'student-1', full_name: 'Test Student', status: 'ACTIVE' } as any]]);
+    db.memberships = new Map([['membership-1', { id: 'membership-1', student_id: 'student-1', schedule_id: cls.id, status: 'PAUSED', joined_date: '2026-09-01' } as any]]);
+    db.studentPauses = new Map([['pause-1', { id: 'pause-1', membership_id: 'membership-1', start_date: '2026-10-01', end_date: null } as any]]);
+    assert.ok(db.getPopulatedSession(original.id)?.enrolled_students?.some((student) => student.id === 'student-1'));
+  } finally { [db.classes, db.sessions, db.students, db.memberships, db.studentPauses] = previous; }
+});
+
 test('attendance route rejects a dated class pause while preserving other enrollments', async () => {
   const previous = [db.sessions, db.students, db.memberships, db.studentPauses, db.attendance] as const;
   try {

@@ -2502,7 +2502,7 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
 
   // Future session attendance restriction (attendance only opens on or after session date)
   const todayStr = academyToday();
-  if (session.session_date > todayStr && user.role !== 'ADMIN') {
+  if (session.session_date > todayStr) {
     return res.status(400).json({
       error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
     });
@@ -2514,13 +2514,24 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   );
   const classMemberships = Array.from(db.memberships.values()).filter((membership) =>
     membership.student_id === student_id && (membership.schedule_id === session.schedule_id || membership.schedule_id === session.class_id));
+  // Legacy paused memberships may have no dated pause. Where a dated pause
+  // exists, use its interval so an earlier legitimate lesson stays markable.
+  if (classMemberships.some((membership) => membership.status === 'PAUSED' &&
+      !Array.from(db.studentPauses.values()).some((pause) => pause.membership_id === membership.id))) {
+    return res.status(409).json({ error: 'Attendance is not required for a paused student.' });
+  }
   if (classMemberships.some((membership) => pauseOnDate(db.studentPauses.values(), membership.id, session.session_date))) {
     return res.status(409).json({ error: 'Attendance is not required while this student is on pause for this class.' });
   }
   const studentForRoll = db.students.get(student_id);
   if (!studentForRoll) return res.status(404).json({ error: 'Student not found.' });
   const enrolled = db.getPopulatedSession(id)?.enrolled_students?.some((item) => item.id === student_id);
-  if (!existingRecord && !enrolled) return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
+  if (!existingRecord && !enrolled) {
+    const belongsToAnotherClass = Array.from(db.memberships.values()).some((membership) =>
+      membership.student_id === student_id && membership.status === 'ACTIVE');
+    if (!belongsToAnotherClass) return res.status(403).json({ error: 'Student is not enrolled in an academy class.' });
+    return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
+  }
   if (!existingRecord && attendance_type === 'REPLACEMENT') return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
   if (existingRecord && attendance_type && attendance_type !== existingRecord.attendance_type) return res.status(409).json({ error: 'Attendance type cannot be changed during roll call.' });
   if (existingRecord && existingRecord.status !== 'BOOKED' && existingRecord.status !== status) {
@@ -2852,7 +2863,7 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
   }
 
   const todayStr = academyToday();
-  if (session.session_date > todayStr && user.role !== 'ADMIN') {
+  if (session.session_date > todayStr) {
     return res.status(400).json({
       error: 'Attendance cannot be recorded for future sessions. Attendance opens on the scheduled session date.',
     });
@@ -3111,6 +3122,9 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, async (req: Authen
   const correctionSession = db.sessions.get(record.session_id);
   const correctionClass = correctionSession && db.classes.get(correctionSession.class_id);
   if (!correctionClass) return res.status(409).json({ error: 'The attendance session class is unavailable. Correction was not saved.' });
+  if (correctionSession.session_date > academyToday() && correctedRecord.status !== 'BOOKED') {
+    return res.status(400).json({ error: 'Attendance cannot be recorded for future sessions.' });
+  }
   const student = db.students.get(record.student_id);
   const auditEntry = {
     id: `audit-${crypto.randomUUID()}`,
