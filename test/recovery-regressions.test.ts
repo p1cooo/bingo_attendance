@@ -24,6 +24,39 @@ test('coach scope uses active normal class membership, not replacement attendanc
   }
 });
 
+test('assigned coach can find another class student for replacement without exposing the academy directory', () => {
+  const original = [db.students, db.classes, db.schedules, db.memberships, db.sessions, db.attendance, db.replacementCredits] as const;
+  try {
+    db.students = new Map([
+      ['own', { id: 'own', student_id: 'STU-9001', full_name: 'Own Fixture', status: 'ACTIVE' } as any],
+      ['other', { id: 'other', student_id: 'STU-9002', full_name: 'Other Fixture', status: 'ACTIVE' } as any],
+    ]);
+    db.classes = new Map([['own-class', { id: 'own-class', class_type: 'GROUP' } as any],
+      ['other-class', { id: 'other-class', class_type: 'GROUP' } as any]]);
+    db.schedules = new Map([['own-schedule', { id: 'own-schedule', class_id: 'own-class' } as any],
+      ['other-schedule', { id: 'other-schedule', class_id: 'other-class' } as any]]);
+    db.memberships = new Map([['own-member', { student_id: 'own', schedule_id: 'own-schedule', status: 'ACTIVE' } as any],
+      ['other-member', { student_id: 'other', schedule_id: 'other-schedule', status: 'ACTIVE' } as any]]);
+    db.sessions = new Map([['session', { id: 'session', class_id: 'own-class', schedule_id: 'own-schedule',
+      session_date: '2026-10-18', scheduled_coach_id: 'coach-1', status: 'SCHEDULED' } as any]]);
+    db.attendance = new Map(); db.replacementCredits = new Map();
+    const layer = (router as any).stack.find((item: any) => item.route?.path === '/sessions/:id/replacement-candidates');
+    const call = (coachId: string) => {
+      let code = 200; let body: any;
+      layer.route.stack.at(-1).handle({ params: { id: 'session' }, query: {},
+        user: { id: 'coach', role: 'COACH', coach_id: coachId } },
+      { status(value: number) { code = value; return this; }, json(value: any) { body = value; return this; } });
+      return { code, body };
+    };
+    assert.equal(call('coach-2').code, 403);
+    const result = call('coach-1');
+    assert.equal(result.code, 200);
+    assert.deepEqual(result.body, [{ id: 'other', full_name: 'Other Fixture', student_id: 'STU-9002', replacement_credits: 0 }]);
+  } finally {
+    [db.students, db.classes, db.schedules, db.memberships, db.sessions, db.attendance, db.replacementCredits] = original;
+  }
+});
+
 test('booking debits once; marking present or absent does not debit again', () => {
   assert.equal(replacementCreditImpact({ status: 'BOOKED', attendance_type: 'REPLACEMENT' }, 'GROUP'), -1);
   assert.equal(replacementCreditImpact({ status: 'PRESENT', attendance_type: 'REPLACEMENT' }, 'GROUP'), -1);
