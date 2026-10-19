@@ -113,10 +113,10 @@ export async function getPortalLink(student: Student): Promise<{ status: 'REGIST
 
 export async function managePortalAccount(
   studentCode: string,
-  action: 'metadata' | 'username' | 'password-reset',
+  action: 'metadata' | 'username' | 'password-reset' | 'password-reveal',
   actor: User,
   fields: Record<string, string> = {},
-): Promise<{ linked?: boolean; student_name?: string; bingo_space_id?: string; attendance_student_id?: string; username?: string; password_status?: string; success?: boolean }> {
+): Promise<{ linked?: boolean; student_name?: string; bingo_space_id?: string; attendance_student_id?: string; username?: string; password_status?: string; password?: string; success?: boolean }> {
   const url = process.env.PORTAL_BRIDGE_URL?.replace(/\/$/, '');
   const secret = process.env.PORTAL_CREDENTIAL_SECRET;
   if (!url || !secret || secret.length < 32 || secret === process.env.ATTENDANCE_BRIDGE_SECRET) {

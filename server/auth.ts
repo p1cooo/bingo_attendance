@@ -4,7 +4,7 @@ import { User, Coach } from '../src/types.js';
 import { adminAuth, hasAdminCredentials, firebaseAdminConfigurationError } from './firebaseAdmin.js';
 import { attendanceTiming } from './attendanceTiming.js';
 
-export interface AuthenticatedRequest extends Request { user?: User; coachProfile?: Coach; }
+export interface AuthenticatedRequest extends Request { user?: User; coachProfile?: Coach; authTime?: number; }
 
 /** Firebase ID tokens are the only production bearer credential. */
 export async function authenticateUser(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -20,6 +20,7 @@ export async function authenticateUser(req: AuthenticatedRequest, res: Response,
     if (!user) return res.status(403).json({ error: 'No Academy profile is assigned to this Firebase account.' });
     if (!user.is_active) return res.status(403).json({ error: 'Forbidden: User account is inactive or disabled' });
     req.user = user;
+    req.authTime = typeof decoded.auth_time === 'number' ? decoded.auth_time * 1000 : undefined;
     req.coachProfile = user.coach_id ? db.coaches.get(user.coach_id) : undefined;
     next();
   } catch {

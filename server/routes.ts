@@ -237,7 +237,8 @@ export const canManageStudent = (user: User, studentId: string) => isAdmin(user)
 export const canManageStudentCredentials = (user: User, studentId: string) => {
   if (!user.is_active) return false;
   if (isAdmin(user)) return true;
-  if (user.role !== 'COACH' || !user.coach_id) return false;
+  if (user.role !== 'COACH' || !user.coach_id || !db.coaches.get(user.coach_id)?.is_active ||
+      db.students.get(studentId)?.status !== 'ACTIVE') return false;
   const today = academyToday();
   return Array.from(db.memberships.values()).some((membership) => {
     if (membership.student_id !== studentId || membership.status !== 'ACTIVE' ||
@@ -248,6 +249,33 @@ export const canManageStudentCredentials = (user: User, studentId: string) => {
       cls.default_coach_id === user.coach_id);
   });
 };
+// Bingo Space verifies its teacher account and synced link locally, then asks
+// Attendance to confirm the coach's current recurring class assignment.
+router.post('/integration/portal/credential-scope', async (req, res) => {
+  const secret = process.env.PORTAL_CREDENTIAL_SECRET;
+  const timestamp = String(req.header('X-Credential-Timestamp') || '');
+  const nonce = String(req.header('X-Credential-Nonce') || '');
+  const signature = String(req.header('X-Credential-Signature') || '');
+  const age = Number(timestamp);
+  if (!secret || secret.length < 32 || secret === process.env.ATTENDANCE_BRIDGE_SECRET ||
+      !/^\d+$/.test(timestamp) || Math.abs(Math.floor(Date.now() / 1000) - age) > 60 ||
+      !/^[a-f0-9]{32}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(signature)) return res.sendStatus(401);
+  const path = 'integration/portal/credential-scope';
+  const body = JSON.stringify(req.body);
+  const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${nonce}.${path}.${body}`).digest('hex');
+  if (!crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'))) return res.sendStatus(401);
+  const studentCode = req.body?.student_id;
+  const email = req.body?.coach_email;
+  if (typeof studentCode !== 'string' || !/^STU-[A-Za-z0-9-]{1,60}$/.test(studentCode) ||
+      typeof email !== 'string' || email.length > 255 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.sendStatus(422);
+  try { await initializeFirestoreSync(); }
+  catch { return res.status(503).json({ allowed: false }); }
+  const matching = Array.from(db.users.values()).filter((user) =>
+    user.email.trim().toLowerCase() === email.trim().toLowerCase() && user.role === 'COACH' && user.is_active);
+  const student = Array.from(db.students.values()).find((entry) => entry.student_id === studentCode);
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({ allowed: matching.length === 1 && !!student && canManageStudentCredentials(matching[0], student.id) });
+});
 const refreshCredentialScope = async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try { await initializeFirestoreSync(); next(); }
   catch { res.status(503).json({ error: 'Current class authorization is unavailable.' }); }
@@ -3266,6 +3294,21 @@ router.post('/students/:id/portal-account/password-reset', refreshCredentialScop
     await recordActivity(req.user!, 'PORTAL_PASSWORD_RESET', 'student', student.id, { summary: student.student_id });
     return res.json(result);
   } catch (error: any) { return res.status(error.status || 502).json({ error: error.message || 'Could not reset password' }); }
+});
+
+router.post('/students/:id/portal-account/password-reveal', refreshCredentialScope, authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const student = db.students.get(req.params.id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!canManageStudentCredentials(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  if (!req.authTime || Date.now() - req.authTime > 5 * 60_000 || req.authTime > Date.now()) {
+    return res.status(403).json({ error: 'Sign in again to show the password.' });
+  }
+  try {
+    const result = await managePortalAccount(student.student_id, 'password-reveal', req.user!, { actor_auth_time: String(Math.floor(req.authTime / 1000)) });
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    return res.json(result);
+  } catch (error: any) { return res.status(error.status || 502).json({ error: error.message || 'Could not show password' }); }
 });
 
 router.get('/export/accountant-report.xlsx', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {

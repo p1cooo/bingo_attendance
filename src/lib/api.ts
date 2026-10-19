@@ -470,18 +470,22 @@ class ApiClient {
     return this.request(`/students/${studentId}/portal-invite`, { method: 'POST' });
   }
 
-  async getPortalAccount(studentId: string): Promise<{ linked: false } | { linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'UNRECOVERABLE' }> {
+  async getPortalAccount(studentId: string): Promise<{ linked: false } | { linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'RECOVERABLE' | 'UNRECOVERABLE' }> {
     return this.request(`/students/${studentId}/portal-account`);
   }
 
-  async updatePortalUsername(studentId: string, username: string): Promise<{ linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'UNRECOVERABLE' }> {
+  async updatePortalUsername(studentId: string, username: string): Promise<{ linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'RECOVERABLE' | 'UNRECOVERABLE' }> {
     return this.request(`/students/${studentId}/portal-account/username`, { method: 'PUT', body: JSON.stringify({ username }) });
   }
 
-  async resetPortalPassword(studentId: string, newPassword: string, confirmation: string): Promise<{ success: boolean }> {
+  async resetPortalPassword(studentId: string, newPassword: string, confirmation: string): Promise<{ success: boolean; password_status: 'RECOVERABLE' }> {
     return this.request(`/students/${studentId}/portal-account/password-reset`, {
       method: 'POST', body: JSON.stringify({ new_password: newPassword, new_password_confirmation: confirmation }),
     });
+  }
+
+  async revealPortalPassword(studentId: string): Promise<{ password_status: 'RECOVERABLE'; password: string } | { password_status: 'UNRECOVERABLE' }> {
+    return this.request(`/students/${studentId}/portal-account/password-reveal`, { method: 'POST' });
   }
 
   async addReplacementStudent(

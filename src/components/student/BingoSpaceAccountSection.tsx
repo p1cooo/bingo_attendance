@@ -3,7 +3,7 @@ import type { Student } from '../../types.js';
 import { api } from '../../lib/api.js';
 import { useToast } from '../common/Toast.js';
 
-type Account = { linked: false } | { linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'UNRECOVERABLE' };
+type Account = { linked: false } | { linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'RECOVERABLE' | 'UNRECOVERABLE' };
 
 export function BingoSpaceAccountSection({ student }: { student: Student }) {
   const { showToast } = useToast();
@@ -13,11 +13,12 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
+  const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
-    setAccount(null); setUnavailable(false); setMode(null);
+    setAccount(null); setUnavailable(false); setMode(null); setRevealedPassword(null);
     api.getPortalAccount(student.id).then((value) => {
       if (active) { setAccount(value); setUsername(value.linked ? value.username : ''); }
     }).catch((error) => {
@@ -25,6 +26,25 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
     });
     return () => { active = false; };
   }, [student.id]);
+
+  useEffect(() => {
+    if (revealedPassword === null) return;
+    const hide = () => setRevealedPassword(null);
+    const timer = window.setTimeout(hide, 60_000);
+    window.addEventListener('blur', hide);
+    return () => { window.clearTimeout(timer); window.removeEventListener('blur', hide); };
+  }, [revealedPassword]);
+
+  const showPassword = async () => {
+    if (revealedPassword !== null) { setRevealedPassword(null); return; }
+    setBusy(true);
+    try {
+      const result = await api.revealPortalPassword(student.id);
+      if (result.password_status === 'RECOVERABLE') setRevealedPassword(result.password);
+      else setAccount((current) => current?.linked ? { ...current, password_status: 'UNRECOVERABLE' } : current);
+    } catch (error: any) { showToast(error.message || 'Could not show password', 'error'); }
+    finally { setBusy(false); }
+  };
 
   const changeUsername = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true);
@@ -39,7 +59,9 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
     if (password !== confirmation) { showToast('Passwords do not match', 'error'); return; }
     setBusy(true);
     try {
-      await api.resetPortalPassword(student.id, password, confirmation);
+      const result = await api.resetPortalPassword(student.id, password, confirmation);
+      setRevealedPassword(null);
+      if (result.password_status === 'RECOVERABLE') setAccount((current) => current?.linked ? { ...current, password_status: 'RECOVERABLE' } : current);
       setPassword(''); setConfirmation(''); setMode(null);
       showToast('Password reset successfully', 'success');
     } catch (error: any) { showToast(error.message || 'Could not reset password', 'error'); }
@@ -56,7 +78,9 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
       <div><span className="block text-slate-500">Bingo Space record ID</span><strong className="break-all">{account.bingo_space_id}</strong></div>
       <div><span className="block text-slate-500">Linked Attendance ID</span><strong>{account.attendance_student_id || 'Not linked'}</strong></div>
       <div><span className="block text-slate-500">Username</span><strong>{account.username}</strong></div>
-      <div><span className="block text-slate-500">Password availability</span><strong>Current password cannot be recovered</strong></div>
+      <div><span className="block text-slate-500">Password</span>{account.password_status === 'RECOVERABLE'
+        ? <><strong className="break-all">{revealedPassword ?? '••••••••'}</strong><button type="button" disabled={busy} onClick={showPassword} className="ml-2 text-xs font-bold underline">{revealedPassword === null ? 'Show Password' : 'Hide Password'}</button></>
+        : <strong>Password unavailable — reset required.</strong>}</div>
     </div>
     {!mode && <div className="mt-3 flex flex-wrap gap-2">
       <button type="button" onClick={() => { setUsername(account.username); setMode('username'); }} className="rounded-lg border border-slate-900 px-3 py-1.5 text-xs font-black dark:border-white">Change Username</button>
