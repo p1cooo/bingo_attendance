@@ -3,7 +3,7 @@ import type { Student } from '../../types.js';
 import { api } from '../../lib/api.js';
 import { useToast } from '../common/Toast.js';
 
-type Account = { linked: boolean; username: string; stars: number };
+type Account = { linked: false } | { linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'UNRECOVERABLE' };
 
 export function BingoSpaceAccountSection({ student }: { student: Student }) {
   const { showToast } = useToast();
@@ -19,7 +19,7 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
     let active = true;
     setAccount(null); setUnavailable(false); setMode(null);
     api.getPortalAccount(student.id).then((value) => {
-      if (active) { setAccount(value); setUsername(value.username); }
+      if (active) { setAccount(value); setUsername(value.linked ? value.username : ''); }
     }).catch((error) => {
       if (active && !String(error.message).includes('404')) setUnavailable(true);
     });
@@ -47,17 +47,20 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
   };
 
   if (unavailable) return <p className="text-xs font-medium text-amber-700">Bingo Space account details are temporarily unavailable.</p>;
-  if (!account?.linked) return null;
+  if (!account) return null;
+  if (!account.linked) return <p className="text-xs font-medium text-amber-700">No verified Bingo Space account is linked to this Attendance ID. Ask an Admin to review the account before changing login details.</p>;
   return <section className="rounded-2xl border-2 border-slate-900 bg-slate-50 p-4 text-slate-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white">
-    <h4 className="text-sm font-black">Bingo Space Account</h4>
-    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-      <div><span className="block text-slate-500">Status</span><strong className="text-emerald-700">Linked</strong></div>
+    <h4 className="text-sm font-black">Student Login Details</h4>
+    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+      <div><span className="block text-slate-500">Student</span><strong>{account.student_name}</strong></div>
+      <div><span className="block text-slate-500">Bingo Space record ID</span><strong className="break-all">{account.bingo_space_id}</strong></div>
+      <div><span className="block text-slate-500">Linked Attendance ID</span><strong>{account.attendance_student_id || 'Not linked'}</strong></div>
       <div><span className="block text-slate-500">Username</span><strong>{account.username}</strong></div>
-      <div><span className="block text-slate-500">Stars</span><strong>{account.stars}</strong></div>
+      <div><span className="block text-slate-500">Password availability</span><strong>Current password cannot be recovered</strong></div>
     </div>
     {!mode && <div className="mt-3 flex flex-wrap gap-2">
       <button type="button" onClick={() => { setUsername(account.username); setMode('username'); }} className="rounded-lg border border-slate-900 px-3 py-1.5 text-xs font-black dark:border-white">Change Username</button>
-      <button type="button" onClick={() => setMode('password')} className="rounded-lg border border-slate-900 px-3 py-1.5 text-xs font-black dark:border-white">Reset Password</button>
+      <button type="button" onClick={() => setMode('password')} className="rounded-lg border border-slate-900 px-3 py-1.5 text-xs font-black dark:border-white">Change Password</button>
     </div>}
     {mode === 'username' && <form onSubmit={changeUsername} className="mt-3 space-y-2">
       <label className="block text-xs font-bold">New username<input required minLength={3} maxLength={80} pattern="[A-Za-z0-9_-]+" value={username} onChange={(event) => setUsername(event.target.value)} className="mt-1 w-full rounded-lg border p-2 text-slate-900" /></label>

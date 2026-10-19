@@ -470,11 +470,11 @@ class ApiClient {
     return this.request(`/students/${studentId}/portal-invite`, { method: 'POST' });
   }
 
-  async getPortalAccount(studentId: string): Promise<{ linked: boolean; username: string; stars: number }> {
+  async getPortalAccount(studentId: string): Promise<{ linked: false } | { linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'UNRECOVERABLE' }> {
     return this.request(`/students/${studentId}/portal-account`);
   }
 
-  async updatePortalUsername(studentId: string, username: string): Promise<{ linked: boolean; username: string; stars: number }> {
+  async updatePortalUsername(studentId: string, username: string): Promise<{ linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'UNRECOVERABLE' }> {
     return this.request(`/students/${studentId}/portal-account/username`, { method: 'PUT', body: JSON.stringify({ username }) });
   }
 

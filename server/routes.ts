@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { db } from './db.js';
 import { adminAuth, getFirestoreDb, hasAdminCredentials } from './firebaseAdmin.js';
@@ -30,7 +30,7 @@ import { notificationService } from './notifications/NotificationService.js';
 import { validateBulkImport, commitBulkImport } from './bulkImport.js';
 import { generateClassScheduleDocx } from './exportDocx.js';
 import { generateAccountantPdf, generateAccountantWorkbook } from './accountantExport.js';
-import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged, publishFirestoreRevision, removeUndefinedValues } from './firestoreSync.js';
+import { syncDocToFirestore, deleteDocFromFirestore, markFirestoreStateChanged, publishFirestoreRevision, removeUndefinedValues, initializeFirestoreSync } from './firestoreSync.js';
 import { awardPortalStars, getPortalLink, managePortalAccount, portalAccountStatuses, syncPortalCoachLinksForStudent } from './portalBridge.js';
 import { isFormalStudentCode, nextUnusedStudentCode, normaliseStudentCode } from './studentIds.js';
 import { academyMonth, academyToday } from './academyDate.js';
@@ -232,6 +232,26 @@ export const canManageStudent = (user: User, studentId: string) => isAdmin(user)
   const schedule = db.schedules.get(membership.schedule_id);
   return membership.student_id === studentId && membership.status === 'ACTIVE' && Boolean(schedule && db.classes.get(schedule.class_id)?.is_active && canManageClass(user, schedule.class_id));
 });
+// Credential access needs a current recurring assignment. Replacement bookings
+// and temporary session coaches never grant it.
+export const canManageStudentCredentials = (user: User, studentId: string) => {
+  if (!user.is_active) return false;
+  if (isAdmin(user)) return true;
+  if (user.role !== 'COACH' || !user.coach_id) return false;
+  const today = academyToday();
+  return Array.from(db.memberships.values()).some((membership) => {
+    if (membership.student_id !== studentId || membership.status !== 'ACTIVE' ||
+        membership.joined_date > today || (membership.ended_date && membership.ended_date <= today)) return false;
+    const schedule = db.schedules.get(membership.schedule_id);
+    const cls = schedule && db.classes.get(schedule.class_id);
+    return Boolean(schedule?.is_active && schedule.status === 'ACTIVE' && cls?.is_active &&
+      cls.default_coach_id === user.coach_id);
+  });
+};
+const refreshCredentialScope = async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try { await initializeFirestoreSync(); next(); }
+  catch { res.status(503).json({ error: 'Current class authorization is unavailable.' }); }
+};
 async function persistMutation(records: Array<[string, string, unknown]>, revisionOnly = false) {
   await Promise.all(records.map(([collection, id, value]) => syncDocToFirestore(collection, id, value, false)));
   await (revisionOnly ? publishFirestoreRevision() : markFirestoreStateChanged());
@@ -3209,38 +3229,38 @@ router.post('/students/:id/portal-invite', authenticateUser, async (req: Authent
   }
 });
 
-router.get('/students/:id/portal-account', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/students/:id/portal-account', refreshCredentialScope, authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const student = db.students.get(req.params.id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
-  if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
-  try { return res.json(await managePortalAccount(student.student_id, 'metadata')); }
+  if (!canManageStudentCredentials(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  try { res.setHeader('Cache-Control', 'no-store'); return res.json(await managePortalAccount(student.student_id, 'metadata', req.user!)); }
   catch (error: any) {
     if (error.status === 404) return res.json({ linked: false });
     return res.status(error.status || 502).json({ error: error.message || 'Bingo Space account unavailable' });
   }
 });
 
-router.put('/students/:id/portal-account/username', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/students/:id/portal-account/username', refreshCredentialScope, authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const student = db.students.get(req.params.id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
-  if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  if (!canManageStudentCredentials(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
   if (typeof req.body.username !== 'string') return res.status(400).json({ error: 'Username is required' });
   try {
-    const result = await managePortalAccount(student.student_id, 'username', { username: req.body.username });
+    const result = await managePortalAccount(student.student_id, 'username', req.user!, { username: req.body.username });
     await recordActivity(req.user!, 'PORTAL_USERNAME_CHANGED', 'student', student.id, { summary: student.student_id });
     return res.json(result);
   } catch (error: any) { return res.status(error.status || 502).json({ error: error.message || 'Could not change username' }); }
 });
 
-router.post('/students/:id/portal-account/password-reset', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/students/:id/portal-account/password-reset', refreshCredentialScope, authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const student = db.students.get(req.params.id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
-  if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
+  if (!canManageStudentCredentials(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
   if (typeof req.body.new_password !== 'string' || typeof req.body.new_password_confirmation !== 'string') {
     return res.status(400).json({ error: 'New password and confirmation are required' });
   }
   try {
-    const result = await managePortalAccount(student.student_id, 'password-reset', {
+    const result = await managePortalAccount(student.student_id, 'password-reset', req.user!, {
       new_password: req.body.new_password, new_password_confirmation: req.body.new_password_confirmation,
     });
     await recordActivity(req.user!, 'PORTAL_PASSWORD_RESET', 'student', student.id, { summary: student.student_id });

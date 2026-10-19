@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { AttendanceRecord, ClassSession, Student } from '../src/types.js';
+import { AttendanceRecord, ClassSession, Student, User } from '../src/types.js';
 import { db } from './db.js';
 import { syncDocToFirestore } from './firestoreSync.js';
 
@@ -114,14 +114,32 @@ export async function getPortalLink(student: Student): Promise<{ status: 'REGIST
 export async function managePortalAccount(
   studentCode: string,
   action: 'metadata' | 'username' | 'password-reset',
+  actor: User,
   fields: Record<string, string> = {},
-): Promise<{ linked?: boolean; username?: string; stars?: number; success?: boolean }> {
-  const result = await signedPost(`/integration/attendance/account-${action}`, { student_id: studentCode, ...fields });
-  if (!result) throw Object.assign(new Error('Bingo Space connection is not configured.'), { status: 502 });
+): Promise<{ linked?: boolean; student_name?: string; bingo_space_id?: string; attendance_student_id?: string; username?: string; password_status?: string; success?: boolean }> {
+  const url = process.env.PORTAL_BRIDGE_URL?.replace(/\/$/, '');
+  const secret = process.env.PORTAL_CREDENTIAL_SECRET;
+  if (!url || !secret || secret.length < 32 || secret === process.env.ATTENDANCE_BRIDGE_SECRET) {
+    throw Object.assign(new Error('Bingo Space credential connection is not configured.'), { status: 503 });
+  }
+  const path = `/integration/attendance/account-${action}`;
+  const payload = JSON.stringify({ student_id: studentCode, actor_id: actor.id, actor_role: actor.role, ...fields });
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${nonce}.${path.slice(1)}.${payload}`).digest('hex');
+  const response = await fetch(`${url}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Credential-Timestamp': timestamp,
+      'X-Credential-Nonce': nonce, 'X-Credential-Signature': signature },
+    body: payload,
+    signal: AbortSignal.timeout(8000),
+  });
+  const data = await response.json().catch(() => ({}));
+  const result = { response, data };
   if (!result.response.ok) {
     const fieldError = result.data?.errors?.username?.[0] || result.data?.errors?.new_password?.[0];
     throw Object.assign(new Error(fieldError || result.data?.message || 'Bingo Space account update failed.'), {
-      status: result.response.status === 404 ? 404 : result.response.status === 422 ? 422 : 502,
+      status: [403, 404, 409, 422, 429, 503].includes(result.response.status) ? result.response.status : 502,
     });
   }
   return result.data;
