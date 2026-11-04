@@ -179,9 +179,11 @@ test('pre-launch lessons remain scheduled without invented attendance; Finance b
       ['individual-pre', { id: 'individual-pre', schedule_id: 'individual', class_id: 'individual', session_date: '2026-10-14', start_time: '09:00', end_time: '10:00', status: 'SCHEDULED', scheduled_coach_id: 'coach', actual_coach_id: 'coach' } as any],
       ['individual-live', { id: 'individual-live', schedule_id: 'individual', class_id: 'individual', session_date: '2026-10-15', start_time: '09:00', end_time: '10:00', status: 'SCHEDULED', scheduled_coach_id: 'coach', actual_coach_id: 'coach' } as any],
       ['individual-nov', { id: 'individual-nov', schedule_id: 'individual', class_id: 'individual', session_date: '2026-11-05', start_time: '09:00', end_time: '10:00', status: 'SCHEDULED', scheduled_coach_id: 'coach', actual_coach_id: 'coach' } as any],
+      ['group-nov', { id: 'group-nov', schedule_id: 'group', class_id: 'group', session_date: '2026-11-07', start_time: '09:00', end_time: '10:00', status: 'SCHEDULED', scheduled_coach_id: 'coach', actual_coach_id: 'coach' } as any],
     ]);
     db.attendance = new Map([['live-mark', { id: 'live-mark', student_id: 'student', session_id: 'individual-live', status: 'PRESENT', attendance_type: 'REGULAR' } as any],
-      ['nov-mark', { id: 'nov-mark', student_id: 'student', session_id: 'individual-nov', status: 'PRESENT', attendance_type: 'REGULAR' } as any]]);
+      ['nov-mark', { id: 'nov-mark', student_id: 'student', session_id: 'individual-nov', status: 'PRESENT', attendance_type: 'REGULAR' } as any],
+      ['group-nov-mark', { id: 'group-nov-mark', student_id: 'student', session_id: 'group-nov', status: 'PRESENT', attendance_type: 'REGULAR' } as any]]);
     db.studentFees = new Map([['group-fee', { id: 'group-fee', student_id: 'student', membership_id: 'group-m', billing_mode: 'MONTHLY', amount_cents: 20000, effective_month: '2026-10', created_at: '2026-09-01' } as any],
       ['individual-fee', { id: 'individual-fee', student_id: 'student', membership_id: 'individual-m', billing_mode: 'PER_SESSION', amount_cents: 5000, effective_month: '2026-10', created_at: '2026-09-01' } as any]]);
     db.studentPayments = new Map(); db.studentAdjustments = new Map(); db.studentPauses = new Map();
@@ -193,7 +195,7 @@ test('pre-launch lessons remain scheduled without invented attendance; Finance b
     assert.equal(pre.status, 'SCHEDULED');
     assert.equal(live.attendance_expected, true);
     assert.equal(live.marked_attendance_count, 1);
-    assert.deepEqual([...db.sessions.keys()], ['group-pre', 'individual-pre', 'individual-live', 'individual-nov']);
+    assert.deepEqual([...db.sessions.keys()], ['group-pre', 'individual-pre', 'individual-live', 'individual-nov', 'group-nov']);
 
     // Finance starts in November 2026: October is not billed and October fee versions are not carried forward.
     assert.equal(financeDetail('student', '2026-10')!.months.length, 0);

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api } from '../../lib/api.js';
+import { api, type StudentDeleteCheck } from '../../lib/api.js';
 import { ClassSchedule, Student } from '../../types.js';
 import { Modal } from '../common/Modal.js';
 import { useToast } from '../common/Toast.js';
@@ -24,6 +24,25 @@ export const CoachStudentsView: React.FC = () => {
   const [form, setForm] = useState(emptyForm);
   const [scheduleIds, setScheduleIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [undoCheck, setUndoCheck] = useState<StudentDeleteCheck | null>(null);
+  const [undoOpen, setUndoOpen] = useState(false);
+  const openUndo = async () => {
+    if (!selected) return;
+    setUndoCheck(null); setUndoOpen(true);
+    try { setUndoCheck(await api.getStudentDeleteCheck(selected.id)); }
+    catch (error: any) { showToast(error.message || 'Could not check this student', 'error'); setUndoOpen(false); }
+  };
+  const confirmUndo = async () => {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      await api.deleteStudent(selected.id);
+      showToast(`${selected.full_name} deleted`, 'success');
+      setUndoOpen(false); setEditing(false); setSelected(null); setForm(emptyForm);
+      await load();
+    } catch (error: any) { showToast(error.message || 'Could not delete student', 'error'); }
+    finally { setBusy(false); }
+  };
   const load = async () => {
     try {
       const [rows, assigned] = await Promise.all([api.getStudents(), api.getSchedules()]);
@@ -106,8 +125,22 @@ export const CoachStudentsView: React.FC = () => {
           <input required={key === 'full_name'} value={value} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" />
         </label>)}
         <ClassMembershipPicker schedules={schedules} selected={scheduleIds} onChange={setScheduleIds} />
-        <button disabled={busy || (!selected && !scheduleIds.length)} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">Save Student</button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button disabled={busy || (!selected && !scheduleIds.length)} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">Save Student</button>
+          {selected && <button type="button" onClick={openUndo} className="rounded-lg border-2 border-rose-600 px-3 py-2 text-xs font-black text-rose-700">Delete student (created by mistake)</button>}
+        </div>
       </form>
+    </Modal>
+    <Modal isOpen={undoOpen} onClose={() => setUndoOpen(false)} title="Delete Student Created by Mistake">
+      <div className="space-y-3 text-sm">
+        <p><b>{selected?.full_name}</b> ({selected?.student_id})</p>
+        {!undoCheck && <p className="text-xs text-slate-500">Checking…</p>}
+        {undoCheck && !undoCheck.allowed && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"><p className="font-black">This student can't be deleted by a coach.</p><ul className="mt-1 list-disc pl-4">{undoCheck.reasons.map(r => <li key={r}>{r}</li>)}</ul><p className="mt-2">Ask an admin to remove this student.</p></div>}
+        {undoCheck?.allowed && <>
+          <p className="text-xs text-slate-600">Use this only for a student you created by mistake. The student and their class enrolment will be permanently deleted.</p>
+          <button type="button" disabled={busy} onClick={confirmUndo} className="rounded-lg bg-rose-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">{busy ? 'Deleting…' : 'Delete student'}</button>
+        </>}
+      </div>
     </Modal>
     <Modal isOpen={Boolean(selected) && !editing} onClose={() => setSelected(null)} title="Student Details">
       {selected && <div className="space-y-2 text-sm"><p><b>{selected.full_name}</b> ({selected.student_id})</p><p>Nickname: {selected.nick_name || '—'}</p><p>School: {selected.school || '—'}</p><p>Parent: {selected.parent?.name || '—'}</p><p>Phone: {selected.parent?.phone || '—'}</p><p>Classes: {selected.enrolled_schedules?.map((item) => item.class_name).join(', ') || '—'}</p><BingoSpaceAccountSection student={selected} /></div>}

@@ -53,6 +53,15 @@ export function chargesPerLesson(record: Pick<AttendanceRecord, 'status' | 'atte
   return record.attendance_type !== 'REPLACEMENT' && (record.status === 'PRESENT' || record.status === 'LATE');
 }
 
+/**
+ * A group class's monthly fee starts at the student's first regular roll-call
+ * mark in that class that month. Absent counts (it still earns a replacement
+ * credit); excused, booked and replacement attendance do not.
+ */
+export function startsMonthlyCharge(record: Pick<AttendanceRecord, 'status' | 'attendance_type'>): boolean {
+  return record.attendance_type !== 'REPLACEMENT' && (record.status === 'PRESENT' || record.status === 'LATE' || record.status === 'ABSENT');
+}
+
 export function configuredGoLiveDate(): string | null {
   const date = process.env.ACADEMY_GO_LIVE_DATE;
   if (!date) return null;
@@ -84,6 +93,8 @@ function weekdayDates(month: string, dayOfWeek: number | undefined): string[] {
 type FinanceLine = {
   membership_id: string; class_name: string; coach_name: string; mode: string; unit_cents: number; dates: string[]; amount_cents: number;
   fee_source: 'DEFAULT' | 'OVERRIDE';
+  /** Group class with no roll call yet this month: not charged. */
+  awaiting_first_roll_call?: boolean;
   pending_finance_review?: boolean; pre_go_live_dates?: string[];
   /** Group membership joined or ended partway through the month and missed scheduled classes. */
   partial_month?: { joined_date: string; ended_date?: string; attended_dates: string[]; missed_dates: string[]; decision?: { amount_cents: number; reason: string; by: string; at: string } };
@@ -105,6 +116,7 @@ export function financeDetail(studentId: string, through = academyMonth()) {
   const sessions = [...db.sessions.values()].filter(s => s.session_date >= startDate);
   const attendance = [...db.attendance.values()].filter(a => a.student_id === studentId);
   const chargedSessionIds = new Set(attendance.filter(chargesPerLesson).map(a => a.session_id));
+  const rollCallSessionIds = new Set(attendance.filter(startsMonthlyCharge).map(a => a.session_id));
   const months: Array<{month: string; lines: FinanceLine[]; charges_cents: number; paid_cents: number; adjustments_cents: number; outstanding_cents: number; status: string}> = [];
   for (let month = startMonth, count = 0; month <= final && count < 240; month = nextMonth(month), count++) {
     const lines: FinanceLine[] = [];
@@ -145,14 +157,18 @@ export function financeDetail(studentId: string, through = academyMonth()) {
       }
 
       const quantity = applicable.billing_mode === 'MONTHLY' ? 1 : charged.length;
+      // Until the first roll call of the month, a group class is not charged
+      // and needs no review. An admin's explicit amount still applies.
+      const awaitingFirstRollCall = applicable.billing_mode === 'MONTHLY' && !related.some(s => rollCallSessionIds.has(s.id));
       let amount_cents: number;
       let pending_finance_review = false;
       if (coverage === 'FULL') amount_cents = 0;
+      else if (awaitingFirstRollCall && !partial?.decision && !pauseReview) { amount_cents = 0; partial = undefined; }
       else if (partial) { amount_cents = partial.decision?.amount_cents ?? 0; pending_finance_review = !partial.decision; }
       else if (pauseReview) amount_cents = pauseReview.amount_cents;
       else if (coverage === 'PARTIAL') { amount_cents = 0; pending_finance_review = true; }
       else { amount_cents = applicable.amount_cents * quantity; pending_finance_review = preGoLiveDates.length > 0; }
-      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review || partial) lines.push({ membership_id: membership.id, class_name: override?.class_name || cls?.name || 'Class', coach_name: override?.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, fee_source: override ? 'OVERRIDE' : 'DEFAULT', dates: applicable.billing_mode === 'MONTHLY' ? dates : charged.map(s => s.session_date).sort(), amount_cents, pending_finance_review, pre_go_live_dates: preGoLiveDates, partial_month: partial });
+      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review || partial) lines.push({ membership_id: membership.id, class_name: override?.class_name || cls?.name || 'Class', coach_name: override?.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, fee_source: override ? 'OVERRIDE' : 'DEFAULT', dates: applicable.billing_mode === 'MONTHLY' ? dates : charged.map(s => s.session_date).sort(), amount_cents, pending_finance_review, pre_go_live_dates: preGoLiveDates, partial_month: partial, awaiting_first_roll_call: awaitingFirstRollCall && coverage !== 'FULL' && amount_cents === 0 && !pending_finance_review });
     }
     const charges_cents = lines.reduce((sum, line) => sum + line.amount_cents, 0);
     const paid_cents = payments.reduce((sum, payment) => sum + payment.allocations.filter(a => a.month === month).reduce((n, a) => n + a.amount_cents, 0), 0);

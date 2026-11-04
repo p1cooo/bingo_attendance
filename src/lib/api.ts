@@ -13,6 +13,11 @@ import {
 } from '../types.js';
 import { clientAuth } from './firebase.js';
 
+export type StudentDeleteCheck = {
+  allowed: boolean; reasons: string[]; bingo_space_account: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN'; student_code: string;
+  counts: { attendance: number; classes: number; credits: number; pauses: number };
+};
+
 const API_BASE = '/api';
 
 class ApiClient {
@@ -274,7 +279,11 @@ class ApiClient {
     });
   }
 
-  async deleteStudent(id: string): Promise<{ success: boolean; message: string }> {
+  async getStudentDeleteCheck(id: string): Promise<StudentDeleteCheck> {
+    return this.request(`/students/${id}/delete-check`);
+  }
+
+  async deleteStudent(id: string): Promise<{ success: boolean; message: string; bingo_space_account?: 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN'; student_code?: string }> {
     return this.request(`/students/${id}`, {
       method: 'DELETE',
     });
@@ -284,7 +293,7 @@ class ApiClient {
     return this.request('/students/bulk-assign-schedule', { method: 'POST', body: JSON.stringify({ student_ids: studentIds, schedule_id: scheduleId }) });
   }
 
-  async bulkDeleteStudents(studentIds: string[]): Promise<{ success: boolean; deleted_count: number }> {
+  async bulkDeleteStudents(studentIds: string[]): Promise<{ success: boolean; deleted_count: number; bingo_space_accounts?: string[] }> {
     return this.request('/students/bulk-delete', { method: 'POST', body: JSON.stringify({ student_ids: studentIds }) });
   }
 

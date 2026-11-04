@@ -89,7 +89,10 @@ test('Finance zeroes only a fully paused class and flags partial months until a 
     db.sessions = new Map([['group-session', { id: 'group-session', schedule_id: 'group', class_id: 'group', session_date: '2026-11-10', status: 'SCHEDULED' } as any],
       ['individual-session', { id: 'individual-session', schedule_id: 'individual', class_id: 'individual', session_date: '2026-11-14', status: 'SCHEDULED' } as any],
       ['group-nov', { id: 'group-nov', schedule_id: 'group', class_id: 'group', session_date: '2026-12-10', status: 'SCHEDULED' } as any]]);
-    db.attendance = new Map([['mark', { id: 'mark', student_id: 'student', session_id: 'individual-session', status: 'PRESENT' } as any]]);
+    db.attendance = new Map([['mark', { id: 'mark', student_id: 'student', session_id: 'individual-session', status: 'PRESENT' } as any],
+      // Group fees start at the first roll call of the month.
+      ['group-mark', { id: 'group-mark', student_id: 'student', session_id: 'group-session', status: 'PRESENT', attendance_type: 'REGULAR' } as any],
+      ['group-dec-mark', { id: 'group-dec-mark', student_id: 'student', session_id: 'group-nov', status: 'PRESENT', attendance_type: 'REGULAR' } as any]]);
     db.studentFees = new Map([['group-fee', { id: 'group-fee', student_id: 'student', membership_id: 'group-membership', class_name: 'Group', billing_mode: 'MONTHLY', amount_cents: 20000, effective_month: '2026-11', created_at: '2026-09-01' } as any],
       ['individual-fee', { id: 'individual-fee', student_id: 'student', membership_id: 'individual-membership', class_name: 'Individual', billing_mode: 'PER_SESSION', amount_cents: 5000, effective_month: '2026-11', created_at: '2026-09-01' } as any]]);
     db.studentPayments = new Map(); db.studentAdjustments = new Map();

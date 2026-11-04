@@ -44,6 +44,7 @@ import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH } from './finance.js';
 import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
+import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
 import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } from './studentPauses.js';
 import type { StudentFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
 import type { StudentPause, PauseReason } from '../src/types.js';
@@ -1535,30 +1536,39 @@ router.put('/students/:id', authenticateUser, requireCoachOrAdmin, async (req: A
   } catch { return res.status(503).json({ error: 'Student update could not be saved.' }); }
 });
 
-router.delete('/students/:id', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+// Admins delete a student's whole Attendance history (Finance history blocks
+// it). Coaches may only undo a student they created, before any history.
+// Bingo Space is not changed here: an admin deactivates that account there.
+async function studentDeletePlan(user: User, studentId: string) {
+  const student = db.students.get(studentId)!;
+  const portal: PortalStatus = (await portalAccountStatuses([student.student_id]).catch(() => ({} as Record<string, PortalStatus>)))[student.student_id] || 'UNKNOWN';
+  const reasons = isAdmin(user) ? adminDeleteBlockers(studentId) : coachUndoBlockers({
+    user, studentId, portal, createdByUserId: await findStudentCreator(studentId).catch(() => null),
+    canManageSchedule: scheduleId => canManageSchedule(user, scheduleId),
+  });
+  const records = studentRecords(studentId);
+  return { allowed: reasons.length === 0, reasons, bingo_space_account: portal, student_code: student.student_id,
+    counts: { attendance: records.attendance.length, classes: records.memberships.length, credits: records.credits.length, pauses: records.pauses.length } };
+}
+
+router.get('/students/:id/delete-check', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  if (!db.students.has(req.params.id)) return res.status(404).json({ error: 'Student not found' });
+  return res.json(await studentDeletePlan(req.user!, req.params.id));
+});
+
+router.delete('/students/:id', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const student = db.students.get(id);
-
-  if (!student) {
-    return res.status(404).json({ error: 'Student not found' });
-  }
-  if ([...db.studentFees.values()].some(f => f.student_id === id) || [...db.studentPayments.values()].some(p => p.student_id === id) || [...db.studentAdjustments.values()].some(a => a.student_id === id)) return res.status(409).json({ error: 'Student has finance history. Mark the student inactive to preserve billing records.' });
-
-  const membershipIds = Array.from(db.memberships.entries()).flatMap(([mId, m]) => {
-    if (m.student_id === id) {
-      return [mId];
-    }
-    return [];
-  });
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  const plan = await studentDeletePlan(req.user!, id);
+  if (!plan.allowed) return res.status(isAdmin(req.user!) ? 409 : 403).json({ error: isAdmin(req.user!) ? plan.reasons.join(' ') : `Ask an admin to remove this student. ${plan.reasons.join(' ')}`, reasons: plan.reasons });
   try {
-    await Promise.all([
-      deleteDocFromFirestore('students', id),
-      ...membershipIds.map((membershipId) => deleteDocFromFirestore('memberships', membershipId)),
-    ]);
-    membershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
-    db.students.delete(id);
+    const removed = await deleteStudentEverywhere(id);
+    await recordActivity(req.user!, isAdmin(req.user!) ? 'STUDENT_DELETED' : 'STUDENT_CREATION_UNDONE', 'student', id, {
+      summary: `${student.student_id} ${student.full_name}`, previous_values: { ...removed, bingo_space_account: plan.bingo_space_account } }).catch(console.error);
+    await publishFirestoreRevision();
     db.saveToDisk();
-    return res.json({ success: true, message: `Student ${student.full_name} deleted successfully` });
+    return res.json({ success: true, message: `Student ${student.full_name} deleted successfully`, removed, bingo_space_account: plan.bingo_space_account, student_code: student.student_id });
   } catch (error: any) {
     console.error('[Delete Student] Firestore delete failed:', error?.message || error);
     return res.status(503).json({ error: 'Student could not be deleted completely. Please retry.', code: 'DELETE_FAILED' });
@@ -1919,20 +1929,24 @@ router.post('/students/bulk-delete', authenticateUser, requireAdmin, async (req:
   if (student_ids.length > 500) return res.status(400).json({ error: 'A bulk action is limited to 500 students.' });
   const ids = [...new Set(student_ids)].filter((studentId): studentId is string => typeof studentId === 'string' && db.students.has(studentId));
   if (ids.length === 0) return res.status(400).json({ error: 'None of the selected students still exist.' });
-  if ([...db.studentFees.values()].some(f => ids.includes(f.student_id)) || [...db.studentPayments.values()].some(p => ids.includes(p.student_id)) || [...db.studentAdjustments.values()].some(a => ids.includes(a.student_id))) return res.status(409).json({ error: 'One or more students have finance history. Mark them inactive instead.' });
-  const membershipIds = Array.from(db.memberships.values()).filter((membership) => ids.includes(membership.student_id)).map((membership) => membership.id);
+  if (ids.some(id => adminDeleteBlockers(id).length)) return res.status(409).json({ error: 'One or more students have finance history. Mark them inactive instead.' });
+  const codes = ids.map(id => db.students.get(id)!.student_id);
+  const statuses = await portalAccountStatuses(codes).catch(() => ({} as Record<string, PortalStatus>));
+  const deleted: string[] = [];
   try {
-    await Promise.all([
-      ...ids.map((studentId) => deleteDocFromFirestore('students', studentId)),
-      ...membershipIds.map((membershipId) => deleteDocFromFirestore('memberships', membershipId)),
-    ]);
-    membershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
-    ids.forEach((studentId) => db.students.delete(studentId));
+    for (const id of ids) {
+      const student = db.students.get(id)!;
+      const removed = await deleteStudentEverywhere(id);
+      deleted.push(student.student_id);
+      await recordActivity(req.user!, 'STUDENT_DELETED', 'student', id, { summary: `${student.student_id} ${student.full_name}`, previous_values: { ...removed, bingo_space_account: statuses[student.student_id] || 'UNKNOWN' } }).catch(console.error);
+    }
+    await publishFirestoreRevision();
     db.saveToDisk();
-    return res.json({ success: true, deleted_count: ids.length });
+    return res.json({ success: true, deleted_count: deleted.length, bingo_space_accounts: codes.filter(code => statuses[code] !== 'NOT_REGISTERED') });
   } catch (error: any) {
     console.error('[Bulk Delete Students] Firestore delete failed:', error?.message || error);
-    return res.status(503).json({ error: 'Student deletion could not be completed. Please retry.', code: 'FIRESTORE_DELETE_FAILED' });
+    if (deleted.length) { await publishFirestoreRevision().catch(console.error); db.saveToDisk(); }
+    return res.status(503).json({ error: `Deleted ${deleted.length} of ${ids.length} students before an error. Please retry for the rest.`, code: 'FIRESTORE_DELETE_FAILED' });
   }
 });
 

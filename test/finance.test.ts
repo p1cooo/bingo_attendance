@@ -30,6 +30,11 @@ test('group fees, per-class attendance, partial and multi-month payments, credit
     const session = (id: string, date: string, status = 'COMPLETED') => db.sessions.set(id, { id, class_id: 'individual', schedule_id: 'individual', session_date: date, start_time: '10:00', end_time: '11:00', scheduled_coach_id: 'coach', actual_coach_id: 'coach', status } as ClassSession);
     session('jan-1', '2026-11-05'); session('jan-2', '2026-11-12'); session('jan-off', '2026-11-19', 'PLANNED_OFF_DAY'); session('feb-moved', '2026-12-04');
     for (const id of ['jan-1', 'jan-2', 'jan-off', 'feb-moved']) db.attendance.set(id, { id, session_id: id, student_id: 's1', status: 'PRESENT', attendance_type: 'REGULAR', marked_at: '', marked_by_user_id: 'coach' } as AttendanceRecord);
+    // Group fees start at the first roll call of each month.
+    for (const [id, date] of [['g-nov', '2026-11-07'], ['g-dec', '2026-12-05'], ['g-jan', '2027-01-02'], ['g-feb', '2027-02-06']]) {
+      db.sessions.set(id, { id, class_id: 'group', schedule_id: 'group', session_date: date, start_time: '10:00', end_time: '11:00', scheduled_coach_id: 'coach', actual_coach_id: 'coach', status: 'COMPLETED' } as ClassSession);
+      db.attendance.set(id, { id, session_id: id, student_id: 's1', status: 'PRESENT', attendance_type: 'REGULAR', marked_at: '', marked_by_user_id: 'coach' } as AttendanceRecord);
+    }
     db.attendance.set('duplicate-record', { id: 'duplicate-record', session_id: 'jan-1', student_id: 's1', status: 'PRESENT', attendance_type: 'REGULAR', marked_at: '', marked_by_user_id: 'coach' } as AttendanceRecord);
     const jan = financeDetail('s1', '2026-11')!;
     assert.equal(jan.months[0].charges_cents, 34000); // 180 monthly + 80 x 2; off-day excluded

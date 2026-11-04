@@ -27,3 +27,6 @@ Do not refactor this in Phase 1 unless explicitly requested.
 
 ## Credentials
 Never commit Firebase/service-account keys to Git, `.harness`, source, logs, or documentation.
+
+## Student deletion and Bingo Space (2026-11-05)
+Deleting a student in Attendance removes all of their Attendance records (Finance history still blocks it) but does not change Bingo Space: the bridge has no delete/deactivate endpoint, and the live Bingo Space checkout is not reconciled with GitHub `p1cooo/Bingo-Space` (Attendance already calls account-* endpoints that the GitHub repo lacks). Until that is reconciled, an admin sets the deleted student's Bingo Space account to Inactive by hand. Deleted STU codes stay reserved and are never reissued.

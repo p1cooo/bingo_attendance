@@ -110,7 +110,7 @@ test('extra test students and test classes never charge', () => {
     addClass('ind', 'INDIVIDUAL', 1); db.classes.set('ind', { ...db.classes.get('ind')!, name: 'testing' }); join('m-ind', 'real', 'ind');
     session('x', 'ind', '2026-11-02'); mark('x', 'real', 'PRESENT');
     assert.equal(financeDetail('real', '2026-11')!.outstanding_cents, 0);
-    addClass('realgroup', 'GROUP'); join('m-real', 'real', 'realgroup');
+    addClass('realgroup', 'GROUP'); join('m-real', 'real', 'realgroup'); session('rg', 'realgroup', '2026-11-07'); mark('rg', 'real', 'PRESENT');
     assert.equal(financeDetail('real', '2026-11')!.outstanding_cents, 24000); // the real class still bills
     assert.equal(financeDetail('real', '2026-11')!.non_billable, false);
   });
@@ -118,7 +118,7 @@ test('extra test students and test classes never charge', () => {
 
 test('admin override replaces the default; October fees and payments are not carried forward', () => {
   isolated(() => {
-    addStudent('o'); addClass('group', 'GROUP'); join('mo', 'o', 'group');
+    addStudent('o'); addClass('group', 'GROUP'); join('mo', 'o', 'group'); session('og', 'group', '2026-11-07'); mark('og', 'o', 'PRESENT');
     const fee = (id: string, month: string, amount: number): StudentFee => ({ id, student_id: 'o', membership_id: 'mo', class_id: 'group', class_name: 'group', coach_name: 'c', billing_mode: 'MONTHLY', amount_cents: amount, effective_month: month, created_by_user_id: 'admin', created_at: `${month}-01T00:00:00Z` });
     db.studentFees.set('oct', fee('oct', '2026-10', 50000));
     const payment: StudentPayment = { id: 'p-oct', student_id: 'o', payment_date: '2026-10-05', amount_cents: 24000, allocations: [{ month: '2026-10', amount_cents: 24000 }], method: 'Cash', source: 'MANUAL', recorded_by_user_id: 'admin', created_at: '2026-10-05T00:00:00Z' };
@@ -133,9 +133,34 @@ test('admin override replaces the default; October fees and payments are not car
   });
 });
 
+test('a group class charges RM240 only from the first roll-call mark of the month', () => {
+  isolated(() => {
+    addStudent('n'); addClass('group', 'GROUP'); join('mn', 'n', 'group');
+    novSaturdays.forEach((d, i) => session(`s${i}`, 'group', d));
+    let detail = financeDetail('n', '2026-11')!;
+    assert.equal(detail.outstanding_cents, 0); // enrolled, no roll call yet
+    assert.equal(detail.pending_finance_review, false);
+    for (const status of ['EXCUSED', 'BOOKED'] as const) { mark('s0', 'n', status); assert.equal(financeDetail('n', '2026-11')!.outstanding_cents, 0); }
+    mark('s0', 'n', 'PRESENT', 'REPLACEMENT'); // a replacement booking does not start the fee
+    assert.equal(financeDetail('n', '2026-11')!.outstanding_cents, 0);
+    mark('s1', 'n', 'ABSENT');
+    detail = financeDetail('n', '2026-11')!;
+    assert.equal(detail.outstanding_cents, 24000); // Absent starts it; still one RM240 for the month
+    mark('s2', 'n', 'PRESENT'); mark('s3', 'n', 'LATE');
+    assert.equal(financeDetail('n', '2026-11')!.outstanding_cents, 24000);
+    // December has no roll call yet: not charged.
+    session('d1', 'group', '2026-12-05');
+    assert.equal(financeDetail('n', '2026-12')!.months.find(m => m.month === '2026-12')?.charges_cents ?? 0, 0);
+  });
+});
+
 test('two group classes are each charged RM240', () => {
   isolated(() => {
     addStudent('two'); addClass('g1', 'GROUP', 6); addClass('g2', 'GROUP', 0); join('m1', 'two', 'g1'); join('m2', 'two', 'g2');
+    session('a1', 'g1', '2026-11-07'); session('b1', 'g2', '2026-11-08');
+    mark('a1', 'two', 'PRESENT');
+    assert.equal(nov('two')!.charges_cents, 24000); // roll call only in g1
+    mark('b1', 'two', 'ABSENT');
     assert.equal(nov('two')!.charges_cents, 48000);
   });
 });
@@ -145,11 +170,11 @@ test('a group membership that starts or ends mid-month and misses a class needs 
     addClass('group', 'GROUP');
     novSaturdays.forEach((d, i) => session(`s${i}`, 'group', d));
     // Joins Wed 4 Nov: first Saturday is 7 Nov, so no class is missed -> full RM240.
-    addStudent('early'); join('me', 'early', 'group', '2026-11-04');
+    addStudent('early'); join('me', 'early', 'group', '2026-11-04'); mark('s0', 'early', 'PRESENT');
     assert.equal(nov('early')!.charges_cents, 24000);
     assert.equal(nov('early')!.lines[0].partial_month, undefined);
     // Joins 10 Nov: misses 7 Nov -> pending review, not RM240.
-    addStudent('late'); join('ml', 'late', 'group', '2026-11-10');
+    addStudent('late'); join('ml', 'late', 'group', '2026-11-10'); mark('s1', 'late', 'PRESENT');
     let month = nov('late')!;
     assert.equal(month.status, 'Pending Finance Review');
     assert.equal(month.charges_cents, 0);
@@ -161,7 +186,7 @@ test('a group membership that starts or ends mid-month and misses a class needs 
     assert.equal(financeDetail('late', '2026-11')!.partial_month_reviews.length, 2);
     assert.equal(month.status, 'Unpaid');
     // Leaves: removal effective 21 Nov (last roster day 20 Nov) -> pending review.
-    addStudent('leaver'); join('mv', 'leaver', 'group', '2026-09-01', '2026-11-20');
+    addStudent('leaver'); join('mv', 'leaver', 'group', '2026-09-01', '2026-11-20'); mark('s0', 'leaver', 'ABSENT');
     assert.equal(nov('leaver')!.status, 'Pending Finance Review');
     assert.deepEqual(nov('leaver')!.lines[0].partial_month?.attended_dates, ['2026-11-07', '2026-11-14']);
     // Removal effective before the first class of the month -> nothing to bill.

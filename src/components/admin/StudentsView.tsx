@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../lib/api.js';
+import { api, type StudentDeleteCheck } from '../../lib/api.js';
 import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import { useToast } from '../common/Toast.js';
 import { Student, Coach, AcademyClass, ClassSchedule } from '../../types.js';
@@ -55,6 +55,12 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [deletingStudent, setDeletingStudent] = useState<Student | null>(null);
+  const [deleteCheck, setDeleteCheck] = useState<StudentDeleteCheck | null>(null);
+  useEffect(() => {
+    setDeleteCheck(null);
+    if (!deletingStudent) return;
+    api.getStudentDeleteCheck(deletingStudent.id).then(setDeleteCheck).catch((err: any) => showToast(err.message || 'Could not check this student', 'error'));
+  }, [deletingStudent]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
@@ -208,8 +214,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     if (!deletingStudent) return;
     try {
       setIsSubmitting(true);
-      await api.deleteStudent(deletingStudent.id);
-      showToast(`✓ Student "${deletingStudent.full_name}" deleted`, 'success');
+      const result = await api.deleteStudent(deletingStudent.id);
+      showToast(result.bingo_space_account === 'NOT_REGISTERED'
+        ? `✓ Student "${deletingStudent.full_name}" deleted`
+        : `✓ "${deletingStudent.full_name}" deleted from Attendance. Now set ${result.student_code} to Inactive in Bingo Space admin (Students → Edit → Status).`, 'success');
       setDeletingStudent(null);
       await loadData();
     } catch (err: any) {
@@ -245,7 +253,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     try {
       setIsSubmitting(true);
       const result = await api.bulkDeleteStudents(selectedStudentIds);
-      showToast(`✓ ${result.deleted_count} student${result.deleted_count === 1 ? '' : 's'} deleted.`, 'success');
+      showToast(`✓ ${result.deleted_count} student${result.deleted_count === 1 ? '' : 's'} deleted.${result.bingo_space_accounts?.length ? ` Set these to Inactive in Bingo Space admin: ${result.bingo_space_accounts.join(', ')}.` : ''}`, 'success');
       setSelectedStudentIds([]);
       setIsBulkDeleteOpen(false);
       await loadData();
@@ -700,9 +708,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/40 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
             <div className="text-xs text-rose-800 dark:text-rose-300">
-              <span className="font-semibold">{deletingStudent?.full_name}</span> ({deletingStudent?.student_id}) will be removed from all enrolled schedules and attendance records.
+              <span className="font-semibold">{deletingStudent?.full_name}</span> ({deletingStudent?.student_id}) and all their Attendance records will be permanently deleted.
+              {deleteCheck && <span className="block mt-1">Removes {deleteCheck.counts.classes} class enrolment(s), {deleteCheck.counts.attendance} attendance record(s), {deleteCheck.counts.credits} replacement credit record(s) and {deleteCheck.counts.pauses} pause(s). This cannot be undone.</span>}
             </div>
           </div>
+          {!deleteCheck && <p className="text-xs text-neutral-500">Checking this student…</p>}
+          {deleteCheck && !deleteCheck.allowed && <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-900">{deleteCheck.reasons.join(' ')}</p>}
+          {deleteCheck?.allowed && deleteCheck.bingo_space_account !== 'NOT_REGISTERED' && <p role="status" className="rounded-xl border border-sky-300 bg-sky-50 p-3 text-xs text-sky-900">
+            {deleteCheck.bingo_space_account === 'REGISTERED' ? <b>This student has a Bingo Space account.</b> : <b>Bingo Space could not be checked.</b>} Bingo Space is not changed by this delete. Afterwards, set <b>{deleteCheck.student_code}</b> to <b>Inactive</b> in Bingo Space admin (Students → Edit → Status) so the login stops working.
+          </p>}
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <button
@@ -714,7 +728,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             </button>
             <button
               type="button"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !deleteCheck?.allowed}
               onClick={handleDeleteStudent}
               className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white transition-colors disabled:opacity-50 cursor-pointer"
             >
