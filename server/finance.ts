@@ -29,12 +29,20 @@ export const DEFAULT_FEES: Record<ClassType, { billing_mode: 'MONTHLY' | 'PER_SE
   INDIVIDUAL: { billing_mode: 'PER_SESSION', amount_cents: 8000 },
 };
 
+const normaliseName = (value: unknown) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 const TEST_STUDENT_NAMES = new Set(['testing', 'testing 123']);
-const TEST_STUDENT_IDS = new Set(['STU-9999']);
+const TEST_STUDENT_NAME_PREFIXES = ['zz test'];
+const TEST_STUDENT_IDS = new Set(['STU-9999', 'STU-9998', 'STU-9997']);
+const TEST_CLASS_NAMES = new Set(['testing', 'testing 123', 'testing group', 'testing v2']);
 /** Test accounts are never billed. */
 export function isNonBillableStudent(student: Pick<Student, 'full_name' | 'student_id'>): boolean {
-  const name = String(student.full_name || '').trim().replace(/\s+/g, ' ').toLowerCase();
-  return TEST_STUDENT_NAMES.has(name) || TEST_STUDENT_IDS.has(String(student.student_id || '').trim().toUpperCase());
+  const name = normaliseName(student.full_name);
+  return TEST_STUDENT_NAMES.has(name) || TEST_STUDENT_NAME_PREFIXES.some(prefix => name.startsWith(prefix)) ||
+    TEST_STUDENT_IDS.has(String(student.student_id || '').trim().toUpperCase());
+}
+/** Test classes never create charges for any student enrolled in them. */
+export function isNonBillableClass(cls: { name?: string } | undefined | null): boolean {
+  return Boolean(cls) && TEST_CLASS_NAMES.has(normaliseName(cls!.name));
 }
 
 /**
@@ -105,6 +113,7 @@ export function financeDetail(studentId: string, through = academyMonth()) {
       if (membership.joined_date > last || (membership.ended_date && membership.ended_date < first) || (membership.ended_date && membership.ended_date < membership.joined_date) || (membership.status === 'PAUSED' && month >= academyMonth()) || (student.status === 'INACTIVE' && month > academyMonth())) continue;
       const schedule = db.schedules.get(membership.schedule_id);
       const cls = db.classes.get(schedule?.class_id || membership.schedule_id);
+      if (isNonBillableClass(cls)) continue;
       const override = fees.filter(f => f.membership_id === membership.id && f.effective_month <= month).at(-1);
       const classType: ClassType = cls?.class_type === 'INDIVIDUAL' ? 'INDIVIDUAL' : 'GROUP';
       const applicable = override ? { billing_mode: override.billing_mode, amount_cents: override.amount_cents } : DEFAULT_FEES[classType];

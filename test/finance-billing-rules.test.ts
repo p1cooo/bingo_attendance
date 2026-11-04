@@ -99,6 +99,23 @@ test('test accounts Testing, Testing 123 and STU-9999 are always non-billable', 
   });
 });
 
+test('extra test students and test classes never charge', () => {
+  for (const s of [{ full_name: 'Faith Fu', student_id: 'STU-9998' }, { full_name: 'Pico', student_id: 'STU-9997' }, { full_name: 'ZZ TEST - CONCURRENT A 20260921', student_id: 'STU-0007' }])
+    assert.equal(isNonBillableStudent(s), true);
+  isolated(() => {
+    addStudent('real');
+    for (const [id, name] of [['t1', 'Testing'], ['t2', 'Testing Group'], ['t3', 'Testing V2'], ['t4', 'Testing 123']]) {
+      addClass(id, 'GROUP'); db.classes.set(id, { ...db.classes.get(id)!, name }); join(`m-${id}`, 'real', id);
+    }
+    addClass('ind', 'INDIVIDUAL', 1); db.classes.set('ind', { ...db.classes.get('ind')!, name: 'testing' }); join('m-ind', 'real', 'ind');
+    session('x', 'ind', '2026-11-02'); mark('x', 'real', 'PRESENT');
+    assert.equal(financeDetail('real', '2026-11')!.outstanding_cents, 0);
+    addClass('realgroup', 'GROUP'); join('m-real', 'real', 'realgroup');
+    assert.equal(financeDetail('real', '2026-11')!.outstanding_cents, 24000); // the real class still bills
+    assert.equal(financeDetail('real', '2026-11')!.non_billable, false);
+  });
+});
+
 test('admin override replaces the default; October fees and payments are not carried forward', () => {
   isolated(() => {
     addStudent('o'); addClass('group', 'GROUP'); join('mo', 'o', 'group');
