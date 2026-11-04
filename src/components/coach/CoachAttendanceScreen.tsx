@@ -207,7 +207,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const openAddStudent = async () => {
     if (!serverSession) return;
     setIsAddStudentOpen(true); setAddSearch(''); setAddSelected([]); setAddConflicts(null); setAddDate(getTodayDateString());
-    try { setAddCandidates(await api.searchClassStudents(serverSession.class_id, '')); }
+    // Walk-in (UNREG) records cannot join a recurring class until an admin registers them.
+    try { setAddCandidates((await api.searchClassStudents(serverSession.class_id, '')).filter(c => !c.student_id.toUpperCase().startsWith('UNREG-'))); }
     catch (error: any) { showToast(error.message || 'Could not load students', 'error'); }
   };
 
@@ -596,8 +597,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       )}
 
       {/* Action Bar: Search, Add Replacement, & Record Unregistered Student */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
+        <div className="relative flex-1 sm:min-w-[16rem]">
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
             <Search className="w-4 h-4" />
           </div>
