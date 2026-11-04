@@ -34,8 +34,9 @@ npm run build
 test -s dist/server.cjs || { echo 'Build did not produce dist/server.cjs' >&2; exit 1; }
 pm2 restart bingo-attendance
 
-for attempt in 1 2 3 4 5; do
-  if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3001/ > /dev/null; then
+# The app loads Firestore state before it listens (about 20s), so allow up to ~90s.
+for attempt in $(seq 1 45); do
+  if curl --fail --silent --max-time 5 http://127.0.0.1:3001/ > /dev/null; then
     pm2 jlist | node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const app = JSON.parse(input).find(item => item.name === "bingo-attendance"); process.exit(app?.pm2_env?.status === "online" ? 0 : 1); });'
     echo "Deployed $(git rev-parse HEAD); previous commit $previous_sha"
     exit 0
