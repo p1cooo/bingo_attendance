@@ -157,7 +157,7 @@ test('past regular attendance reaches student validation without a rollout-date 
   }
 });
 
-test('pre-launch lessons remain scheduled without invented attendance; October billing is provisional where lesson delivery is unknown', () => {
+test('pre-launch lessons remain scheduled without invented attendance; Finance bills from November 2026 only', () => {
   const keys = ['students', 'memberships', 'schedules', 'classes', 'sessions', 'attendance', 'studentFees', 'studentPayments', 'studentAdjustments', 'studentPauses', 'coaches'] as const;
   const previous = keys.map(key => db[key]);
   const oldBilling = process.env.ACADEMY_GO_LIVE_DATE;
@@ -195,26 +195,23 @@ test('pre-launch lessons remain scheduled without invented attendance; October b
     assert.equal(live.marked_attendance_count, 1);
     assert.deepEqual([...db.sessions.keys()], ['group-pre', 'individual-pre', 'individual-live', 'individual-nov']);
 
-    const oct = financeDetail('student', '2026-10')!.months[0];
-    assert.equal(oct.month, '2026-10');
-    assert.equal(oct.lines.find(line => line.membership_id === 'group-m')?.amount_cents, 20000);
-    const individual = oct.lines.find(line => line.membership_id === 'individual-m')!;
-    assert.equal(individual.amount_cents, 5000);
-    assert.deepEqual(individual.pre_go_live_dates, ['2026-10-14']);
-    assert.equal(individual.pending_finance_review, true);
-    assert.equal(oct.status, 'Pending Finance Review');
-    assert.equal(financeDetail('student', '2026-11')!.months.find(month => month.month === '2026-11')?.charges_cents, 25000);
+    // Finance starts in November 2026: October is not billed and October fee versions are not carried forward.
+    assert.equal(financeDetail('student', '2026-10')!.months.length, 0);
+    const nov = () => financeDetail('student', '2026-11')!.months.find(month => month.month === '2026-11')!;
+    assert.equal(nov().lines.find(line => line.membership_id === 'group-m')?.amount_cents, 24000);
+    assert.equal(nov().lines.find(line => line.membership_id === 'individual-m')?.amount_cents, 8000);
+    assert.equal(nov().charges_cents, 32000);
     assert.equal(getAccountantReport('2026-10')[0]?.sessions.length, 1);
 
-    db.attendance.get('live-mark')!.attendance_type = 'REPLACEMENT';
-    assert.equal(financeDetail('student', '2026-10')!.months[0].lines.find(line => line.membership_id === 'individual-m')?.amount_cents, 0);
-    db.attendance.get('live-mark')!.attendance_type = 'REGULAR';
+    db.attendance.get('nov-mark')!.attendance_type = 'REPLACEMENT';
+    assert.equal(nov().lines.find(line => line.membership_id === 'individual-m')?.amount_cents ?? 0, 0);
+    db.attendance.get('nov-mark')!.attendance_type = 'REGULAR';
 
-    const pause: StudentPause = { id: 'pause', student_id: 'student', membership_id: 'group-m', schedule_id: 'group', class_id: 'group', start_date: '2026-10-01', end_date: '2026-10-31', reason: 'EXAMINATION', declared_by_user_id: 'coach', declared_by_name: 'Fixture Coach', declared_by_role: 'COACH', created_at: '2026-10-01', updated_at: '2026-10-01', history: [] };
+    const pause: StudentPause = { id: 'pause', student_id: 'student', membership_id: 'group-m', schedule_id: 'group', class_id: 'group', start_date: '2026-11-01', end_date: '2026-11-30', reason: 'EXAMINATION', declared_by_user_id: 'coach', declared_by_name: 'Fixture Coach', declared_by_role: 'COACH', created_at: '2026-11-01', updated_at: '2026-11-01', history: [] };
     db.studentPauses.set('pause', pause);
-    assert.equal(financeDetail('student', '2026-10')!.months[0].lines.find(line => line.membership_id === 'group-m')?.amount_cents, 0);
-    pause.start_date = '2026-10-12';
-    assert.equal(financeDetail('student', '2026-10')!.months[0].lines.find(line => line.membership_id === 'group-m')?.pending_finance_review, true);
+    assert.equal(nov().lines.find(line => line.membership_id === 'group-m')?.amount_cents, 0);
+    pause.start_date = '2026-11-12';
+    assert.equal(nov().lines.find(line => line.membership_id === 'group-m')?.pending_finance_review, true);
   } finally {
     keys.forEach((key, index) => (db[key] as any) = previous[index]);
     if (oldBilling === undefined) delete process.env.ACADEMY_GO_LIVE_DATE; else process.env.ACADEMY_GO_LIVE_DATE = oldBilling;

@@ -14,6 +14,12 @@ export interface StudentPayment {
   recorded_by_user_id: string; created_at: string;
   recorded_by_name?: string;
 }
+/** Admin decision for a group class joined or left partway through a month. Append-only; the latest record wins. */
+export interface MembershipBillingReview {
+  id: string; student_id: string; membership_id: string; month: string;
+  amount_cents: number; reason: string; created_by_user_id: string; created_at: string;
+  created_by_name?: string;
+}
 export interface StudentAdjustment {
   id: string; student_id: string; month: string; amount_cents: number;
   type: 'DISCOUNT' | 'CREDIT' | 'WAIVER' | 'CORRECTION';
@@ -164,6 +170,8 @@ export interface StudentClassMembership {
   schedule_id: string;
   joined_date: string;
   ended_date?: string;
+  /** Set by dated removals: first day the student is off the roster (ended_date is the day before). */
+  removal_effective_date?: string;
   status: 'ACTIVE' | 'PAUSED' | 'ENDED';
 }
 

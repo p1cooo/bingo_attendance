@@ -1,5 +1,13 @@
 # Bingo Chess — Current Plan
 
+## Attendance-first phase (2026-11-04)
+
+Direction from the user: Bingo Space integration work is paused; complete Attendance first.
+
+- Live check 2026-11-04: `/api/finance/students` returns 401 JSON on Hostinger, so a Finance-capable build is live. All GitHub Actions deploy runs were skipped (gate off); the live checkout SHA must be read on the VPS before any release.
+- In review (not deployed): Finance from November 2026 (no October carry-forward), default fees (group RM240/month per class, individual RM80 per Present/Late lesson), admin overrides incl. RM0, test accounts non-billable, partial-month review for group joins/leaves that miss a class, dated coach Add Student / Remove student from this class.
+- Removal date = first day off the roster; stored `ended_date` is the day before, with `removal_effective_date` recorded.
+
 ## Hosting and release checkpoint (2026-10-09)
 
 - [x] Verify Hostinger as the canonical Attendance host and confirm its VPS, Nginx, PM2, and Firestore configuration.

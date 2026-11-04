@@ -42,9 +42,10 @@ import { planStudentMemberships } from './studentMemberships.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
-import { financeDetail, validMonth, validDate, cents, validAllocations } from './finance.js';
+import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH } from './finance.js';
+import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } from './studentPauses.js';
-import type { StudentFee, StudentPayment, StudentAdjustment } from '../src/types.js';
+import type { StudentFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
 import type { StudentPause, PauseReason } from '../src/types.js';
 import { commitPauseDeclaration, commitPauseBillingReview } from './pausePersistence.js';
 import { attendanceExpectedOn, replacementBookingEnabled } from './attendanceGoLive.js';
@@ -151,7 +152,7 @@ router.post('/student-pauses/:id/billing-review', authenticateUser, requireAdmin
 router.get('/finance/students', authenticateUser, requireAdmin, (_req, res) => {
   const students = [...db.students.values()].filter(s => !s.is_unregistered).map(s => {
     const detail = financeDetail(s.id)!;
-    return { student: s, outstanding_cents: detail.outstanding_cents, current_charges_cents: detail.current_charges_cents, pending_finance_review: detail.pending_finance_review, paid_until: detail.paid_until, last_payment: detail.last_payment };
+    return { student: s, non_billable: detail.non_billable, outstanding_cents: detail.outstanding_cents, current_charges_cents: detail.current_charges_cents, pending_finance_review: detail.pending_finance_review, paid_until: detail.paid_until, last_payment: detail.last_payment };
   });
   res.json({ students });
 });
@@ -169,16 +170,55 @@ router.get('/finance/students/:id', authenticateUser, requireAdmin, (req, res) =
 router.post('/finance/students/:id/fees', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const student = db.students.get(req.params.id);
   const membership = db.memberships.get(String(req.body.membership_id));
-  const amount = cents(req.body.amount_cents);
+  const amount = nonNegativeCents(req.body.amount_cents);
   const month = req.body.effective_month;
-  if (!student || !membership || membership.student_id !== student.id || !amount || !validMonth(month) || month < membership.joined_date.slice(0, 7)) return res.status(400).json({ error: 'Choose a valid enrollment, fee, and effective month.' });
+  if (!student || !membership || membership.student_id !== student.id || amount === null || !validMonth(month) || month < membership.joined_date.slice(0, 7)) return res.status(400).json({ error: 'Choose a valid enrollment, fee, and effective month.' });
+  if (month < FINANCE_START_MONTH) return res.status(400).json({ error: 'Finance starts from November 2026. Choose November 2026 or later.' });
   const schedule = db.schedules.get(membership.schedule_id);
   const cls = db.classes.get(schedule?.class_id || membership.schedule_id);
   if (!cls) return res.status(400).json({ error: 'Class is unavailable.' });
   if (month < academyMonth() && [...db.studentPayments.values()].some(p => p.student_id === student.id && p.allocations.some(a => a.month >= month))) return res.status(409).json({ error: 'Past billed periods with payments are locked. Use a current-period adjustment.' });
   const fee: StudentFee = { id: crypto.randomUUID(), student_id: student.id, membership_id: membership.id, class_id: cls.id, class_name: cls.name, coach_name: db.coaches.get(schedule?.coach_id || cls.default_coach_id || '')?.name || 'Coach', billing_mode: cls.class_type === 'GROUP' ? 'MONTHLY' : 'PER_SESSION', amount_cents: amount, effective_month: month, created_by_user_id: req.user!.id, created_by_name: req.user!.name, created_at: new Date().toISOString() };
-  try { await syncDocToFirestore('studentFees', fee.id, fee, false); db.studentFees.set(fee.id, fee); await publishFirestoreRevision(); db.saveToDisk(); res.status(201).json(fee); }
+  const previous = [...db.studentFees.values()].filter(f => f.membership_id === membership.id && f.effective_month >= FINANCE_START_MONTH && f.effective_month <= month).sort((a, b) => a.effective_month.localeCompare(b.effective_month) || a.created_at.localeCompare(b.created_at)).at(-1);
+  try {
+    await syncDocToFirestore('studentFees', fee.id, fee, false); db.studentFees.set(fee.id, fee);
+    await recordActivity(req.user!, 'STUDENT_FEE_OVERRIDDEN', 'studentFee', fee.id, { classId: cls.id, summary: student.student_id,
+      previous_values: previous ? { amount_cents: previous.amount_cents, effective_month: previous.effective_month } : { amount_cents: null, source: 'DEFAULT' },
+      new_values: { membership_id: membership.id, amount_cents: amount, billing_mode: fee.billing_mode, effective_month: month } }).catch(console.error);
+    await publishFirestoreRevision(); db.saveToDisk(); res.status(201).json(fee);
+  }
   catch (error) { res.status(503).json({ error: 'Fee could not be saved.' }); }
+});
+
+// A group class joined or left partway through a month is never charged the
+// full monthly fee automatically. An admin sets the amount; every decision is
+// kept, and the latest one applies.
+router.post('/finance/students/:id/partial-month', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const student = db.students.get(req.params.id);
+  const membership = db.memberships.get(String(req.body.membership_id || ''));
+  const amount = nonNegativeCents(req.body.amount_cents);
+  const month = req.body.month;
+  const reason = String(req.body.reason || '').trim();
+  const id = String(req.body.idempotency_key || '');
+  if (!student || !membership || membership.student_id !== student.id || amount === null || !validMonth(month) || reason.length < 3 || !/^[a-zA-Z0-9-]{8,100}$/.test(id)) return res.status(400).json({ error: 'Choose a class, month, amount (RM0 or more) and reason.' });
+  const line = financeDetail(student.id, month)?.months.find(m => m.month === month)?.lines.find(l => l.membership_id === membership.id);
+  if (!line?.partial_month) return res.status(400).json({ error: 'This class is not a partial month for this student.' });
+  const review: MembershipBillingReview = { id, student_id: student.id, membership_id: membership.id, month, amount_cents: amount, reason: reason.slice(0, 500), created_by_user_id: req.user!.id, created_by_name: req.user!.name, created_at: new Date().toISOString() };
+  try {
+    const ref = getFirestoreDb().collection('membershipBillingReviews').doc(id);
+    const created = await getFirestoreDb().runTransaction(async tx => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return existing.data() as MembershipBillingReview;
+      tx.create(ref, review);
+      return review;
+    });
+    if (created.membership_id !== review.membership_id || created.month !== review.month || created.amount_cents !== review.amount_cents) return res.status(409).json({ error: 'Request key was already used for a different decision.' });
+    db.membershipBillingReviews.set(id, created);
+    if (created === review) await recordActivity(req.user!, 'PARTIAL_MONTH_FEE_SET', 'membershipBillingReview', id, { summary: student.student_id,
+      previous_values: line.partial_month.decision ? { amount_cents: line.partial_month.decision.amount_cents } : null,
+      new_values: { membership_id: membership.id, month, amount_cents: amount, reason: review.reason } }).catch(console.error);
+    await publishFirestoreRevision(); db.saveToDisk(); res.status(created === review ? 201 : 200).json(created);
+  } catch { res.status(503).json({ error: 'Partial-month amount could not be saved.' }); }
 });
 
 router.post('/finance/students/:id/payments', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -2219,6 +2259,69 @@ router.delete('/schedules/:id/students/:studentId', authenticateUser, requireAdm
     ended.forEach(m => db.memberships.set(m.id, m));
     return res.json(db.getPopulatedSchedule(id));
   } catch { return res.status(503).json({ error: 'Enrollment could not be ended.' }); }
+});
+
+// Dated recurring-class membership changes from the roll-call screen.
+// Coaches manage only their assigned classes; admins manage every class.
+const membershipClassContext = (user: User, scheduleId: string) => {
+  const schedule = db.schedules.get(scheduleId);
+  const cls = schedule && db.classes.get(schedule.class_id);
+  if (!schedule || !cls) return { error: 404 as const };
+  if (!canManageSchedule(user, scheduleId) || !cls.is_active) return { error: 403 as const };
+  return { schedule, cls };
+};
+
+router.post('/schedules/:id/memberships', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const context = membershipClassContext(req.user!, req.params.id);
+  if ('error' in context) return res.status(context.error).json({ error: context.error === 404 ? 'Class not found.' : 'Forbidden: you do not manage this class.' });
+  const effectiveDate = req.body.effective_date;
+  if (!validDate(effectiveDate) || effectiveDate < academyToday()) return res.status(400).json({ error: 'Choose today or a future effective date.' });
+  const ids = Array.isArray(req.body.student_ids) ? [...new Set(req.body.student_ids)].filter((x): x is string => typeof x === 'string') : [];
+  if (!ids.length || ids.length > 50) return res.status(400).json({ error: 'Select between 1 and 50 students.' });
+  const invalid = ids.filter(id => { const s = db.students.get(id); return !s || s.status !== 'ACTIVE' || s.is_unregistered; });
+  if (invalid.length) return res.status(400).json({ error: 'Only active registered students can be added to a class.' });
+  const plan = planMembershipAdd({ studentIds: ids, scheduleId: context.schedule.id, classId: context.cls.id, effectiveDate, memberships: db.memberships.values() });
+  if (plan.otherClasses.length && req.body.add_anyway !== true) {
+    return res.status(409).json({ confirmation_required: true, error: 'Some students are already in another class.', other_classes: plan.otherClasses.map(item => ({
+      student_id: item.student_id, student_name: db.students.get(item.student_id)?.full_name,
+      classes: item.schedule_ids.map(sid => { const sc = db.schedules.get(sid); const c = db.classes.get(sc?.class_id || sid); return c?.name || 'Class'; }),
+    })) });
+  }
+  if (!plan.add.length) return res.status(409).json({ error: 'The selected students are already in this class from that date.', already_in_class: plan.alreadyInClass });
+  try {
+    await persistMutation(plan.add.map((m): [string, string, unknown] => ['memberships', m.id, m]));
+    plan.add.forEach(m => db.memberships.set(m.id, m));
+    await Promise.all(plan.add.map(m => recordActivity(req.user!, 'STUDENT_ADDED_TO_CLASS', 'membership', m.id, { classId: context.cls.id, summary: db.students.get(m.student_id)?.student_id,
+      new_values: { schedule_id: m.schedule_id, joined_date: m.joined_date, extra_class_confirmed: plan.otherClasses.some(o => o.student_id === m.student_id) } }).catch(console.error)));
+    await Promise.all(plan.add.map(m => syncPortalCoachLinksForStudent(m.student_id).catch(console.error)));
+    db.saveToDisk();
+    return res.status(201).json({ added: plan.add, already_in_class: plan.alreadyInClass });
+  } catch {
+    plan.add.forEach(m => db.memberships.delete(m.id));
+    return res.status(503).json({ error: 'Students could not be added. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
+});
+
+router.post('/schedules/:id/students/:studentId/end', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const context = membershipClassContext(req.user!, req.params.id);
+  if ('error' in context) return res.status(context.error).json({ error: context.error === 404 ? 'Class not found.' : 'Forbidden: you do not manage this class.' });
+  const effectiveDate = req.body.effective_date;
+  if (!validDate(effectiveDate) || effectiveDate < academyToday()) return res.status(400).json({ error: 'Choose today or a future removal date.' });
+  const ended = planMembershipEnd({ studentId: req.params.studentId, scheduleId: context.schedule.id, classId: context.cls.id, effectiveDate, memberships: db.memberships.values() });
+  if (!ended.length) return res.status(404).json({ error: 'This student is not in this class on or after that date.' });
+  const previous = ended.map(m => db.memberships.get(m.id)!);
+  try {
+    await persistMutation(ended.map((m): [string, string, unknown] => ['memberships', m.id, m]));
+    ended.forEach(m => db.memberships.set(m.id, m));
+    await Promise.all(ended.map((m, i) => recordActivity(req.user!, 'STUDENT_REMOVED_FROM_CLASS', 'membership', m.id, { classId: context.cls.id, summary: db.students.get(m.student_id)?.student_id,
+      previous_values: { status: previous[i].status, ended_date: previous[i].ended_date ?? null }, new_values: { status: m.status, ended_date: m.ended_date, removal_effective_date: effectiveDate } }).catch(console.error)));
+    await syncPortalCoachLinksForStudent(req.params.studentId).catch(console.error);
+    db.saveToDisk();
+    return res.json({ ended, removal_effective_date: effectiveDate });
+  } catch {
+    previous.forEach(m => db.memberships.set(m.id, m));
+    return res.status(503).json({ error: 'Removal could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
 });
 
 // ============================================================

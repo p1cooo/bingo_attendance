@@ -10,7 +10,7 @@ let lastDurableRevision: string | null = null;
 const STATE_COLLECTION = '_system';
 const STATE_DOCUMENT = 'academy';
 const SNAPSHOT_COLLECTION = '_academy_state';
-const SNAPSHOT_DOCUMENTS = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'studentPauses', 'sessions', 'attendance', 'replacementCredits', 'replacementAdvanceCommitments', 'studentFees', 'studentPayments', 'studentAdjustments', 'auditLogs', 'activityLogs', 'notificationLogs'] as const;
+const SNAPSHOT_DOCUMENTS = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'studentPauses', 'sessions', 'attendance', 'replacementCredits', 'replacementAdvanceCommitments', 'studentFees', 'studentPayments', 'studentAdjustments', 'membershipBillingReviews', 'auditLogs', 'activityLogs', 'notificationLogs'] as const;
 
 type SnapshotDocument = typeof SNAPSHOT_DOCUMENTS[number];
 
@@ -32,6 +32,7 @@ function restoreSnapshot(name: SnapshotDocument, value: unknown): void {
     case 'studentFees': db.studentFees = new Map(value as never); break;
     case 'studentPayments': db.studentPayments = new Map(value as never); break;
     case 'studentAdjustments': db.studentAdjustments = new Map(value as never); break;
+    case 'membershipBillingReviews': db.membershipBillingReviews = new Map(value as never); break;
     case 'auditLogs': db.auditLogs = value as never; break;
     case 'activityLogs': db.activityLogs = value as never; break;
     case 'notificationLogs': db.notificationLogs = value as never; break;
@@ -107,8 +108,8 @@ export function initializeFirestoreSync(): Promise<void> {
       console.log(`[Firestore] Snapshot restored: ${db.students.size} students.`);
       return;
     }
-    const collections = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'studentPauses', 'sessions', 'attendance', 'replacementCredits', 'replacementAdvanceCommitments', 'studentFees', 'studentPayments', 'studentAdjustments'] as const;
-    const targets = [db.users, db.coaches, db.parents, db.students, db.classes, db.schedules, db.memberships, db.studentPauses, db.sessions, db.attendance, db.replacementCredits, db.replacementAdvanceCommitments, db.studentFees, db.studentPayments, db.studentAdjustments] as const;
+    const collections = ['users', 'coaches', 'parents', 'students', 'classes', 'schedules', 'memberships', 'studentPauses', 'sessions', 'attendance', 'replacementCredits', 'replacementAdvanceCommitments', 'studentFees', 'studentPayments', 'studentAdjustments', 'membershipBillingReviews'] as const;
+    const targets = [db.users, db.coaches, db.parents, db.students, db.classes, db.schedules, db.memberships, db.studentPauses, db.sessions, db.attendance, db.replacementCredits, db.replacementAdvanceCommitments, db.studentFees, db.studentPayments, db.studentAdjustments, db.membershipBillingReviews] as const;
     await Promise.all(collections.map(async (name, index) => {
       const snapshot = await firestore.collection(name).get();
       const target = targets[index];

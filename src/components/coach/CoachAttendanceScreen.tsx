@@ -86,6 +86,20 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [unregNote, setUnregNote] = useState('');
   const [isAddingUnreg, setIsAddingUnreg] = useState(false);
 
+  // Add registered students to the recurring class from a dated effective day.
+  const [isAddStudentOpen, setIsAddStudentOpen] = useState(false);
+  const [addCandidates, setAddCandidates] = useState<Array<{ id: string; full_name: string; student_id: string; assigned_elsewhere: boolean }>>([]);
+  const [addSearch, setAddSearch] = useState('');
+  const [addSelected, setAddSelected] = useState<string[]>([]);
+  const [addDate, setAddDate] = useState(getTodayDateString());
+  const [addBusy, setAddBusy] = useState(false);
+  const [addConflicts, setAddConflicts] = useState<Array<{ student_id: string; student_name?: string; classes: string[] }> | null>(null);
+
+  // End one student's membership in this recurring class.
+  const [removeStudent, setRemoveStudent] = useState<Student | null>(null);
+  const [removeDate, setRemoveDate] = useState(getTodayDateString());
+  const [removeBusy, setRemoveBusy] = useState(false);
+
   const fetchSession = async () => {
     try {
       setLoading(true);
@@ -188,6 +202,43 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       await Promise.all([fetchSession(), loadStudentPauses(pause.student_id)]);
     } catch (error: any) { showToast(error.message || 'Could not resume student pause', 'error'); }
     finally { setResumingPauseId(null); }
+  };
+
+  const openAddStudent = async () => {
+    if (!serverSession) return;
+    setIsAddStudentOpen(true); setAddSearch(''); setAddSelected([]); setAddConflicts(null); setAddDate(getTodayDateString());
+    try { setAddCandidates(await api.searchClassStudents(serverSession.class_id, '')); }
+    catch (error: any) { showToast(error.message || 'Could not load students', 'error'); }
+  };
+
+  const submitAddStudents = async (addAnyway: boolean) => {
+    if (!serverSession || !addSelected.length) return;
+    if (addDate < getTodayDateString()) { showToast('Effective date must be today or later.', 'error'); return; }
+    setAddBusy(true);
+    try {
+      const result = await api.addClassMemberships(serverSession.schedule_id, addSelected, addDate, addAnyway);
+      const skipped = result.already_in_class.length ? ` ${result.already_in_class.length} already in this class were skipped.` : '';
+      showToast(`${result.added.length} student${result.added.length === 1 ? '' : 's'} added to this class from ${addDate}.${skipped}`, 'success');
+      setIsAddStudentOpen(false); setAddConflicts(null);
+      await fetchSession();
+    } catch (error: any) {
+      if (error?.data?.confirmation_required) setAddConflicts(error.data.other_classes || []);
+      else showToast(error.message || 'Could not add students', 'error');
+    } finally { setAddBusy(false); }
+  };
+
+  const submitRemoveStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!serverSession || !removeStudent) return;
+    if (removeDate < getTodayDateString()) { showToast('Removal date must be today or later.', 'error'); return; }
+    setRemoveBusy(true);
+    try {
+      await api.endClassMembership(serverSession.schedule_id, removeStudent.id, removeDate);
+      showToast(`${removeStudent.full_name} will not appear in this class from ${removeDate}. Past attendance is kept.`, 'success');
+      setRemoveStudent(null); setActionStudentId(null);
+      await fetchSession();
+    } catch (error: any) { showToast(error.message || 'Could not remove student from this class', 'error'); }
+    finally { setRemoveBusy(false); }
   };
 
   const handleAddReplacement = async (e: React.FormEvent) => {
@@ -373,6 +424,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const isReplacementCoach = !isCancelled && !isOffDay && session.scheduled_coach_id !== session.actual_coach_id;
   const hasTakenAttendance = (session.attendance_records || []).some((record) => record.status !== 'BOOKED');
   const isRegularCoach = !!coachProfile && (session.default_coach_id || session.scheduled_coach_id) === coachProfile.id;
+  const canManageMembers = isRegularCoach || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
   const isRescheduled = Boolean(session.original_session_date && session.original_session_date !== session.session_date ||
     session.original_start_time && session.original_start_time !== session.start_time);
   const coachColor = isCancelled ? '#ef4444' : isOffDay ? '#94a3b8' : (session.actual_coach?.color || coachProfile?.color || '#3b82f6');
@@ -569,6 +621,18 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           <span>+ Record Unregistered Student</span>
         </button>
 
+        {canManageMembers && (
+          <button
+            id="add-class-student-btn"
+            type="button"
+            onClick={openAddStudent}
+            className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl text-xs font-black bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 border-2 border-slate-900 dark:border-emerald-700 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] transition-all active:translate-x-0.5 active:translate-y-0.5 flex-shrink-0 cursor-pointer"
+          >
+            <UserPlus className="w-4 h-4 text-emerald-700" />
+            <span>+ Add Student</span>
+          </button>
+        )}
+
         <button
           id="add-replacement-student-btn"
           onClick={() => setIsReplacementModalOpen(true)}
@@ -680,6 +744,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                               </div>;
                             }) : <p className="text-slate-500">No pauses recorded for this class.</p>}
                             {!classPauses.some(p => p.start_date <= todayStr && (!p.end_date || todayStr <= p.end_date)) && <button type="button" onClick={() => setPauseStudent(student)} className="min-h-10 rounded-lg bg-violet-700 px-3 py-2 font-black text-white">Pause student in this class</button>}
+                            <div className="border-t border-slate-300 pt-2 dark:border-neutral-700">
+                              <button type="button" onClick={() => { setRemoveDate(todayStr); setRemoveStudent(student); }} className="min-h-10 rounded-lg border-2 border-rose-600 bg-white px-3 py-2 font-black text-rose-700 hover:bg-rose-50 dark:bg-neutral-900 dark:text-rose-300">Remove student from this class</button>
+                              <p className="mt-1 text-[11px] text-slate-500">Ends this class only. The student stays registered; past attendance and Finance history are kept.</p>
+                            </div>
                           </>}
                         </div>}
                       </div>}
@@ -803,6 +871,57 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           <label className="block text-xs font-bold">Reason<select className="mt-1 w-full rounded border p-2" value={pauseReason} onChange={e => setPauseReason(e.target.value)}><option value="EXAMINATION">Examination</option><option value="HOLIDAY_TRAVEL">Holiday / Travel</option><option value="MEDICAL_HEALTH">Medical / Health</option><option value="PERSONAL">Personal</option><option value="OTHER">Other</option></select></label>
           <label className="block text-xs font-bold">Optional note<textarea className="mt-1 w-full rounded border p-2" maxLength={500} value={pauseNote} onChange={e => setPauseNote(e.target.value)} /></label>
           <button type="submit" disabled={pauseBusy} className="rounded bg-violet-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Confirm pause</button>
+        </form>
+      </Modal>
+      <Modal isOpen={isAddStudentOpen} onClose={() => { setIsAddStudentOpen(false); setAddConflicts(null); }} title="Add Student to This Class">
+        {addConflicts ? (
+          <div className="space-y-4 pt-3">
+            <div role="alert" className="rounded-xl border-2 border-amber-400 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              <p className="font-black">Already in another class</p>
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                {addConflicts.map(c => <li key={c.student_id}><b>{c.student_name || 'Student'}</b> is in: {c.classes.join(', ')}</li>)}
+              </ul>
+              <p className="mt-2">Adding keeps those classes and adds this one as an extra class from <b>{addDate}</b>.</p>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" disabled={addBusy} onClick={() => submitAddStudents(true)} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-50 dark:bg-white dark:text-slate-900">{addBusy ? 'Adding…' : 'Yes, add the extra class'}</button>
+              <button type="button" disabled={addBusy} onClick={() => setAddConflicts(null)} className="rounded-xl border-2 border-slate-900 px-4 py-2 text-xs font-black dark:border-neutral-600">Go back</button>
+            </div>
+          </div>
+        ) : (
+          <form className="space-y-3 pt-3" onSubmit={e => { e.preventDefault(); void submitAddStudents(false); }}>
+            <p className="text-xs text-slate-600 dark:text-slate-300">Adds registered students to this recurring class. They appear on rosters from the effective date onward.</p>
+            <input aria-label="Search students" value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="Search name or STU-ID" className="w-full px-3 py-2 text-xs font-bold rounded-xl border-2 border-slate-900 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-white" />
+            <p className="text-xs font-bold">{addSelected.length} selected</p>
+            <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border-2 border-slate-900 p-2 dark:border-neutral-700">
+              {addCandidates.filter(c => `${c.full_name} ${c.student_id}`.toLowerCase().includes(addSearch.trim().toLowerCase())).map(c => (
+                <label key={c.id} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 p-2 text-xs dark:border-neutral-700">
+                  <input type="checkbox" checked={addSelected.includes(c.id)} onChange={e => setAddSelected(e.target.checked ? [...addSelected, c.id] : addSelected.filter(id => id !== c.id))} />
+                  <span className="min-w-0 flex-1"><b className="block">{c.full_name}</b><span className="font-mono text-slate-500">{c.student_id}</span></span>
+                  {c.assigned_elsewhere && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">In another class</span>}
+                </label>
+              ))}
+              {!addCandidates.length && <p className="p-2 text-xs text-slate-500">No students available to add.</p>}
+            </div>
+            <label className="block text-xs font-bold">Effective date (today or later)
+              <input type="date" required min={getTodayDateString()} value={addDate} onChange={e => setAddDate(e.target.value)} className="mt-1 w-full rounded-xl border-2 border-slate-900 p-2 dark:border-neutral-700 dark:bg-neutral-800" />
+            </label>
+            <button type="submit" disabled={addBusy || !addSelected.length} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-50 dark:bg-white dark:text-slate-900">{addBusy ? 'Adding…' : `Add ${addSelected.length} Student${addSelected.length === 1 ? '' : 's'}`}</button>
+          </form>
+        )}
+      </Modal>
+      <Modal isOpen={!!removeStudent} onClose={() => setRemoveStudent(null)} title="Remove Student from This Class">
+        <form onSubmit={submitRemoveStudent} className="space-y-3 pt-3">
+          <p className="text-sm"><b>{removeStudent?.full_name}</b> will be removed from <b>{session.class_item?.name || 'this class'}</b> only.</p>
+          <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600 dark:text-slate-300">
+            <li>They will not appear on this class's rosters from the removal date onward.</li>
+            <li>The student is not deleted and stays in any other classes.</li>
+            <li>All recorded attendance, replacement credits, payments and Finance history are kept.</li>
+          </ul>
+          <label className="block text-xs font-bold">Removal date — first day not in this class (today or later)
+            <input type="date" required min={todayStr} value={removeDate} onChange={e => setRemoveDate(e.target.value)} className="mt-1 w-full rounded-xl border-2 border-slate-900 p-2 dark:border-neutral-700 dark:bg-neutral-800" />
+          </label>
+          <button type="submit" disabled={removeBusy} className="rounded-xl bg-rose-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">{removeBusy ? 'Removing…' : 'Confirm removal'}</button>
         </form>
       </Modal>
       <Modal

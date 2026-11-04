@@ -86,31 +86,31 @@ test('Finance zeroes only a fully paused class and flags partial months until a 
       ['individual-membership', { id: 'individual-membership', student_id: 'student', schedule_id: 'individual', joined_date: '2026-01-01', status: 'ACTIVE' } as any]]);
     db.schedules = new Map([['group', { id: 'group', class_id: 'group', coach_id: 'coach' } as any], ['individual', { id: 'individual', class_id: 'individual', coach_id: 'coach' } as any]]);
     db.classes = new Map([['group', { id: 'group', name: 'Group', class_type: 'GROUP' } as any], ['individual', { id: 'individual', name: 'Individual', class_type: 'INDIVIDUAL' } as any]]);
-    db.sessions = new Map([['group-session', { id: 'group-session', schedule_id: 'group', class_id: 'group', session_date: '2026-10-10', status: 'SCHEDULED' } as any],
-      ['individual-session', { id: 'individual-session', schedule_id: 'individual', class_id: 'individual', session_date: '2026-10-14', status: 'SCHEDULED' } as any],
-      ['group-nov', { id: 'group-nov', schedule_id: 'group', class_id: 'group', session_date: '2026-11-10', status: 'SCHEDULED' } as any]]);
+    db.sessions = new Map([['group-session', { id: 'group-session', schedule_id: 'group', class_id: 'group', session_date: '2026-11-10', status: 'SCHEDULED' } as any],
+      ['individual-session', { id: 'individual-session', schedule_id: 'individual', class_id: 'individual', session_date: '2026-11-14', status: 'SCHEDULED' } as any],
+      ['group-nov', { id: 'group-nov', schedule_id: 'group', class_id: 'group', session_date: '2026-12-10', status: 'SCHEDULED' } as any]]);
     db.attendance = new Map([['mark', { id: 'mark', student_id: 'student', session_id: 'individual-session', status: 'PRESENT' } as any]]);
-    db.studentFees = new Map([['group-fee', { id: 'group-fee', student_id: 'student', membership_id: 'group-membership', class_name: 'Group', billing_mode: 'MONTHLY', amount_cents: 20000, effective_month: '2026-10', created_at: '2026-09-01' } as any],
-      ['individual-fee', { id: 'individual-fee', student_id: 'student', membership_id: 'individual-membership', class_name: 'Individual', billing_mode: 'PER_SESSION', amount_cents: 5000, effective_month: '2026-10', created_at: '2026-09-01' } as any]]);
+    db.studentFees = new Map([['group-fee', { id: 'group-fee', student_id: 'student', membership_id: 'group-membership', class_name: 'Group', billing_mode: 'MONTHLY', amount_cents: 20000, effective_month: '2026-11', created_at: '2026-09-01' } as any],
+      ['individual-fee', { id: 'individual-fee', student_id: 'student', membership_id: 'individual-membership', class_name: 'Individual', billing_mode: 'PER_SESSION', amount_cents: 5000, effective_month: '2026-11', created_at: '2026-09-01' } as any]]);
     db.studentPayments = new Map(); db.studentAdjustments = new Map();
-    const full = pause('full', 'group-membership', '2026-10-01', '2026-10-31');
+    const full = pause('full', 'group-membership', '2026-11-01', '2026-11-30');
     db.studentPauses = new Map([[full.id, full]]);
-    const month = financeDetail('student', '2026-10')!.months.find(m => m.month === '2026-10')!;
+    const month = financeDetail('student', '2026-11')!.months.find(m => m.month === '2026-11')!;
     assert.equal(month.charges_cents, 5000);
     assert.equal(month.lines.find(l => l.membership_id === 'group-membership')?.amount_cents, 0);
     assert.equal(month.lines.find(l => l.membership_id === 'individual-membership')?.amount_cents, 5000);
-    const partial = pause('partial', 'group-membership', '2026-10-15', '2026-10-31');
+    const partial = pause('partial', 'group-membership', '2026-11-15', '2026-11-30');
     db.studentPauses = new Map([[partial.id, partial]]);
-    const pending = financeDetail('student', '2026-10')!.months[0];
+    const pending = financeDetail('student', '2026-11')!.months[0];
     assert.equal(pending.status, 'Pending Finance Review');
     assert.equal(pending.lines.find(l => l.membership_id === 'group-membership')?.pending_finance_review, true);
-    partial.billing_reviews = { '2026-10': { amount_cents: 7500, reviewed_by_user_id: 'admin', reviewed_at: '2026-10-15' } };
-    assert.equal(financeDetail('student', '2026-10')!.months[0].charges_cents, 12500);
-    process.env.ACADEMY_GO_LIVE_DATE = '2026-11-01';
-    assert.equal(financeDetail('student', '2026-10')!.months.length, 0);
-    assert.equal(financeDetail('student', '2026-11')!.months.find(m => m.month === '2026-11')?.charges_cents, 20000);
-    process.env.ACADEMY_GO_LIVE_DATE = '2026-11-15';
-    assert.throws(() => financeDetail('student', '2026-11'), /start a billing month/);
+    partial.billing_reviews = { '2026-11': { amount_cents: 7500, reviewed_by_user_id: 'admin', reviewed_at: '2026-11-15' } };
+    assert.equal(financeDetail('student', '2026-11')!.months[0].charges_cents, 12500);
+    process.env.ACADEMY_GO_LIVE_DATE = '2026-12-01';
+    assert.equal(financeDetail('student', '2026-11')!.months.length, 0);
+    assert.equal(financeDetail('student', '2026-12')!.months.find(m => m.month === '2026-12')?.charges_cents, 20000);
+    process.env.ACADEMY_GO_LIVE_DATE = '2026-12-15';
+    assert.throws(() => financeDetail('student', '2026-12'), /start a billing month/);
   } finally {
     [db.students, db.memberships, db.schedules, db.classes, db.sessions, db.attendance, db.studentFees, db.studentPayments, db.studentAdjustments, db.studentPauses] = previous;
     if (oldBoundary === undefined) delete process.env.ACADEMY_GO_LIVE_DATE; else process.env.ACADEMY_GO_LIVE_DATE = oldBoundary;

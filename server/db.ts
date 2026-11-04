@@ -21,9 +21,21 @@ import {
   SessionType,
   StudentFee, StudentPayment, StudentAdjustment,
   StudentPause,
+  MembershipBillingReview,
 } from '../src/types.js';
 import { pauseOnDate } from './studentPauses.js';
 import { attendanceExpectedOn } from './attendanceGoLive.js';
+import { academyToday } from './academyDate.js';
+
+/** On the recurring roster today: joined, and not yet past a (possibly scheduled) end date. */
+export function membershipCurrent(m: StudentClassMembership, today = academyToday()): boolean {
+  if (m.joined_date && m.joined_date > today) return false;
+  if (m.status === 'ACTIVE') return !m.ended_date || m.ended_date >= today;
+  if (m.status !== 'ENDED') return false;
+  if (m.removal_effective_date) return today < m.removal_effective_date;
+  // Legacy immediate removals store ended_date = today and must leave the class list at once.
+  return Boolean(m.ended_date) && m.ended_date! > today;
+}
 
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
 const DB_FILE_PATH = process.env.NODE_ENV !== 'production' && process.env.ACADEMY_LOCAL_DB_PATH
@@ -49,6 +61,7 @@ class DatabaseStore {
   studentFees: Map<string, StudentFee> = new Map();
   studentPayments: Map<string, StudentPayment> = new Map();
   studentAdjustments: Map<string, StudentAdjustment> = new Map();
+  membershipBillingReviews: Map<string, MembershipBillingReview> = new Map();
   auditLogs: AttendanceAuditLog[] = [];
   activityLogs: ActivityLog[] = [];
   notificationLogs: NotificationLog[] = [];
@@ -75,6 +88,7 @@ class DatabaseStore {
     this.studentFees.clear();
     this.studentPayments.clear();
     this.studentAdjustments.clear();
+    this.membershipBillingReviews.clear();
     this.auditLogs = [];
     this.activityLogs = [];
     this.notificationLogs = [];
@@ -142,7 +156,7 @@ class DatabaseStore {
     const defaultCoach = this.coaches.get(defaultCoachId);
 
     const enrolledMemberships = Array.from(this.memberships.values()).filter(
-      (m) => (m.schedule_id === id || (sched && m.schedule_id === sched.id)) && m.status === 'ACTIVE'
+      (m) => (m.schedule_id === id || (sched && m.schedule_id === sched.id)) && membershipCurrent(m)
     );
 
     const enrolledStudents = enrolledMemberships
@@ -172,7 +186,7 @@ class DatabaseStore {
     const coach = this.coaches.get(defaultCoachId);
 
     const memberships = Array.from(this.memberships.values()).filter(
-      (m) => (m.schedule_id === id || m.schedule_id === schedule.class_id) && m.status === 'ACTIVE'
+      (m) => (m.schedule_id === id || m.schedule_id === schedule.class_id) && membershipCurrent(m)
     );
 
     const enrolledStudents = memberships
@@ -405,6 +419,7 @@ class DatabaseStore {
         studentFees: Array.from(this.studentFees.entries()),
         studentPayments: Array.from(this.studentPayments.entries()),
         studentAdjustments: Array.from(this.studentAdjustments.entries()),
+        membershipBillingReviews: Array.from(this.membershipBillingReviews.entries()),
         auditLogs: this.auditLogs,
         activityLogs: this.activityLogs,
         notificationLogs: this.notificationLogs,
@@ -450,6 +465,7 @@ class DatabaseStore {
       if (state.studentFees) this.studentFees = new Map(state.studentFees);
       if (state.studentPayments) this.studentPayments = new Map(state.studentPayments);
       if (state.studentAdjustments) this.studentAdjustments = new Map(state.studentAdjustments);
+      if (state.membershipBillingReviews) this.membershipBillingReviews = new Map(state.membershipBillingReviews);
       if (state.auditLogs) this.auditLogs = state.auditLogs;
       if (state.activityLogs) this.activityLogs = state.activityLogs;
       if (state.notificationLogs) this.notificationLogs = state.notificationLogs;

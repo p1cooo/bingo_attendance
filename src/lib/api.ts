@@ -22,6 +22,7 @@ class ApiClient {
   getFinanceStudent(id: string): Promise<any> { return this.request(`/finance/students/${id}`); }
   saveStudentFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/fees`, { method: 'POST', body: JSON.stringify(data) }); }
   recordStudentPayment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }); }
+  setPartialMonthFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/partial-month`, { method: 'POST', body: JSON.stringify(data) }); }
   addStudentAdjustment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/adjustments`, { method: 'POST', body: JSON.stringify(data) }); }
   getStudentPauses(studentId?: string): Promise<any> { return this.request(`/student-pauses${studentId ? `?student_id=${encodeURIComponent(studentId)}` : ''}`); }
   declareStudentPause(membershipId: string, data: unknown): Promise<any> { return this.request(`/memberships/${membershipId}/pauses`, { method: 'POST', body: JSON.stringify(data) }); }
@@ -124,10 +125,12 @@ class ApiClient {
 
     if (!response.ok) {
       let errorMessage = `HTTP Error ${response.status}`;
+      let errorBody: unknown;
       try {
         const text = await response.text();
         try {
           const errorData = JSON.parse(text);
+          errorBody = errorData;
           if (errorData.error) {
             errorMessage = errorData.error;
           } else if (errorData.message) {
@@ -150,7 +153,7 @@ class ApiClient {
       } catch (e) {
         errorMessage = `Network or backend error (${response.status})`;
       }
-      throw new Error(errorMessage);
+      throw Object.assign(new Error(errorMessage), { status: response.status, data: errorBody });
     }
 
     return response.json() as Promise<T>;
@@ -315,6 +318,16 @@ class ApiClient {
 
   async searchClassStudents(classId: string, search: string): Promise<Array<{ id: string; full_name: string; student_id: string; already_in_class: boolean; assigned_elsewhere: boolean }>> {
     return this.request(`/classes/${classId}/student-search?search=${encodeURIComponent(search)}`);
+  }
+
+  /** Dated recurring-class enrolment from the roll-call screen. */
+  async addClassMemberships(scheduleId: string, studentIds: string[], effectiveDate: string, addAnyway = false): Promise<{ added: Array<{ id: string; student_id: string; joined_date: string }>; already_in_class: string[] }> {
+    return this.request(`/schedules/${scheduleId}/memberships`, { method: 'POST', body: JSON.stringify({ student_ids: studentIds, effective_date: effectiveDate, add_anyway: addAnyway }) });
+  }
+
+  /** Ends one student's membership in one class; effectiveDate is the first day off the roster. */
+  async endClassMembership(scheduleId: string, studentId: string, effectiveDate: string): Promise<{ removal_effective_date: string }> {
+    return this.request(`/schedules/${scheduleId}/students/${studentId}/end`, { method: 'POST', body: JSON.stringify({ effective_date: effectiveDate }) });
   }
 
   async addStudentToClass(classId: string, studentId: string, addAnyway = false): Promise<unknown> {
