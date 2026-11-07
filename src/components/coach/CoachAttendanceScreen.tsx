@@ -478,7 +478,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                 {session.class_item?.name || 'Group Training'}
@@ -521,7 +521,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           </div>
 
           {/* Quick Roll Summary Badges */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap sm:flex-nowrap sm:flex-shrink-0 items-center gap-2">
             <div className="bg-[#ecfdf5] dark:bg-emerald-950/40 border-2 border-slate-900 dark:border-neutral-700 px-3.5 py-1.5 rounded-2xl text-center shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">
               <span className="block text-[9px] font-black uppercase text-emerald-800 dark:text-emerald-300">
                 Present
