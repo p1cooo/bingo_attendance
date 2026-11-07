@@ -597,8 +597,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       )}
 
       {/* Action Bar: Search, Add Replacement, & Record Unregistered Student */}
-      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
-        <div className="relative flex-1 sm:min-w-[16rem]">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap lg:flex-nowrap gap-3">
+        <div className="relative flex-1 min-w-0 sm:min-w-[11rem] lg:min-w-[9rem]">
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
             <Search className="w-4 h-4" />
           </div>
@@ -607,7 +607,8 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search student full name, nickname, or Student ID..."
+            placeholder="Search name or ID..."
+            title="Search by full name, nickname, or Student ID"
             className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm font-bold rounded-2xl border-2 border-slate-900 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-slate-900 dark:text-white placeholder-slate-400 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.06)] focus:outline-none"
           />
         </div>
