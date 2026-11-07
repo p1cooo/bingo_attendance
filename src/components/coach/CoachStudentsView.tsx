@@ -97,7 +97,7 @@ export const CoachStudentsView: React.FC = () => {
       <div><h2 className="text-2xl font-black tracking-tight">My Students</h2><p className="text-sm text-slate-500">Students in your normal classes.</p></div>
       <button className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black" onClick={() => { setSelected(null); setForm(emptyForm); setScheduleIds([]); setEditing(true); }}>Add Student</button>
     </header>
-    <UnregisteredStudentsSection onRegistered={load} />
+    <UnregisteredStudentsSection onRegistered={load} schedules={schedules} />
     <input aria-label="Search student name or Attendance student ID" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or Attendance ID (STU-0001)" className="mb-3 w-full rounded-xl border-2 border-slate-900 bg-white p-3 text-sm" />
     <div className="mb-4 space-y-2">
       <div aria-label="Student credit and link filters" className="min-w-0"><div className="flex flex-wrap gap-2">

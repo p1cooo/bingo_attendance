@@ -73,9 +73,36 @@ test('coach registration: automatic STU code, class locked to the walk-in class,
   // Admins keep their choices, and default to the walk-in class.
   assert.deepEqual(registrationPlan(admin, 'walkin-b', { student_id: 'STU-0777', schedule_ids: ['sched-sat'] }), { student_id: 'STU-0777', schedule_ids: ['sched-sat'] });
   assert.deepEqual(registrationPlan(admin, 'walkin-b', {}), { student_id: undefined, schedule_ids: ['sched-sat'] });
-  // A closed class blocks coach registration instead of silently enrolling nowhere.
+  // A deleted/closed class: the coach must pick one of their own active classes.
   db.classes.get('class-sat')!.is_active = false;
-  assert.equal((registrationPlan(coachA, 'walkin-a', {}) as any).code, 'TRIAL_CLASS_INACTIVE');
+  db.classes.set('class-mine', { id: 'class-mine', name: 'Sunday', default_coach_id: 'coach-a', is_active: true } as any);
+  db.classes.set('class-theirs', { id: 'class-theirs', name: 'Monday', default_coach_id: 'coach-b', is_active: true } as any);
+  db.schedules.set('sched-mine', { id: 'sched-mine', class_id: 'class-mine', is_active: true, status: 'ACTIVE' } as any);
+  db.schedules.set('sched-theirs', { id: 'sched-theirs', class_id: 'class-theirs', is_active: true, status: 'ACTIVE' } as any);
+  assert.equal((registrationPlan(coachA, 'walkin-a', {}) as any).code, 'CHOOSE_CLASS');
+  assert.deepEqual(registrationPlan(coachA, 'walkin-a', { student_id: 'STU-9999', schedule_ids: ['sched-mine'] }), { student_id: '', schedule_ids: ['sched-mine'] });
+  assert.equal((registrationPlan(coachA, 'walkin-a', { schedule_ids: ['sched-theirs'] }) as any).status, 400);
+  assert.equal((registrationPlan(coachA, 'walkin-a', { schedule_ids: ['sched-sat'] }) as any).status, 400); // the closed class itself
+}));
+
+test('remove (did not join): reason required, recorder or admin only, nothing changes if the save fails', () => isolated(async () => {
+  const path = '/students/:id/did-not-join';
+  assert.equal((await call(path, 'post', { params: { id: 'walkin-a' }, user: coachA, body: { reason: '' } })).status, 400);
+  assert.equal((await call(path, 'post', { params: { id: 'walkin-a' }, user: coachB, body: { reason: 'did not continue' } })).status, 403);
+  assert.equal((await call(path, 'post', { params: { id: 'official' }, user: admin, body: { reason: 'did not continue' } })).body.code, 'ALREADY_REGISTERED');
+  // No Firestore in tests, so the save fails: the walk-in must be left exactly as it was.
+  const failed = await call(path, 'post', { params: { id: 'walkin-a' }, user: coachA, body: { reason: 'did not continue' } });
+  assert.equal(failed.status, 503);
+  assert.equal(db.students.get('walkin-a')!.status, 'ACTIVE');
+  assert.equal(db.students.get('walkin-a')!.did_not_join, undefined);
+  assert.equal(db.attendance.size, 2); // attendance is never touched
+}));
+
+test('a walk-in marked did not join drops off the lists but keeps attendance', () => isolated(async () => {
+  db.students.set('walkin-a', { ...db.students.get('walkin-a')!, status: 'INACTIVE', did_not_join: { reason: 'x', at: '', by_user_id: coachA.id } });
+  assert.deepEqual((await call('/students/unregistered', 'get', { user: coachA })).body, []);
+  assert.ok(!(await call('/students/unregistered', 'get', { user: admin })).body.some((row: any) => row.id === 'walkin-a'));
+  assert.ok(db.attendance.has('att-a'));
 }));
 
 test('registration that cannot reach the database leaves the student, parent and classes unchanged', () => isolated(async () => {
@@ -94,4 +121,50 @@ test('Bingo Space links cannot be made for an unregistered student', () => isola
   const result = await call('/students/:id/portal-invite', 'post', { params: { id: 'walkin-a' }, user: admin });
   assert.equal(result.status, 409);
   assert.equal(result.body.code, 'UNREGISTERED_STUDENT');
+}));
+
+test('trial fees: each Present walk-in session from 1 Nov needs an admin amount; Absent, October and test students are not billed', () => isolated(async () => {
+  const { financeDetail } = await import('../server/finance.js');
+  const saved = [db.studentFees, db.studentPayments, db.studentAdjustments, db.membershipBillingReviews, db.studentPauses] as const;
+  try {
+    db.studentFees = new Map(); db.studentPayments = new Map(); db.studentAdjustments = new Map(); db.membershipBillingReviews = new Map(); db.studentPauses = new Map();
+    db.sessions.set('session-oct', { id: 'session-oct', schedule_id: 'sched-sat', class_id: 'class-sat', session_date: '2026-10-10', status: 'COMPLETED' } as any);
+    db.sessions.set('session-2', { id: 'session-2', schedule_id: 'sched-sat', class_id: 'class-sat', session_date: '2026-11-14', status: 'SCHEDULED' } as any);
+    db.attendance.set('att-a-oct', { id: 'att-a-oct', session_id: 'session-oct', student_id: 'walkin-a', status: 'PRESENT', attendance_type: 'REGULAR' } as any);
+    db.attendance.set('att-a-absent', { id: 'att-a-absent', session_id: 'session-2', student_id: 'walkin-a', status: 'ABSENT', attendance_type: 'REGULAR' } as any);
+    const lines = () => financeDetail('walkin-a', '2026-11')!.months.flatMap((m) => m.lines).filter((l: any) => l.trial);
+    assert.deepEqual(lines().map((l: any) => l.trial.date), ['2026-11-07']); // only the Present November session
+    assert.equal(lines()[0].pending_finance_review, true);
+    assert.equal(financeDetail('walkin-a', '2026-11')!.pending_finance_review, true);
+    // Admin sets RM50: it becomes the charge.
+    db.membershipBillingReviews.set('r1', { id: 'r1', student_id: 'walkin-a', membership_id: 'trial:att-a', month: '2026-11', amount_cents: 5000, reason: '', created_by_user_id: 'admin-user', created_at: '2026-11-08T00:00:00Z' });
+    assert.equal(lines()[0].amount_cents, 5000);
+    assert.equal(lines()[0].pending_finance_review, false);
+    // Trial decisions are not shown as partial-month decisions.
+    assert.equal(financeDetail('walkin-a', '2026-11')!.partial_month_reviews.length, 0);
+    // Removing (did not join) keeps the trial fee.
+    db.students.set('walkin-a', { ...db.students.get('walkin-a')!, status: 'INACTIVE', did_not_join: { reason: 'x', at: '', by_user_id: coachA.id } });
+    assert.equal(lines()[0].amount_cents, 5000);
+    // After registration only the stamped trial marks stay trials.
+    db.students.set('walkin-a', { ...db.students.get('walkin-a')!, status: 'ACTIVE', is_unregistered: false, trial_attendance_ids: ['att-a'] });
+    db.attendance.set('att-a-later', { id: 'att-a-later', session_id: 'session-2', student_id: 'walkin-a', status: 'PRESENT', attendance_type: 'REGULAR' } as any);
+    assert.deepEqual(lines().map((l: any) => l.trial.attendance_id), ['att-a']);
+    // "ZZ Test" students are never billed.
+    db.students.set('walkin-b', { ...db.students.get('walkin-b')!, full_name: 'ZZ Test Walk In' });
+    assert.equal(financeDetail('walkin-b', '2026-11')!.months.length, 0);
+    // The Finance list shows walk-ins only when they have a trial session to bill.
+    db.students.set('walkin-b', { ...db.students.get('walkin-b')!, full_name: 'Walk In B' });
+    db.attendance.delete('att-b');
+    const list = await call('/finance/students', 'get', { user: admin });
+    assert.ok(list.body.students.some((row: any) => row.student.id === 'walkin-a'));
+    assert.ok(!list.body.students.some((row: any) => row.student.id === 'walkin-b'));
+  } finally { [db.studentFees, db.studentPayments, db.studentAdjustments, db.membershipBillingReviews, db.studentPauses] = saved; }
+}));
+
+test('trial fee route: RM0 needs a reason, and only real trial sessions can be priced', () => isolated(async () => {
+  const path = '/finance/students/:id/trial-fee';
+  const key = 'abcdef12-3456';
+  assert.equal((await call(path, 'post', { params: { id: 'walkin-a' }, user: admin, body: { attendance_id: 'att-a', amount_cents: 0, reason: '', idempotency_key: key } })).status, 400);
+  assert.match((await call(path, 'post', { params: { id: 'walkin-a' }, user: admin, body: { attendance_id: 'nope', amount_cents: 5000, idempotency_key: key } })).body.error, /not a billable trial/);
+  assert.equal((await call(path, 'post', { params: { id: 'walkin-a' }, user: admin, body: { attendance_id: 'att-a', amount_cents: -1, idempotency_key: key } })).status, 400);
 }));

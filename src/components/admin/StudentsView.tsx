@@ -25,6 +25,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { BulkAddStudentsModal } from './BulkAddStudentsModal.js';
+import { UnregisteredStudentsSection } from '../coach/UnregisteredStudentsSection.js';
 
 interface StudentsViewProps {
   initialAddModalOpen?: boolean;
@@ -317,6 +318,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           </button>
         </div>
       </div>
+
+      <UnregisteredStudentsSection admin schedules={schedules} coaches={coaches} onRegistered={loadData} />
 
       {/* Filter Bar (Search + Global Class Filtering) */}
       <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border-2 border-slate-900/10 dark:border-neutral-800 shadow-2xs space-y-3">

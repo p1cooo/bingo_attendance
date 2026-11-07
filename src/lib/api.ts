@@ -21,6 +21,7 @@ export type StudentDeleteCheck = {
 export type UnregisteredStudentRow = {
   id: string; student_id: string; full_name: string; nick_name?: string; parent_phone?: string;
   class_name?: string; class_active: boolean; first_visit_date?: string; visit_count: number;
+  recorded_by_name?: string; recorded_by_coach_id?: string;
 };
 
 const API_BASE = '/api';
@@ -33,6 +34,7 @@ class ApiClient {
   saveStudentFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/fees`, { method: 'POST', body: JSON.stringify(data) }); }
   recordStudentPayment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }); }
   setPartialMonthFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/partial-month`, { method: 'POST', body: JSON.stringify(data) }); }
+  setTrialFee(id: string, data: { idempotency_key: string; attendance_id: string; amount_cents: number; reason: string }): Promise<any> { return this.request(`/finance/students/${id}/trial-fee`, { method: 'POST', body: JSON.stringify(data) }); }
   addStudentAdjustment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/adjustments`, { method: 'POST', body: JSON.stringify(data) }); }
   getStudentPauses(studentId?: string): Promise<any> { return this.request(`/student-pauses${studentId ? `?student_id=${encodeURIComponent(studentId)}` : ''}`); }
   declareStudentPause(membershipId: string, data: unknown): Promise<any> { return this.request(`/memberships/${membershipId}/pauses`, { method: 'POST', body: JSON.stringify(data) }); }
@@ -558,6 +560,10 @@ class ApiClient {
 
   async getUnregisteredStudents(): Promise<UnregisteredStudentRow[]> {
     return this.request('/students/unregistered');
+  }
+
+  async markDidNotJoin(studentId: string, reason: string): Promise<Student> {
+    return this.request(`/students/${studentId}/did-not-join`, { method: 'POST', body: JSON.stringify({ reason }) });
   }
 
   async convertUnregisteredStudent(

@@ -42,7 +42,7 @@ import { planStudentMemberships } from './studentMemberships.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
-import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH } from './finance.js';
+import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey } from './finance.js';
 import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
 import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } from './studentPauses.js';
@@ -151,8 +151,9 @@ router.post('/student-pauses/:id/billing-review', authenticateUser, requireAdmin
 });
 
 router.get('/finance/students', authenticateUser, requireAdmin, (_req, res) => {
-  const students = [...db.students.values()].filter(s => !s.is_unregistered).map(s => {
-    const detail = financeDetail(s.id)!;
+  // Unregistered (walk-in) students appear only when they have trial sessions to bill.
+  const students = [...db.students.values()].map(s => ({ s, detail: financeDetail(s.id)! }))
+    .filter(({ s, detail }) => !s.is_unregistered || detail.months.length > 0).map(({ s, detail }) => {
     return { student: s, non_billable: detail.non_billable, outstanding_cents: detail.outstanding_cents, current_charges_cents: detail.current_charges_cents, pending_finance_review: detail.pending_finance_review, paid_until: detail.paid_until, last_payment: detail.last_payment };
   });
   res.json({ students });
@@ -220,6 +221,37 @@ router.post('/finance/students/:id/partial-month', authenticateUser, requireAdmi
       new_values: { membership_id: membership.id, month, amount_cents: amount, reason: review.reason } }).catch(console.error);
     await publishFirestoreRevision(); db.saveToDisk(); res.status(created === review ? 201 : 200).json(created);
   } catch { res.status(503).json({ error: 'Partial-month amount could not be saved.' }); }
+});
+
+// Admin sets the fee for one trial (walk-in) session. Amounts vary by coach
+// level, so there is no default. RM0 needs a reason (e.g. "free trial").
+router.post('/finance/students/:id/trial-fee', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const student = db.students.get(req.params.id);
+  const attendanceId = String(req.body.attendance_id || '');
+  const amount = nonNegativeCents(req.body.amount_cents);
+  const reason = String(req.body.reason || '').trim();
+  const id = String(req.body.idempotency_key || '');
+  if (!student || !attendanceId || amount === null || !/^[a-zA-Z0-9-]{8,100}$/.test(id)) return res.status(400).json({ error: 'Choose a trial session and an amount (RM0 or more).' });
+  if (amount === 0 && reason.length < 3) return res.status(400).json({ error: 'Give a reason for a RM0 trial (for example "free trial").' });
+  const detail = financeDetail(student.id);
+  const line = detail?.months.flatMap(m => m.lines.map(l => ({ l, month: m.month }))).find(({ l }) => l.trial?.attendance_id === attendanceId);
+  if (!line) return res.status(400).json({ error: 'This is not a billable trial session for this student.' });
+  const review: MembershipBillingReview = { id, student_id: student.id, membership_id: trialReviewKey(attendanceId), month: line.month, amount_cents: amount, reason: reason.slice(0, 500), created_by_user_id: req.user!.id, created_by_name: req.user!.name, created_at: new Date().toISOString() };
+  try {
+    const ref = getFirestoreDb().collection('membershipBillingReviews').doc(id);
+    const created = await getFirestoreDb().runTransaction(async tx => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return existing.data() as MembershipBillingReview;
+      tx.create(ref, review);
+      return review;
+    });
+    if (created.membership_id !== review.membership_id || created.amount_cents !== review.amount_cents) return res.status(409).json({ error: 'Request key was already used for a different decision.' });
+    db.membershipBillingReviews.set(id, created);
+    if (created === review) await recordActivity(req.user!, 'TRIAL_FEE_SET', 'membershipBillingReview', id, { summary: student.student_id,
+      previous_values: line.l.trial!.decision ? { amount_cents: line.l.trial!.decision.amount_cents } : null,
+      new_values: { attendance_id: attendanceId, date: line.l.trial!.date, amount_cents: amount, reason: review.reason } }).catch(console.error);
+    await publishFirestoreRevision(); db.saveToDisk(); res.status(created === review ? 201 : 200).json(created);
+  } catch { res.status(503).json({ error: 'Trial fee could not be saved.' }); }
 });
 
 router.post('/finance/students/:id/payments', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
@@ -1191,16 +1223,46 @@ export function registrationPlan(user: User, studentId: string, body: { student_
   if (!student.is_unregistered) return { error: 'This student is already an official student.', status: 409, code: 'ALREADY_REGISTERED' };
   if (!canRegisterUnregistered(user, studentId)) return { error: 'You can only register unregistered students you recorded.', status: 403 };
   const coachLocked = !isAdmin(user);
-  if (!coachLocked && Array.isArray(body.schedule_ids)) return { student_id: body.student_id, schedule_ids: body.schedule_ids.map(String) };
-  const scheduleIds = unregisteredStudentOrigin(studentId).scheduleIds.filter((scheduleId) => {
+  const activeSchedule = (scheduleId: string) => {
     const schedule = db.schedules.get(scheduleId);
     return Boolean(schedule?.is_active && db.classes.get(schedule.class_id)?.is_active);
-  });
-  if (coachLocked && !scheduleIds.length) {
-    return { error: 'The class this student walked into is no longer active. Please ask an admin to register them.', status: 409, code: 'TRIAL_CLASS_INACTIVE' };
+  };
+  const chosen = Array.isArray(body.schedule_ids) ? Array.from(new Set(body.schedule_ids.map(String))) : null;
+  if (!coachLocked && chosen?.length) return { student_id: body.student_id, schedule_ids: chosen };
+  const originIds = unregisteredStudentOrigin(studentId).scheduleIds.filter(activeSchedule);
+  if (originIds.length) return { student_id: coachLocked ? '' : body.student_id, schedule_ids: originIds };
+  // The class they walked into was deleted or closed: a class must be picked.
+  // Coaches may pick only their own active classes.
+  if (!chosen?.length) return { error: 'The class this student walked into no longer exists. Choose a class for them.', status: 409, code: 'CHOOSE_CLASS' };
+  // Same rule as the coach's class list (GET /schedules): classes they are the default coach of.
+  if (coachLocked && chosen.some((scheduleId) => !activeSchedule(scheduleId) || !canManageClass(user, db.schedules.get(scheduleId)!.class_id))) {
+    return { error: 'Choose only your own active classes.', status: 400 };
   }
-  return { student_id: coachLocked ? '' : body.student_id, schedule_ids: scheduleIds };
+  return { student_id: coachLocked ? '' : body.student_id, schedule_ids: chosen };
 }
+
+// Walk-in did not join: hide them (INACTIVE) but keep the record, attendance and trial fees.
+router.post('/students/:id/did-not-join', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.user!;
+  const student = db.students.get(req.params.id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!student.is_unregistered) return res.status(409).json({ error: 'Only unregistered students can be marked as did not join.', code: 'ALREADY_REGISTERED' });
+  if (!canRegisterUnregistered(user, student.id)) return res.status(403).json({ error: 'You can only remove unregistered students you recorded.' });
+  const reason = String(req.body?.reason || '').trim();
+  if (reason.length < 3) return res.status(400).json({ error: 'Please give a reason (for example "did not continue after trial").' });
+  const before = { ...student };
+  const updated = { ...student, status: 'INACTIVE' as const, did_not_join: { reason: reason.slice(0, 500), at: new Date().toISOString(), by_user_id: user.id, by_name: user.name } };
+  db.students.set(student.id, updated);
+  try {
+    await recordActivity(user, 'TRIAL_STUDENT_DID_NOT_JOIN', 'student', student.id, { summary: `${student.student_id}: ${updated.did_not_join.reason}` });
+    await persistMutation([['students', student.id, updated]]);
+    db.saveToDisk();
+    return res.json(updated);
+  } catch {
+    db.students.set(student.id, before);
+    return res.status(503).json({ error: 'Could not save. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
+});
 
 // Unregistered students this user may register: coaches see the ones they recorded, admins see all.
 router.get('/students/unregistered', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res: Response) => {
@@ -1209,8 +1271,10 @@ router.get('/students/unregistered', authenticateUser, requireCoachOrAdmin, (req
     const origin = unregisteredStudentOrigin(student.id);
     const first = origin.visits[0];
     const schedule = origin.scheduleIds.length ? db.schedules.get(origin.scheduleIds[0]) : undefined;
+    const recorder = origin.recordedBy ? db.users.get(origin.recordedBy) : undefined;
     return {
       id: student.id, student_id: student.student_id, full_name: student.full_name, nick_name: student.nick_name,
+      recorded_by_name: recorder?.name, recorded_by_coach_id: recorder?.coach_id,
       parent_phone: student.parent_id ? db.parents.get(student.parent_id)?.phone : undefined,
       class_name: db.classes.get(schedule?.class_id || first?.session?.class_id || '')?.name,
       class_active: Boolean(schedule?.is_active && db.classes.get(schedule.class_id)?.is_active),
@@ -3248,6 +3312,9 @@ router.post('/students/:id/convert-registered', authenticateUser, requireCoachOr
   student.parent_id = parentId;
   student.parent_relation = parent_relation || 'Parent';
   student.is_unregistered = false; // Officially registered
+  // Keep which marks were trial sessions, so Finance still bills them as trials.
+  student.registered_at = new Date().toISOString();
+  student.trial_attendance_ids = Array.from(db.attendance.values()).filter((record) => record.student_id === id).map((record) => record.id);
 
   db.students.set(id, student);
   // Conversion may add class memberships but must preserve existing coach links.

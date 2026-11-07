@@ -90,8 +90,27 @@ function weekdayDates(month: string, dayOfWeek: number | undefined): string[] {
   return dates;
 }
 
+/** Trial (walk-in) sessions are billed from this date; earlier ones are left alone (owner decision 2026-11-07). */
+export const TRIAL_FEE_START_DATE = '2026-11-01';
+/** A trial fee decision is stored as a billing review keyed to the attendance mark. */
+export const trialReviewKey = (attendanceId: string) => `trial:${attendanceId}`;
+
+/**
+ * Attendance marks that were trial (walk-in) sessions: every mark while a
+ * student is unregistered, and the marks stamped at registration afterwards.
+ * Only Present/Late sessions are charged; the admin sets each amount.
+ */
+export function trialAttendance(student: Student): AttendanceRecord[] {
+  const stamped = student.is_unregistered ? null : new Set(student.trial_attendance_ids || []);
+  if (stamped && !stamped.size) return [];
+  return [...db.attendance.values()].filter(a => a.student_id === student.id && (!stamped || stamped.has(a.id)) &&
+    a.attendance_type !== 'REPLACEMENT' && (a.status === 'PRESENT' || a.status === 'LATE'));
+}
+
 type FinanceLine = {
   membership_id: string; class_name: string; coach_name: string; mode: string; unit_cents: number; dates: string[]; amount_cents: number;
+  /** Trial (walk-in) session: the admin sets the amount. */
+  trial?: { attendance_id: string; date: string; decision?: { amount_cents: number; reason: string; by: string; at: string } };
   fee_source: 'DEFAULT' | 'OVERRIDE';
   /** Group class with no roll call yet this month: not charged. */
   awaiting_first_roll_call?: boolean;
@@ -117,10 +136,24 @@ export function financeDetail(studentId: string, through = academyMonth()) {
   const attendance = [...db.attendance.values()].filter(a => a.student_id === studentId);
   const chargedSessionIds = new Set(attendance.filter(chargesPerLesson).map(a => a.session_id));
   const rollCallSessionIds = new Set(attendance.filter(startsMonthlyCharge).map(a => a.session_id));
+  const trials = trialAttendance(student);
+  const trialStart = startDate > TRIAL_FEE_START_DATE ? startDate : TRIAL_FEE_START_DATE;
   const months: Array<{month: string; lines: FinanceLine[]; charges_cents: number; paid_cents: number; adjustments_cents: number; outstanding_cents: number; status: string}> = [];
   for (let month = startMonth, count = 0; month <= final && count < 240; month = nextMonth(month), count++) {
     const lines: FinanceLine[] = [];
     const first = `${month}-01`, last = monthEnd(month);
+    for (const record of non_billable ? [] : trials) {
+      const session = db.sessions.get(record.session_id);
+      if (!session || session.session_date < first || session.session_date > last || session.session_date < trialStart) continue;
+      if (nonBillable.has(session.status) || nonBillable.has(session.session_type || '')) continue;
+      const cls = db.classes.get(session.class_id);
+      if (isNonBillableClass(cls)) continue;
+      const review = reviews.filter(r => r.membership_id === trialReviewKey(record.id)).at(-1);
+      const decision = review && { amount_cents: review.amount_cents, reason: review.reason, by: review.created_by_name || review.created_by_user_id, at: review.created_at };
+      lines.push({ membership_id: trialReviewKey(record.id), class_name: cls?.name || 'Class', coach_name: db.coaches.get(session.actual_coach_id || session.scheduled_coach_id || '')?.name || 'Coach',
+        mode: 'TRIAL', unit_cents: 0, fee_source: 'DEFAULT', dates: [session.session_date], amount_cents: decision?.amount_cents ?? 0,
+        pending_finance_review: !decision, trial: { attendance_id: record.id, date: session.session_date, decision } });
+    }
     for (const membership of non_billable ? [] : memberships) {
       if (membership.joined_date > last || (membership.ended_date && membership.ended_date < first) || (membership.ended_date && membership.ended_date < membership.joined_date) || (membership.status === 'PAUSED' && month >= academyMonth()) || (student.status === 'INACTIVE' && month > academyMonth())) continue;
       const schedule = db.schedules.get(membership.schedule_id);
@@ -183,7 +216,7 @@ export function financeDetail(studentId: string, through = academyMonth()) {
     if (item.outstanding_cents > 0) break;
     paid_until = item.month;
   }
-  return { student, non_billable, fees, payments, adjustments, partial_month_reviews: reviews, months, paid_until, last_payment: payments[0]?.payment_date || null,
+  return { student, non_billable, fees, payments, adjustments, partial_month_reviews: reviews.filter(r => !r.membership_id.startsWith('trial:')), months, paid_until, last_payment: payments[0]?.payment_date || null,
     outstanding_cents: months.reduce((sum, item) => sum + item.outstanding_cents, 0),
     pending_finance_review: months.some(item => item.status === 'Pending Finance Review'),
     current_charges_cents: months.find(item => item.month === academyMonth())?.charges_cents || 0 };

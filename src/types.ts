@@ -102,6 +102,11 @@ export interface Student {
   status: 'ACTIVE' | 'INACTIVE';
   is_unregistered?: boolean; // True if student was entered on-the-fly without a registered profile
   recorded_by_user_id?: string; // User who recorded this unregistered student during roll call
+  /** Walk-in who did not join: hidden (status INACTIVE) but kept with attendance and trial fees. */
+  did_not_join?: { reason: string; at: string; by_user_id: string; by_name?: string };
+  /** Set on registration: when, and which attendance marks were trial (walk-in) sessions. */
+  registered_at?: string;
+  trial_attendance_ids?: string[];
   parent?: Parent;
   enrolled_schedules?: ClassScheduleSummary[];
   attendance_summary?: {
