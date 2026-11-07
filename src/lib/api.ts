@@ -18,6 +18,11 @@ export type StudentDeleteCheck = {
   counts: { attendance: number; classes: number; credits: number; pauses: number };
 };
 
+export type UnregisteredStudentRow = {
+  id: string; student_id: string; full_name: string; nick_name?: string; parent_phone?: string;
+  class_name?: string; class_active: boolean; first_visit_date?: string; visit_count: number;
+};
+
 const API_BASE = '/api';
 
 class ApiClient {
@@ -551,10 +556,14 @@ class ApiClient {
     });
   }
 
+  async getUnregisteredStudents(): Promise<UnregisteredStudentRow[]> {
+    return this.request('/students/unregistered');
+  }
+
   async convertUnregisteredStudent(
     studentId: string,
     data: {
-      student_id: string;
+      student_id?: string;
       full_name: string;
       nick_name?: string;
       school?: string;

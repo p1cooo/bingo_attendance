@@ -1158,6 +1158,68 @@ router.get('/sessions/:id/replacement-candidates/:studentId/future-sessions', au
   return res.json(sessions);
 });
 
+// Where an unregistered (UNREG-) student came from: who recorded them and the
+// class they walked into. Older records have no recorded_by_user_id, so fall
+// back to the roll-call audit entry written when they were recorded.
+export function unregisteredStudentOrigin(studentId: string) {
+  const student = db.students.get(studentId);
+  const recordedBy = student?.recorded_by_user_id || db.auditLogs.find((entry) =>
+    entry.student_id === studentId && String(entry.reason || '').startsWith('Unregistered student recorded'))?.changed_by_user_id;
+  const visits = Array.from(db.attendance.values()).filter((record) => record.student_id === studentId)
+    .map((record) => ({ record, session: db.sessions.get(record.session_id) }))
+    .filter((item) => item.session)
+    .sort((a, b) => a.session!.session_date.localeCompare(b.session!.session_date));
+  const scheduleIds = Array.from(new Set(visits.map(({ session }) =>
+    db.schedules.has(session!.schedule_id) ? session!.schedule_id : db.schedules.has(session!.class_id) ? session!.class_id : '')
+    .filter(Boolean)));
+  return { recordedBy, visits, scheduleIds };
+}
+
+const canRegisterUnregistered = (user: User, studentId: string) => {
+  const student = db.students.get(studentId);
+  if (!student?.is_unregistered || student.status !== 'ACTIVE') return false;
+  return isAdmin(user) || (user.role === 'COACH' && unregisteredStudentOrigin(studentId).recordedBy === user.id);
+};
+
+// Who may register an unregistered student and with which STU code / classes.
+// Coaches: only students they recorded, STU code automatic, class locked to the
+// one the student walked into. Admins: any, may choose the code and classes.
+export function registrationPlan(user: User, studentId: string, body: { student_id?: unknown; schedule_ids?: unknown }):
+  { student_id: unknown; schedule_ids: string[] } | { error: string; status: number; code?: string } {
+  const student = db.students.get(studentId);
+  if (!student) return { error: 'Student not found', status: 404 };
+  if (!student.is_unregistered) return { error: 'This student is already an official student.', status: 409, code: 'ALREADY_REGISTERED' };
+  if (!canRegisterUnregistered(user, studentId)) return { error: 'You can only register unregistered students you recorded.', status: 403 };
+  const coachLocked = !isAdmin(user);
+  if (!coachLocked && Array.isArray(body.schedule_ids)) return { student_id: body.student_id, schedule_ids: body.schedule_ids.map(String) };
+  const scheduleIds = unregisteredStudentOrigin(studentId).scheduleIds.filter((scheduleId) => {
+    const schedule = db.schedules.get(scheduleId);
+    return Boolean(schedule?.is_active && db.classes.get(schedule.class_id)?.is_active);
+  });
+  if (coachLocked && !scheduleIds.length) {
+    return { error: 'The class this student walked into is no longer active. Please ask an admin to register them.', status: 409, code: 'TRIAL_CLASS_INACTIVE' };
+  }
+  return { student_id: coachLocked ? '' : body.student_id, schedule_ids: scheduleIds };
+}
+
+// Unregistered students this user may register: coaches see the ones they recorded, admins see all.
+router.get('/students/unregistered', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const user = req.user!;
+  const rows = Array.from(db.students.values()).filter((student) => canRegisterUnregistered(user, student.id)).map((student) => {
+    const origin = unregisteredStudentOrigin(student.id);
+    const first = origin.visits[0];
+    const schedule = origin.scheduleIds.length ? db.schedules.get(origin.scheduleIds[0]) : undefined;
+    return {
+      id: student.id, student_id: student.student_id, full_name: student.full_name, nick_name: student.nick_name,
+      parent_phone: student.parent_id ? db.parents.get(student.parent_id)?.phone : undefined,
+      class_name: db.classes.get(schedule?.class_id || first?.session?.class_id || '')?.name,
+      class_active: Boolean(schedule?.is_active && db.classes.get(schedule.class_id)?.is_active),
+      first_visit_date: first?.session?.session_date, visit_count: origin.visits.length,
+    };
+  }).sort((a, b) => String(b.first_visit_date || '').localeCompare(String(a.first_visit_date || '')));
+  return res.json(rows);
+});
+
 router.get('/students/:id', authenticateUser, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const student = db.getPopulatedStudent(id);
@@ -3061,6 +3123,7 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
     parent_id: parentId,
     status: 'ACTIVE',
     is_unregistered: true,
+    recorded_by_user_id: user.id,
     created_at: new Date().toISOString(),
   };
 
@@ -3119,16 +3182,18 @@ router.post('/sessions/:id/unregistered-student', authenticateUser, async (req: 
   });
 });
 
-// Admin converts an Unregistered Student to a Formal Registered Student profile
-router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+// Converts an Unregistered Student to a Formal Registered Student profile.
+// Admins may convert any; coaches only the ones they recorded. For coaches the
+// STU number is automatic and the class is locked to the one they walked into.
+router.post('/students/:id/convert-registered', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
+  const user = req.user!;
   const student = db.students.get(id);
-  if (!student) {
-    return res.status(404).json({ error: 'Student not found' });
-  }
+  const plan = registrationPlan(user, id, req.body || {});
+  if ('error' in plan) return res.status(plan.status).json({ error: plan.error, code: plan.code });
+  const { student_id, schedule_ids } = plan;
 
   const {
-    student_id,
     full_name,
     nick_name,
     school,
@@ -3137,15 +3202,19 @@ router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, 
     parent_email,
     parent_telegram,
     parent_relation,
-    schedule_ids,
   } = req.body;
 
-  if (!full_name) {
+  if (!full_name || !String(full_name).trim()) {
     return res.status(400).json({ error: 'Full Name is required' });
   }
   let formalStudentCode: string;
   try { formalStudentCode = await reserveStudentCode(student_id, await occupiedStudentCodes()); }
   catch (error: any) { return res.status(400).json({ error: error.message || 'Formal Student ID is invalid or already in use.' }); }
+
+  // Keep copies so a failed save leaves the unregistered student exactly as it was.
+  const studentBefore = { ...student };
+  const parentBefore = student.parent_id && db.parents.get(student.parent_id) ? { ...db.parents.get(student.parent_id)! } : undefined;
+  const addedMembershipIds: string[] = [];
 
   // Update parent
   let parentId = student.parent_id;
@@ -3189,6 +3258,7 @@ router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, 
       if (enrolled) continue;
       const memId = 'm-' + crypto.randomUUID();
       db.memberships.set(memId, { id: memId, student_id: id, schedule_id: schedId, joined_date: academyToday(), status: 'ACTIVE' });
+      addedMembershipIds.push(memId);
     }
   }
   try {
@@ -3201,6 +3271,10 @@ router.post('/students/:id/convert-registered', authenticateUser, requireAdmin, 
     db.saveToDisk();
     return res.json(db.getPopulatedStudent(id));
   } catch (error) {
+    db.students.set(id, studentBefore);
+    if (parentBefore) db.parents.set(parentBefore.id, parentBefore);
+    else if (parentId && parentId !== studentBefore.parent_id) db.parents.delete(parentId);
+    addedMembershipIds.forEach((membershipId) => db.memberships.delete(membershipId));
     return res.status(503).json({ error: 'Formal registration could not be saved. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
   }
 });
@@ -3362,6 +3436,10 @@ router.get('/export/class-schedules-docx', authenticateUser, requireAdmin, async
 router.post('/students/:id/portal-invite', authenticateUser, async (req: AuthenticatedRequest, res: Response) => {
   const student = db.students.get(req.params.id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
+  // A link made now would tie Bingo Space to the temporary UNREG- code, which changes on registration.
+  if (student.is_unregistered || /^UNREG-/i.test(student.student_id)) {
+    return res.status(409).json({ error: 'Register this student as an official student first, then get the Bingo Space link.', code: 'UNREGISTERED_STUDENT' });
+  }
   if (!canManageStudent(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
   const user = req.user!;
   try {

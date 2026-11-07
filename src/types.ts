@@ -101,6 +101,7 @@ export interface Student {
   parent_relation?: string;
   status: 'ACTIVE' | 'INACTIVE';
   is_unregistered?: boolean; // True if student was entered on-the-fly without a registered profile
+  recorded_by_user_id?: string; // User who recorded this unregistered student during roll call
   parent?: Parent;
   enrolled_schedules?: ClassScheduleSummary[];
   attendance_summary?: {
