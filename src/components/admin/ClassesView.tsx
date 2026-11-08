@@ -4,7 +4,6 @@ import { useToast } from '../common/Toast.js';
 import { AcademyClass, ClassType, Coach, Student } from '../../types.js';
 import { LoadingSkeleton } from '../common/LoadingSkeleton.js';
 import { Modal } from '../common/Modal.js';
-import { ClassReplacementSwitch } from '../common/ClassReplacementSwitch.js';
 import {
   Plus,
   Edit2,
@@ -420,7 +419,6 @@ export const ClassesView: React.FC = () => {
                       >
                         {cls.is_active ? 'Active' : 'Inactive'}
                       </span>
-                      <ClassReplacementSwitch cls={cls} onChanged={loadData} />
                     </div>
 
                     <div className="flex items-center gap-1">

@@ -29,6 +29,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { BulkAddClassesModal } from './BulkAddClassesModal.js';
+import { ClassReplacementSwitch } from '../common/ClassReplacementSwitch.js';
 
 const DAYS_OF_WEEK = [
   { value: 1, label: 'Monday' },
@@ -563,12 +564,15 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
                       Auto Concrete Generator: ON
                     </span>
+                    <div className="flex items-center gap-2">
+                    <ClassReplacementSwitch cls={cls} onChanged={loadData} />
                     <button
                       onClick={() => handleOpenRoster(cls)}
                       className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-slate-900 dark:text-white text-xs font-black transition-colors"
                     >
                       Edit Roster
                     </button>
+                    </div>
                   </div>
                 </div>
               );
