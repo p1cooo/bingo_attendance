@@ -42,10 +42,10 @@ import { planStudentMemberships } from './studentMemberships.js';
 import { classEarnsReplacementCredit, resetClassReplacementCredits, createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
-import { financeDetail, financeMonthStatus, financeOverview, financeStudentDetails, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
+import { financeDetail, pauseCoverageForMonth, financeMonthStatus, financeOverview, financeStudentDetails, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
 import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
-import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } from './studentPauses.js';
+import { pauseOnDate, validatePauseDates, canManagePause } from './studentPauses.js';
 import type { StudentFee, ClassFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
 import type { StudentPause, PauseReason } from '../src/types.js';
 import { commitPauseDeclaration, commitPauseBillingReview } from './pausePersistence.js';
@@ -61,11 +61,26 @@ const pauseAccess = (user: User, membershipId: string) => {
   return canManagePause(user, membership, schedule);
 };
 
+/** Months (from Finance start to now) where this pause covers only some classes, with whether a fee was set. */
+function pauseFeeMonths(pause: StudentPause) {
+  const membership = db.memberships.get(pause.membership_id);
+  if (!membership) return [];
+  const detail = financeDetail(pause.student_id);
+  const out: { month: string; class_dates: string[]; paused_dates: string[]; fee_cents: number | null }[] = [];
+  for (const item of detail?.months || []) {
+    if (item.month < pause.start_date.slice(0, 7) || (pause.end_date && item.month > pause.end_date.slice(0, 7))) continue;
+    const line = item.lines.find(l => l.membership_id === pause.membership_id && l.pause);
+    if (!line?.pause || !line.pause.paused_dates.some(d => d >= pause.start_date && (!pause.end_date || d <= pause.end_date))) continue;
+    out.push({ month: item.month, class_dates: line.pause.class_dates, paused_dates: line.pause.paused_dates, fee_cents: line.pause.decided ? line.amount_cents : null });
+  }
+  return out;
+}
+
 router.get('/student-pauses', authenticateUser, requireCoachOrAdmin, (req: AuthenticatedRequest, res) => {
   const user = req.user!;
   const studentId = String(req.query.student_id || '');
   const pauses = [...db.studentPauses.values()].filter(p => (!studentId || p.student_id === studentId) && pauseAccess(user, p.membership_id))
-    .map(p => ({ ...p, class_name: db.classes.get(p.class_id)?.name || p.class_id }));
+    .map(p => ({ ...p, class_name: db.classes.get(p.class_id)?.name || p.class_id, fee_months: pauseFeeMonths(p) }));
   res.json({ pauses, finance_notifications: user.role === 'COACH' ? [] : pauses.filter(p => p.declared_by_role === 'COACH').map(p => ({ pause_id: p.id, student_id: p.student_id, created_at: p.created_at, action: 'REVIEW_PAUSE_BILLING' })) });
 });
 
@@ -136,7 +151,7 @@ router.post('/student-pauses/:id/billing-review', authenticateUser, requireAdmin
   const amount = req.body.amount_cents;
   const monthEnd = validMonth(month) ? `${month}-${new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate()}` : '';
   if (!pause || !validMonth(month) || !Number.isSafeInteger(amount) || amount < 0 || pause.start_date > monthEnd || pause.end_date && pause.end_date < `${month}-01` ||
-    pauseMonthCoverage(db.studentPauses.values(), pause.membership_id, month) !== 'PARTIAL') return res.status(400).json({ error: 'Choose a partially paused month and a custom fee of RM0 or more.' });
+    !db.memberships.get(pause.membership_id) || pauseCoverageForMonth(db.memberships.get(pause.membership_id)!, month).coverage !== 'PARTIAL') return res.status(400).json({ error: 'That month doesn\x27t need a fee: the pause covers none or all of the student\x27s classes. Enter RM0 or more for a month where only some classes were paused.' });
   if ([...db.studentPauses.values()].some(other => other.id !== pause.id && other.membership_id === pause.membership_id && other.billing_reviews?.[month])) return res.status(409).json({ error: 'This enrollment and month already have a review on another pause.' });
   const now = new Date().toISOString();
   const updated: StudentPause = { ...pause, billing_reviews: { ...pause.billing_reviews, [month]: { amount_cents: amount, reviewed_by_user_id: req.user!.id, reviewed_at: now } },

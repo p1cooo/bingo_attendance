@@ -88,6 +88,8 @@ test('Finance zeroes only a fully paused class and flags partial months until a 
     db.classes = new Map([['group', { id: 'group', name: 'Group', class_type: 'GROUP' } as any], ['individual', { id: 'individual', name: 'Individual', class_type: 'INDIVIDUAL' } as any]]);
     db.sessions = new Map([['group-session', { id: 'group-session', schedule_id: 'group', class_id: 'group', session_date: '2026-11-10', status: 'SCHEDULED' } as any],
       ['individual-session', { id: 'individual-session', schedule_id: 'individual', class_id: 'individual', session_date: '2026-11-14', status: 'SCHEDULED' } as any],
+      // A second November class inside the partial pause below, so only some classes are paused.
+      ['group-session-2', { id: 'group-session-2', schedule_id: 'group', class_id: 'group', session_date: '2026-11-20', status: 'SCHEDULED' } as any],
       ['group-nov', { id: 'group-nov', schedule_id: 'group', class_id: 'group', session_date: '2026-12-10', status: 'SCHEDULED' } as any]]);
     db.attendance = new Map([['mark', { id: 'mark', student_id: 'student', session_id: 'individual-session', status: 'PRESENT' } as any],
       // Group fees start at the first roll call of the month.

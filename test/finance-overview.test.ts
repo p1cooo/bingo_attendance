@@ -73,3 +73,60 @@ test('ageing counts earlier unpaid months', () => isolated(() => {
   assert.equal(o.still_to_collect_cents, 24000);
   assert.equal(o.total_outstanding_cents, 72000);
 }));
+
+const pause = (id: string, membershipId: string, studentId: string, classId: string, start: string, end: string | null) =>
+  db.studentPauses.set(id, { id, student_id: studentId, membership_id: membershipId, schedule_id: classId, class_id: classId, start_date: start, end_date: end,
+    reason: 'EXAMINATION', declared_by_user_id: 'coach', declared_by_name: 'Coach', declared_by_role: 'COACH', created_at: '', updated_at: '', history: [] });
+const novSaturdays = ['2026-11-07', '2026-11-14', '2026-11-21', '2026-11-28'];
+const novLine = (id: string) => financeDetail(id, '2026-11')!.months.find(m => m.month === '2026-11')?.lines[0];
+
+test('pause that ends before the first class of the month: normal fee, no review', () => isolated(() => {
+  addClass('sat'); addStudent('back'); join('m', 'back', 'sat');
+  novSaturdays.forEach((d, i) => { session(`s${i}`, 'sat', d); present(`s${i}`, 'back'); });
+  pause('p', 'm', 'back', 'sat', '2026-10-24', '2026-11-06');
+  const line = novLine('back')!;
+  assert.equal(line.amount_cents, 24000);
+  assert.equal(line.pending_finance_review, false);
+  assert.equal(line.pause, undefined);
+}));
+
+test('pause covering every class of the month: RM0, no review', () => isolated(() => {
+  addClass('sat'); addStudent('away'); join('m', 'away', 'sat');
+  novSaturdays.forEach((d, i) => session(`s${i}`, 'sat', d));
+  pause('p', 'm', 'away', 'sat', '2026-11-07', null);
+  const item = financeDetail('away', '2026-11')!.months.find(m => m.month === '2026-11');
+  assert.equal(item?.charges_cents ?? 0, 0);
+  assert.ok(!item?.lines.some(l => l.pending_finance_review));
+}));
+
+test('pause covering some classes: admin sets the fee, line explains which', () => isolated(() => {
+  addClass('sat'); addStudent('some'); join('m', 'some', 'sat');
+  novSaturdays.forEach((d, i) => session(`s${i}`, 'sat', d));
+  present('s0', 'some'); present('s3', 'some');
+  pause('p', 'm', 'some', 'sat', '2026-11-10', '2026-11-25');
+  const line = novLine('some')!;
+  assert.equal(line.pending_finance_review, true);
+  assert.deepEqual(line.pause?.paused_dates, ['2026-11-14', '2026-11-21']);
+  assert.equal(line.pause?.class_dates.length, 4);
+}));
+
+test('per-lesson class with a pause: charges attended lessons, no review', () => isolated(() => {
+  db.classes.set('ind', { id: 'ind', name: 'ind', class_type: 'INDIVIDUAL', day_of_week: 1, default_duration_mins: 60, default_capacity: 1, is_active: true, created_at: '' } as AcademyClass);
+  db.schedules.set('ind', { id: 'ind', class_id: 'ind', coach_id: 'coach', day_of_week: 1, start_time: '10:00', end_time: '11:00', status: 'ACTIVE', is_active: true, created_at: '' } as ClassSchedule);
+  addStudent('solo'); join('m', 'solo', 'ind');
+  session('i1', 'ind', '2026-11-02'); present('i1', 'solo');
+  pause('p', 'm', 'solo', 'ind', '2026-11-06', null);
+  const line = novLine('solo')!;
+  assert.equal(line.amount_cents, 8000);
+  assert.equal(line.pending_finance_review, false);
+}));
+
+test('Test Student and Test Walk-in names are never billed', () => isolated(() => {
+  addClass('sat'); session('s', 'sat', '2026-11-07');
+  for (const [id, name] of [['a', 'Test Student A'], ['w', 'Test Walk-in Trial']]) { addStudent(id, { full_name: name }); join(`m${id}`, id, 'sat'); present('s', id); }
+  for (const id of ['a', 'w']) {
+    const d = financeDetail(id, '2026-11')!;
+    assert.equal(d.non_billable, true);
+    assert.equal(d.pending_finance_review, false);
+  }
+}));

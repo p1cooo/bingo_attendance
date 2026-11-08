@@ -212,8 +212,10 @@ test('pre-launch lessons remain scheduled without invented attendance; Finance b
     const pause: StudentPause = { id: 'pause', student_id: 'student', membership_id: 'group-m', schedule_id: 'group', class_id: 'group', start_date: '2026-11-01', end_date: '2026-11-30', reason: 'EXAMINATION', declared_by_user_id: 'coach', declared_by_name: 'Fixture Coach', declared_by_role: 'COACH', created_at: '2026-11-01', updated_at: '2026-11-01', history: [] };
     db.studentPauses.set('pause', pause);
     assert.equal(nov().lines.find(line => line.membership_id === 'group-m')?.amount_cents, 0);
+    // The only November class (7 Nov) is before the pause, so the normal fee applies (owner decision 2026-11-08).
     pause.start_date = '2026-11-12';
-    assert.equal(nov().lines.find(line => line.membership_id === 'group-m')?.pending_finance_review, true);
+    assert.equal(nov().lines.find(line => line.membership_id === 'group-m')?.pending_finance_review, false);
+    assert.equal(nov().lines.find(line => line.membership_id === 'group-m')?.amount_cents, 24000);
   } finally {
     keys.forEach((key, index) => (db[key] as any) = previous[index]);
     if (oldBilling === undefined) delete process.env.ACADEMY_GO_LIVE_DATE; else process.env.ACADEMY_GO_LIVE_DATE = oldBilling;

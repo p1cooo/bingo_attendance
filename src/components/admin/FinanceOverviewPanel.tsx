@@ -62,8 +62,8 @@ export const FinanceOverviewPanel: React.FC<Props> = ({ reloadKey, onOpenStudent
   const todo = [
     { label: 'Join/leave mid-month amounts to set', count: data.to_do.partial_months },
     { label: 'Trial sessions to price', count: data.to_do.trial_sessions },
-    { label: 'Pause and other charges to review', count: data.to_do.other_reviews },
-    ...(isCurrent ? [{ label: 'Group classes with no roll call yet', count: data.to_do.classes_without_roll_call.length, hint: data.to_do.classes_without_roll_call.join(', ') }] : []),
+    { label: 'Pauses covering some classes, and other checks', count: data.to_do.other_reviews },
+    ...(isCurrent ? [{ label: 'Group classes with students not marked yet', count: data.to_do.classes_without_roll_call.length, hint: data.to_do.classes_without_roll_call.join(', ') }] : []),
   ];
   const ageing = [
     { label: 'This month only', b: data.ageing.this_month_only, tone: '' },
@@ -103,14 +103,14 @@ export const FinanceOverviewPanel: React.FC<Props> = ({ reloadKey, onOpenStudent
             : <span key={s.key} className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${s.pill}`}>{pill}</span>;
         })}
       </div>
-      <p className="mt-2 text-[11px] text-slate-500">{isCurrent ? 'Click a group to see those students. ' : ''}“Not billed yet” = in a group class that hasn’t had its first roll call this month.</p>
+      <p className="mt-2 text-[11px] text-slate-500">{isCurrent ? 'Click a group to see those students. ' : ''}“Not billed yet” = the coach hasn’t marked this student (Present, Late or Absent) in their group class yet this month. The fee starts at the first mark.</p>
     </section>
 
     <div className="grid gap-4 lg:grid-cols-2">
       <section className={`${card} border-amber-200/80 dark:border-amber-900`}>
         <h3 className="flex items-center gap-2 text-base font-bold"><AlertCircle className="h-4 w-4 text-amber-600" />To do</h3>
         <div className="mt-2">{todo.map(t => <div key={t.label} className={row} title={'hint' in t ? t.hint : undefined}><span className="text-slate-700 dark:text-slate-300">{t.label}</span><b className={t.count ? 'text-amber-700 dark:text-amber-300' : 'text-slate-400'}>{t.count}</b></div>)}</div>
-        {isCurrent && data.to_do.classes_without_roll_call.length > 0 && <p className="mt-2 text-[11px] text-slate-500">No roll call yet: {data.to_do.classes_without_roll_call.slice(0, 6).join(', ')}{data.to_do.classes_without_roll_call.length > 6 ? ` +${data.to_do.classes_without_roll_call.length - 6} more` : ''}</p>}
+        {isCurrent && data.to_do.classes_without_roll_call.length > 0 && <p className="mt-2 text-[11px] text-slate-500">Not marked yet this month: {data.to_do.classes_without_roll_call.slice(0, 6).join(', ')}{data.to_do.classes_without_roll_call.length > 6 ? ` +${data.to_do.classes_without_roll_call.length - 6} more` : ''}</p>}
         {todo.some(t => t.count) && <button className="mt-3 text-xs font-semibold text-slate-700 hover:text-slate-900 dark:text-slate-300" onClick={() => onShowStatus('NEEDS_REVIEW')}>Open students needing review →</button>}
       </section>
 

@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { academyMonth } from './academyDate.js';
-import { pauseMonthCoverage } from './studentPauses.js';
+import { pauseMonthCoverage, pauseOnDate } from './studentPauses.js';
 import { attendanceExpectedOn } from './attendanceGoLive.js';
 import type { AttendanceRecord, ClassFee, ClassType, Student, StudentClassMembership } from '../src/types.js';
 
@@ -41,7 +41,7 @@ export function classFeeFor(classId: string, month: string): ClassFee | undefine
 
 const normaliseName =(value: unknown) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 const TEST_STUDENT_NAMES = new Set(['testing', 'testing 123']);
-const TEST_STUDENT_NAME_PREFIXES = ['zz test'];
+const TEST_STUDENT_NAME_PREFIXES = ['zz test', 'test student', 'test walk-in'];
 const TEST_STUDENT_IDS = new Set(['STU-9999', 'STU-9998', 'STU-9997']);
 const TEST_CLASS_NAMES = new Set(['testing', 'testing 123', 'testing group', 'testing v2']);
 /** Test accounts are never billed. */
@@ -117,6 +117,34 @@ export function trialAttendance(student: Student): AttendanceRecord[] {
     a.attendance_type !== 'REPLACEMENT' && (a.status === 'PRESENT' || a.status === 'LATE'));
 }
 
+/**
+ * The class dates of a membership in a month: generated sessions (cancelled and
+ * off days excluded) plus the regular weekday after the last generated session.
+ */
+export function membershipClassDates(membership: StudentClassMembership, month: string): string[] {
+  const first = `${month}-01`, last = monthEnd(month);
+  const schedule = db.schedules.get(membership.schedule_id);
+  const classId = schedule?.class_id || membership.schedule_id;
+  const inMonth = [...db.sessions.values()].filter(s => s.session_date >= first && s.session_date <= last && (s.schedule_id === membership.schedule_id || s.class_id === classId));
+  const held = inMonth.filter(s => !nonBillable.has(s.status) && !nonBillable.has(s.session_type || '')).map(s => s.session_date);
+  const latest = inMonth.map(s => s.session_date).sort().at(-1);
+  const upcoming = weekdayDates(month, schedule?.day_of_week ?? db.classes.get(classId)?.day_of_week).filter(d => !latest || d > latest);
+  return [...new Set([...held, ...upcoming])].filter(d => inMembership(membership, d)).sort();
+}
+
+/**
+ * How a pause affects a month, judged by the student's class dates (owner decision 2026-11-08):
+ * no class inside the pause = normal fee; every class paused = RM0; some classes paused = admin sets the fee.
+ */
+export function pauseCoverageForMonth(membership: StudentClassMembership, month: string): { coverage: 'NONE' | 'FULL' | 'PARTIAL'; class_dates: string[]; paused_dates: string[] } {
+  const calendar = pauseMonthCoverage(db.studentPauses.values(), membership.id, month);
+  if (calendar !== 'PARTIAL') return { coverage: calendar, class_dates: [], paused_dates: [] };
+  const class_dates = membershipClassDates(membership, month);
+  const paused_dates = class_dates.filter(d => pauseOnDate(db.studentPauses.values(), membership.id, d));
+  const coverage = !paused_dates.length ? 'NONE' : paused_dates.length === class_dates.length ? 'FULL' : 'PARTIAL';
+  return { coverage, class_dates, paused_dates };
+}
+
 type FinanceLine = {
   membership_id: string; class_name: string; coach_name: string; mode: string; unit_cents: number; dates: string[]; amount_cents: number;
   /** Trial (walk-in) session: the admin sets the amount. */
@@ -126,6 +154,8 @@ type FinanceLine = {
   awaiting_first_roll_call?: boolean;
   pending_finance_review?: boolean; pre_go_live_dates?: string[];
   /** Group membership joined or ended partway through the month and missed scheduled classes. */
+  /** Pause covering only some of this month's classes: the admin sets the month fee. */
+  pause?: { class_dates: string[]; paused_dates: string[]; decided: boolean };
   partial_month?: { joined_date: string; ended_date?: string; attended_dates: string[]; missed_dates: string[]; decision?: { amount_cents: number; reason: string; by: string; at: string } };
 };
 
@@ -180,7 +210,9 @@ export function financeDetail(studentId: string, through = academyMonth()) {
       const related = classSessions.filter(s => inMembership(membership, s.session_date));
       const dates = related.map(s => s.session_date).sort();
       const charged = related.filter(s => attendanceExpectedOn(s.session_date) && chargedSessionIds.has(s.id));
-      const coverage = pauseMonthCoverage(db.studentPauses.values(), membership.id, month);
+      const pauseInfo = pauseCoverageForMonth(membership, month);
+      // Per-lesson classes already charge only lessons attended, so a pause never needs a review there.
+      const coverage = applicable.billing_mode === 'PER_SESSION' && pauseInfo.coverage === 'PARTIAL' ? 'NONE' : pauseInfo.coverage;
       const pauseReview = [...db.studentPauses.values()].filter(p => p.membership_id === membership.id && p.billing_reviews?.[month]).at(-1)?.billing_reviews?.[month];
       // Earlier lessons may have happened without electronic roll-call.
       // Their charge cannot be inferred from missing attendance; leave the balance provisional.
@@ -215,7 +247,7 @@ export function financeDetail(studentId: string, through = academyMonth()) {
       else if (pauseReview) amount_cents = pauseReview.amount_cents;
       else if (coverage === 'PARTIAL') { amount_cents = 0; pending_finance_review = true; }
       else { amount_cents = applicable.amount_cents * quantity; pending_finance_review = preGoLiveDates.length > 0; }
-      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review || partial) lines.push({ membership_id: membership.id, class_name: override?.class_name || cls?.name || 'Class', coach_name: override?.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, fee_source: feeSource, dates: applicable.billing_mode === 'MONTHLY' ? dates : charged.map(s => s.session_date).sort(), amount_cents, pending_finance_review, pre_go_live_dates: preGoLiveDates, partial_month: partial, awaiting_first_roll_call: awaitingFirstRollCall && coverage !== 'FULL' && amount_cents === 0 && !pending_finance_review });
+      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review || partial) lines.push({ membership_id: membership.id, class_name: override?.class_name || cls?.name || 'Class', coach_name: override?.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, fee_source: feeSource, dates: applicable.billing_mode === 'MONTHLY' ? dates : charged.map(s => s.session_date).sort(), amount_cents, pending_finance_review, pre_go_live_dates: preGoLiveDates, partial_month: partial, pause: coverage === 'PARTIAL' ? { class_dates: pauseInfo.class_dates, paused_dates: pauseInfo.paused_dates, decided: Boolean(pauseReview) } : undefined, awaiting_first_roll_call: awaitingFirstRollCall && coverage !== 'FULL' && amount_cents === 0 && !pending_finance_review });
     }
     const charges_cents = lines.reduce((sum, line) => sum + line.amount_cents, 0);
     const paid_cents = payments.reduce((sum, payment) => sum + payment.allocations.filter(a => a.month === month).reduce((n, a) => n + a.amount_cents, 0), 0);

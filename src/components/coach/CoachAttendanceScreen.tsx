@@ -38,6 +38,8 @@ interface CoachAttendanceScreenProps {
 
 const dayAfter = (date: string) => { const next = new Date(`${date}T00:00:00Z`); next.setUTCDate(next.getUTCDate() + 1); return next.toISOString().slice(0, 10); };
 
+const niceDate = (date: string) => new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`));
+
 export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   sessionId,
   onBack,
@@ -716,11 +718,11 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           </span>
                         )}
                         {isReplacement && record?.replacement_advance_commitment_id && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">Advance</span>}
-                        {pause && <span className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800">PAUSED FOR THIS SESSION</span>}
+                        {pause && <span className="rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[10px] font-black text-violet-800">PAUSED TODAY</span>}
                         {status === 'EXCUSED' && <span className="rounded-full border border-sky-300 bg-sky-100 px-2 py-0.5 text-[10px] font-black text-sky-800">EXCUSED</span>}
                         {status === 'LATE' && <span className="rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-800">LATE</span>}
                       </div>
-                      {pause && <p className="text-[11px] font-bold text-violet-700">Student on Pause: {pause.start_date}–{pause.end_date || 'Until Further Notice'}{pause.end_date ? ` · Expected return ${dayAfter(pause.end_date)}` : ''}</p>}
+                      {pause && <p className="text-[11px] font-bold text-violet-700">Paused {niceDate(pause.start_date)} – {pause.end_date ? niceDate(pause.end_date) : 'no end date yet'}{pause.end_date ? ` · back from ${niceDate(dayAfter(pause.end_date))}` : ''}</p>}
 
                       <div className="flex items-center gap-2.5 text-xs text-slate-500 font-bold flex-wrap">
                         {studentId && <span className="font-mono">{studentId}</span>}
@@ -735,12 +737,12 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       {canManageStudentPause && <div className="mt-2">
                         <button type="button" aria-expanded={actionStudentId === student.id} aria-controls={`student-actions-${student.id}`} onClick={() => toggleStudentActions(student.id)} className="min-h-10 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-neutral-600 dark:text-slate-200">Student options</button>
                         {actionStudentId === student.id && <div id={`student-actions-${student.id}`} className="mt-2 max-w-md space-y-2 rounded-xl border border-slate-300 bg-slate-50 p-3 text-xs dark:border-neutral-700 dark:bg-neutral-800">
-                          <p className="font-black">Participation in this class</p>
+                          <p className="font-black">Pauses in this class</p>
                           {actionLoading ? <p>Loading pauses…</p> : <>
                             {classPauses.length > 0 ? classPauses.map(p => {
                               const activeToday = p.start_date <= todayStr && (!p.end_date || todayStr <= p.end_date);
                               return <div key={p.id} className="rounded-lg bg-white p-2 dark:bg-neutral-900">
-                                <p className="font-bold">{activeToday ? 'Active pause' : p.start_date > todayStr ? 'Upcoming pause' : 'Past pause'} · {p.start_date}–{p.end_date || 'Until further notice'}</p>
+                                <p className="font-bold">{activeToday ? 'Paused now' : p.start_date > todayStr ? 'Pause starts later' : 'Past pause (back in class)'} · {niceDate(p.start_date)} – {p.end_date ? niceDate(p.end_date) : 'no end date yet'}</p>
                                 {activeToday && todayStr > p.start_date && <button type="button" disabled={resumingPauseId === p.id} onClick={() => resumePause(p)} className="mt-2 rounded-lg border border-violet-600 px-3 py-2 font-black text-violet-700 disabled:opacity-50">{resumingPauseId === p.id ? 'Resuming…' : 'Resume in this class today'}</button>}
                                 {activeToday && todayStr === p.start_date && <p className="mt-1 text-slate-500">Resumption is available from tomorrow.</p>}
                               </div>;
@@ -869,7 +871,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
       <Modal isOpen={!!pauseStudent} onClose={() => setPauseStudent(null)} title={`Pause ${pauseStudent?.full_name || 'student'} in this class`}>
         <form onSubmit={declarePause} className="space-y-3 pt-3">
           <label className="block text-xs font-bold">Start date<input className="mt-1 w-full rounded border p-2" type="date" required value={pauseStart} onChange={e => setPauseStart(e.target.value)} /></label>
-          <label className="block text-xs font-bold">End date (leave empty for Until Further Notice)<input className="mt-1 w-full rounded border p-2" type="date" value={pauseEnd} min={pauseStart} onChange={e => setPauseEnd(e.target.value)} /></label>
+          <label className="block text-xs font-bold">End date (leave empty if you don't know yet)<input className="mt-1 w-full rounded border p-2" type="date" value={pauseEnd} min={pauseStart} onChange={e => setPauseEnd(e.target.value)} /></label>
           <label className="block text-xs font-bold">Reason<select className="mt-1 w-full rounded border p-2" value={pauseReason} onChange={e => setPauseReason(e.target.value)}><option value="EXAMINATION">Examination</option><option value="HOLIDAY_TRAVEL">Holiday / Travel</option><option value="MEDICAL_HEALTH">Medical / Health</option><option value="PERSONAL">Personal</option><option value="OTHER">Other</option></select></label>
           <label className="block text-xs font-bold">Optional note<textarea className="mt-1 w-full rounded border p-2" maxLength={500} value={pauseNote} onChange={e => setPauseNote(e.target.value)} /></label>
           <button type="submit" disabled={pauseBusy} className="rounded bg-violet-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Confirm pause</button>
