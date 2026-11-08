@@ -51,7 +51,7 @@ export const PauseFinancePanel: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-2"><b>{names[p.student_id] || p.student_id} · {p.class_name || p.class_id}</b><span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{status}</span></div>
         <p className="mt-1 text-xs">{dateLabel(p.start_date)} – {p.end_date ? dateLabel(p.end_date) : 'no end date yet'} · {labels[p.reason]}{p.note ? ` · ${p.note}` : ''}</p>
         <p className="mt-1 text-xs text-slate-500">Set by {p.declared_by_role === 'COACH' ? 'Coach ' : ''}{p.declared_by_name} on {dateLabel(p.created_at.slice(0, 10))}</p>
-        {Boolean(p.attendance_conflict_ids?.length) && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Note: {p.attendance_conflict_ids!.length === 1 ? '1 class' : `${p.attendance_conflict_ids!.length} classes`} inside this pause already had attendance marked. {p.attendance_conflict_ids!.length === 1 ? 'It was' : 'They were'} kept as they were.</p>}
+        {Boolean(p.attendance_conflict_ids?.length) && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Note: {p.attendance_conflict_ids!.length === 1 ? '1 class' : `${p.attendance_conflict_ids!.length} classes`} inside this pause already had attendance marked. {p.attendance_conflict_ids!.length === 1 ? 'That mark was' : 'Those marks were'} kept.</p>}
         {(p.fee_months || []).map(m => {
           const key = `${p.id}:${m.month}`;
           const fee = fees[key] ?? '';
