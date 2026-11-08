@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { BulkAddStudentsModal } from './BulkAddStudentsModal.js';
 import { UnregisteredStudentsSection } from '../coach/UnregisteredStudentsSection.js';
+import { ReplacementCreditImportModal } from './ReplacementCreditImportModal.js';
 
 interface StudentsViewProps {
   initialAddModalOpen?: boolean;
@@ -39,6 +40,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const { showToast } = useToast();
 
   const [students, setStudents] = useState<Student[]>([]);
+  const [isCreditImportOpen, setIsCreditImportOpen] = useState(false);
   const [totalStudentCount, setTotalStudentCount] = useState(0);
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [classes, setClasses] = useState<AcademyClass[]>([]);
@@ -309,6 +311,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           </button>
 
           <button
+            type="button"
+            onClick={() => setIsCreditImportOpen(true)}
+            className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-xl text-xs font-semibold bg-white dark:bg-neutral-800 text-slate-800 dark:text-slate-200 border-2 border-slate-200 dark:border-neutral-700 hover:bg-slate-50 dark:hover:bg-neutral-700/60 transition-colors shadow-2xs cursor-pointer"
+          >
+            <span>Import Replacement Credits</span>
+          </button>
+
+          <button
             id="add-student-main-btn"
             onClick={handleOpenAdd}
             className="inline-flex items-center gap-1.5 py-2 px-4 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 transition-colors shadow-2xs cursor-pointer"
@@ -320,6 +330,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       </div>
 
       <UnregisteredStudentsSection admin schedules={schedules} coaches={coaches} onRegistered={loadData} />
+      <ReplacementCreditImportModal isOpen={isCreditImportOpen} onClose={() => setIsCreditImportOpen(false)} onDone={loadData} />
 
       {/* Filter Bar (Search + Global Class Filtering) */}
       <div className="p-4 rounded-2xl bg-white dark:bg-neutral-900 border-2 border-slate-900/10 dark:border-neutral-800 shadow-2xs space-y-3">

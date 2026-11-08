@@ -30,15 +30,16 @@ export async function createReplacementCredit(entry: ReplacementCredit): Promise
  * mutable balance. A declared replacement consumes a credit at booking time;
  * marking that booking Present or Absent does not consume another credit.
  */
-export function replacementCreditImpact(record: Pick<AttendanceRecord, 'status' | 'attendance_type'>, classType: ClassType): number {
-  if (record.attendance_type === 'REGULAR' && classType === 'GROUP' && record.status === 'ABSENT') return 1;
+export function replacementCreditImpact(record: Pick<AttendanceRecord, 'status' | 'attendance_type'>, classType: ClassType, earnsCredit = true): number {
+  // Some school group classes never give replacements: an absence there earns nothing.
+  if (record.attendance_type === 'REGULAR' && classType === 'GROUP' && record.status === 'ABSENT') return earnsCredit ? 1 : 0;
   if (record.attendance_type === 'REPLACEMENT' && ['BOOKED', 'PRESENT', 'ABSENT', 'LATE', 'EXCUSED'].includes(record.status)) return -1;
   return 0;
 }
 
-export function replacementCreditChange(previous: AttendanceRecord | undefined, next: AttendanceRecord, classType: ClassType) {
+export function replacementCreditChange(previous: AttendanceRecord | undefined, next: AttendanceRecord, classType: ClassType, earnsCredit = true) {
   const priorImpact = previous?.replacement_credit_impact ?? 0;
-  const nextImpact = replacementCreditImpact(next, classType);
+  const nextImpact = replacementCreditImpact(next, classType, earnsCredit);
   const changed = priorImpact !== nextImpact;
   const revision = changed ? (previous?.replacement_credit_revision ?? 0) + 1 : previous?.replacement_credit_revision;
   return { nextImpact, changed, revision, delta: nextImpact - priorImpact };
@@ -57,6 +58,8 @@ function ledgerReason(nextImpact: number): ReplacementCreditReason {
 export interface AttendanceReconciliationInput {
   attendance: AttendanceRecord;
   classType: ClassType;
+  /** False for a class whose absences give no replacement credit (replacements_allowed === false). */
+  earnsCredit?: boolean;
   expectedMarkedAt?: string | null;
   pauseMembershipIds?: string[];
   sessionDate?: string;
@@ -77,6 +80,9 @@ export interface AttendanceReconciliationResult {
   idempotent?: boolean;
   audit?: AttendanceAuditLog;
 }
+
+/** A class gives replacement credits for absences unless switched off. */
+export const classEarnsReplacementCredit = (cls: { replacements_allowed?: boolean } | undefined | null) => cls?.replacements_allowed !== false;
 
 export class ReplacementCreditError extends Error {}
 export class PauseAttendanceError extends Error {}
@@ -131,7 +137,7 @@ export async function persistAttendanceWithReplacementReconciliation(
           Boolean(input.attendance.lucky_tshirt_worn) !== Boolean(previous.lucky_tshirt_worn))) {
       throw new AttendanceConflictError('This attendance already awarded stars. Reload before making a correction.');
     }
-    const { nextImpact, changed, revision, delta } = replacementCreditChange(previous, input.attendance, input.classType);
+    const { nextImpact, changed, revision, delta } = replacementCreditChange(previous, input.attendance, input.classType, input.earnsCredit !== false);
     const audit = input.audit ? { ...input.audit, previous_status: previous?.status || 'NOT_MARKED', new_status: input.attendance.status } as AttendanceAuditLog : undefined;
     const attendance = withoutUndefined({
       ...previous,
@@ -228,4 +234,48 @@ export async function persistAttendanceWithReplacementReconciliation(
   });
   attendanceTiming('transaction_publish', publishStartedAt);
   return result;
+}
+
+export type ClassCreditResetResult = {
+  removed: number;
+  failed: number;
+  students: Array<{ student_id: string; full_name: string; student_code: string; removed: number; balance_after: number; had_replacements: boolean }>;
+};
+
+/**
+ * A class was switched to "no replacements": take back the credits its
+ * absences earned. Each absence is re-saved under the no-credit rule, which
+ * writes a REVERSAL entry and stamps the attendance in one transaction, so it
+ * is safe to run again (already-reset absences are skipped). Students who
+ * already used replacements are flagged for the owner, never blocked.
+ */
+export async function resetClassReplacementCredits(
+  classId: string,
+  persist: typeof persistAttendanceWithReplacementReconciliation = persistAttendanceWithReplacementReconciliation,
+): Promise<ClassCreditResetResult> {
+  const cls = db.classes.get(classId);
+  const sessionIds = new Set([...db.sessions.values()].filter((session) => session.class_id === classId).map((session) => session.id));
+  const absences = [...db.attendance.values()].filter((record) => sessionIds.has(record.session_id) &&
+    record.attendance_type === 'REGULAR' && record.status === 'ABSENT' && record.replacement_credit_impact === 1);
+  const perStudent = new Map<string, number>();
+  let failed = 0;
+  for (const record of absences) {
+    try {
+      await persist({ attendance: record, classType: cls?.class_type || 'GROUP', earnsCredit: false, expectedMarkedAt: record.marked_at ?? null });
+      perStudent.set(record.student_id, (perStudent.get(record.student_id) || 0) + 1);
+    } catch (error) {
+      failed++;
+      console.error('[Credits] Could not reset credit for attendance', record.id, error);
+    }
+  }
+  const debitReasons = new Set(['REPLACEMENT_BOOKING_DEBIT', 'REPLACEMENT_ATTENDED_DEBIT', 'ADVANCE_REPLACEMENT_DEBIT']);
+  const students = [...perStudent.entries()].map(([studentId, removed]) => {
+    const student = db.students.get(studentId);
+    return {
+      student_id: studentId, full_name: student?.full_name || 'Student', student_code: student?.student_id || '', removed,
+      balance_after: replacementCreditBalance(studentId),
+      had_replacements: [...db.replacementCredits.values()].some((entry) => entry.student_id === studentId && debitReasons.has(entry.reason)),
+    };
+  }).sort((a, b) => a.full_name.localeCompare(b.full_name));
+  return { removed: [...perStudent.values()].reduce((sum, n) => sum + n, 0), failed, students };
 }

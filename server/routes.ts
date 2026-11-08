@@ -39,7 +39,7 @@ import { OccurrenceError, planOccurrence, applyOccurrenceMode } from './sessionO
 import { commitOccurrence } from './occurrencePersistence.js';
 import { reconcileRecurringSessions } from './recurringSessions.js';
 import { planStudentMemberships } from './studentMemberships.js';
-import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
+import { classEarnsReplacementCredit, resetClassReplacementCredits, createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
@@ -2136,6 +2136,35 @@ router.post('/students/bulk-delete', authenticateUser, requireAdmin, async (req:
   }
 });
 
+// Switch "replacements allowed" for a class (its coach or an admin). Turning it
+// off stops new credits and takes back the credits its absences already earned.
+router.put('/classes/:id/replacements', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const cls = db.classes.get(req.params.id);
+  if (!cls) return res.status(404).json({ error: 'Class not found' });
+  if (!canManageClass(req.user!, cls.id)) return res.status(403).json({ error: 'You can only change your own classes.' });
+  if (typeof req.body?.allowed !== 'boolean') return res.status(400).json({ error: 'Choose whether replacements are allowed.' });
+  if (cls.class_type !== 'GROUP') return res.status(400).json({ error: 'Only group classes give replacement credits.' });
+  const allowed = req.body.allowed as boolean;
+  const before = { ...cls };
+  const updated = { ...cls, replacements_allowed: allowed };
+  db.classes.set(cls.id, updated);
+  try {
+    await persistMutation([['classes', cls.id, updated]]);
+  } catch {
+    db.classes.set(cls.id, before);
+    return res.status(503).json({ error: 'Could not save. Please retry.', code: 'FIRESTORE_WRITE_FAILED' });
+  }
+  // Re-running "off" retries any credits a previous attempt could not reset.
+  const reset = allowed ? { removed: 0, failed: 0, students: [] } : await resetClassReplacementCredits(cls.id);
+  await recordActivity(req.user!, allowed ? 'CLASS_REPLACEMENTS_ENABLED' : 'CLASS_REPLACEMENTS_DISABLED', 'class', cls.id, {
+    classId: cls.id, summary: allowed ? cls.name : `${cls.name}: ${reset.removed} credit(s) removed${reset.failed ? `, ${reset.failed} failed` : ''}`,
+    new_values: allowed ? { replacements_allowed: true } : { replacements_allowed: false, removed: reset.removed, failed: reset.failed,
+      already_used_replacements: reset.students.filter((s) => s.had_replacements).map((s) => ({ student: s.student_code, removed: s.removed, balance_after: s.balance_after })) },
+  }).catch(console.error);
+  db.saveToDisk();
+  return res.json({ class: updated, ...reset });
+});
+
 router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const cls = db.classes.get(id);
@@ -2964,6 +2993,7 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     const persisted = await persistAttendanceWithReplacementReconciliation({
       attendance: attendanceToPersist,
       classType: attendanceClass.class_type,
+      earnsCredit: classEarnsReplacementCredit(attendanceClass),
       expectedMarkedAt: existingRecord?.marked_at ?? null,
       pauseMembershipIds: classMemberships.map(m => m.id).filter(Boolean),
       sessionDate: session.session_date,
@@ -3189,6 +3219,63 @@ router.post('/students/:id/replacement-credits/adjustments', authenticateUser, r
   const entry: ReplacementCredit = { id: idempotencyKey, student_id: student.id, amount, reason: openingBalance ? 'OPENING_BALANCE_ADJUSTMENT' : 'ADMIN_ADJUSTMENT', created_by_user_id: user.id, created_at: timestamp, effective_at: timestamp, idempotency_key: idempotencyKey };
   try { await createReplacementCredit(entry); return res.json({ success: true, balance: replacementCreditBalance(student.id), entry }); }
   catch (error: any) { return res.status(503).json({ error: error.message || 'Adjustment could not be saved.' }); }
+});
+
+// Bulk "set starting balance": coaches' declared totals, pasted by an admin.
+// Each listed student's balance is SET to the declared number (an
+// OPENING_BALANCE_ADJUSTMENT of declared - current). Unlisted students are untouched.
+type CreditImportRow = { row: number; student_code: string; credits: unknown; note?: string };
+export function planCreditImport(rows: unknown) {
+  const list: CreditImportRow[] = Array.isArray(rows) ? rows.map((raw: any, index) => ({ row: index + 1, student_code: normaliseStudentCode(raw?.student_id), credits: raw?.credits, note: String(raw?.note || '').trim().slice(0, 300) })) : [];
+  const byCode = new Map(Array.from(db.students.values()).map((student) => [normaliseStudentCode(student.student_id), student]));
+  const seen = new Map<string, number>();
+  list.forEach((item) => seen.set(item.student_code, (seen.get(item.student_code) || 0) + 1));
+  return list.map((item) => {
+    const student = byCode.get(item.student_code);
+    const declared = typeof item.credits === 'number' ? item.credits : String(item.credits ?? '').trim() === '' ? NaN : Number(item.credits);
+    const errors: string[] = [];
+    if (!item.student_code) errors.push('Missing STU ID');
+    else if (!student) errors.push('No student with this STU ID');
+    else if (student.is_unregistered) errors.push('Unregistered (walk-in) student');
+    else if (student.status !== 'ACTIVE') errors.push('Student is inactive');
+    if ((seen.get(item.student_code) || 0) > 1) errors.push('STU ID listed more than once');
+    if (!Number.isInteger(declared) || declared < -50 || declared > 200) errors.push('Credits must be a whole number');
+    const current = student ? replacementCreditBalance(student.id) : 0;
+    return { row: item.row, student_code: item.student_code, student_id: student?.id, full_name: student?.full_name, note: item.note,
+      current, declared: Number.isInteger(declared) ? declared : null, change: errors.length ? 0 : declared - current, errors };
+  });
+}
+
+router.post('/admin/replacement-credits/import/preview', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const rows = planCreditImport(req.body?.rows);
+  if (!rows.length) return res.status(400).json({ error: 'Paste at least one row: STU ID, credits, note.' });
+  return res.json({ rows, valid: rows.filter((r) => !r.errors.length).length, invalid: rows.filter((r) => r.errors.length).length });
+});
+
+router.post('/admin/replacement-credits/import/commit', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const batchId = String(req.body?.batch_id || '');
+  if (!/^[a-zA-Z0-9-]{8,60}$/.test(batchId)) return res.status(400).json({ error: 'Missing import id. Reload and preview again.' });
+  const rows = planCreditImport(req.body?.rows);
+  if (!rows.length) return res.status(400).json({ error: 'Nothing to import.' });
+  if (rows.some((r) => r.errors.length)) return res.status(400).json({ error: 'Fix the rows with errors first.', rows });
+  const user = req.user!;
+  const results: Array<{ student_code: string; full_name?: string; change: number; balance: number; status: 'UPDATED' | 'NO_CHANGE' | 'FAILED' }> = [];
+  for (const row of rows) {
+    // Recomputed against the live balance at commit time.
+    const change = row.declared! - replacementCreditBalance(row.student_id!);
+    if (change === 0) { results.push({ student_code: row.student_code, full_name: row.full_name, change: 0, balance: row.declared!, status: 'NO_CHANGE' }); continue; }
+    const timestamp = new Date().toISOString();
+    const key = `import-${batchId}-${row.student_id}`;
+    const entry: ReplacementCredit = { id: key, student_id: row.student_id!, amount: change, reason: 'OPENING_BALANCE_ADJUSTMENT', created_by_user_id: user.id,
+      created_at: timestamp, effective_at: timestamp, idempotency_key: key, note: row.note ? `Coach declared total: ${row.note}` : 'Coach declared total' };
+    try { await createReplacementCredit(entry); results.push({ student_code: row.student_code, full_name: row.full_name, change, balance: replacementCreditBalance(row.student_id!), status: 'UPDATED' }); }
+    catch { results.push({ student_code: row.student_code, full_name: row.full_name, change, balance: replacementCreditBalance(row.student_id!), status: 'FAILED' }); }
+  }
+  const updated = results.filter((r) => r.status === 'UPDATED').length;
+  const failed = results.filter((r) => r.status === 'FAILED').length;
+  await recordActivity(user, 'REPLACEMENT_CREDITS_IMPORTED', 'replacementCredits', batchId, { summary: `${updated} updated, ${failed} failed, ${results.length - updated - failed} unchanged` }).catch(console.error);
+  db.saveToDisk();
+  return res.json({ results, updated, failed });
 });
 
 // Record an Unregistered Student on the fly during Roll Call
@@ -3507,7 +3594,7 @@ router.put('/attendance/:id', authenticateUser, requireAdmin, async (req: Authen
     timestamp: new Date().toISOString(),
   };
   try {
-    await persistAttendanceWithReplacementReconciliation({ attendance: correctedRecord, classType: correctionClass.class_type, expectedMarkedAt: record.marked_at ?? null, audit: auditEntry });
+    await persistAttendanceWithReplacementReconciliation({ attendance: correctedRecord, classType: correctionClass.class_type, earnsCredit: classEarnsReplacementCredit(correctionClass), expectedMarkedAt: record.marked_at ?? null, audit: auditEntry });
   } catch (error: any) {
     if (error instanceof AttendanceConflictError) return res.status(409).json({ error: error.message });
     console.error('[Attendance Correction] Durable attendance/credit transaction failed:', error?.message || error);

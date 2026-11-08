@@ -4,6 +4,7 @@ import { AcademyClass, ClassType } from '../../types.js';
 import { Modal } from '../common/Modal.js';
 import { useToast } from '../common/Toast.js';
 import { CoachFilterChip } from './CoachFilterChip.js';
+import { ClassReplacementSwitch } from '../common/ClassReplacementSwitch.js';
 import { WEEK_DAYS, filterAndSortCoachClasses } from '../../lib/coachListFilters.js';
 import { addRosterStudents, filterRosterCandidates, toggleRosterStudent, type RosterCandidate } from '../../lib/classRoster.js';
 
@@ -84,8 +85,8 @@ export const CoachClassesView: React.FC = () => {
       </div></div>
     </div>
     <section className="space-y-3">{visibleClasses.length === 0 && <p className="rounded-2xl border-2 border-slate-900 bg-white p-4 text-sm font-bold text-slate-500">No classes match your search and filters.</p>}{visibleClasses.map((cls) => <article key={cls.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-slate-900 bg-white p-4 shadow-[4px_4px_0_#e2e8f0]">
-      <div><h3 className="font-black">{cls.name}</h3><p className="text-xs text-slate-500">{WEEK_DAYS.find((day) => day.value === cls.day_of_week)?.short || 'Day'} · {cls.class_type} · {cls.start_time}–{cls.end_time} · {cls.enrolled_students_count || 0} students</p></div>
-      <div className="flex gap-2"><button onClick={() => { setEditing(cls); setForm({ name: cls.name, class_type: cls.class_type, day_of_week: cls.day_of_week ?? 6, start_time: cls.start_time || '', end_time: cls.end_time || '', room_location: cls.room_location || '' }); setFormOpen(true); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button><button onClick={() => { setRoster(cls); setQuery(''); setSelectedIds([]); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Add Students</button><button onClick={() => archive(cls)} className="rounded-lg border border-rose-600 px-3 py-2 text-xs font-black text-rose-700">Delete</button></div>
+      <div><h3 className="font-black">{cls.name}</h3><p className="text-xs text-slate-500">{WEEK_DAYS.find((day) => day.value === cls.day_of_week)?.short || 'Day'} · {cls.class_type} · {cls.start_time}–{cls.end_time} · {cls.enrolled_students_count || 0} students{cls.replacements_allowed === false ? ' · No replacements' : ''}</p></div>
+      <div className="flex flex-wrap gap-2"><ClassReplacementSwitch cls={cls} onChanged={load} /><button onClick={() => { setEditing(cls); setForm({ name: cls.name, class_type: cls.class_type, day_of_week: cls.day_of_week ?? 6, start_time: cls.start_time || '', end_time: cls.end_time || '', room_location: cls.room_location || '' }); setFormOpen(true); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Edit</button><button onClick={() => { setRoster(cls); setQuery(''); setSelectedIds([]); }} className="rounded-lg border border-slate-900 px-3 py-2 text-xs font-black">Add Students</button><button onClick={() => archive(cls)} className="rounded-lg border border-rose-600 px-3 py-2 text-xs font-black text-rose-700">Delete</button></div>
     </article>)}</section>
     <Modal isOpen={formOpen} onClose={() => setFormOpen(false)} title={editing ? 'Edit Class' : 'Create Class'}>
       <form onSubmit={save} className="space-y-3">

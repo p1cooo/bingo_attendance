@@ -18,6 +18,13 @@ export type StudentDeleteCheck = {
   counts: { attendance: number; classes: number; credits: number; pauses: number };
 };
 
+export type ClassCreditReset = {
+  removed: number; failed: number;
+  students: Array<{ student_id: string; full_name: string; student_code: string; removed: number; balance_after: number; had_replacements: boolean }>;
+};
+export type CreditImportPreviewRow = { row: number; student_code: string; student_id?: string; full_name?: string; note?: string; current: number; declared: number | null; change: number; errors: string[] };
+export type CreditImportInputRow = { student_id: string; credits: string | number; note?: string };
+
 export type UnregisteredStudentRow = {
   id: string; student_id: string; full_name: string; nick_name?: string; parent_phone?: string;
   class_name?: string; class_active: boolean; first_visit_date?: string; visit_count: number;
@@ -562,6 +569,18 @@ class ApiClient {
 
   async getUnregisteredStudents(): Promise<UnregisteredStudentRow[]> {
     return this.request('/students/unregistered');
+  }
+
+  async setClassReplacements(classId: string, allowed: boolean): Promise<ClassCreditReset & { class: AcademyClass }> {
+    return this.request(`/classes/${classId}/replacements`, { method: 'PUT', body: JSON.stringify({ allowed }) });
+  }
+
+  async previewCreditImport(rows: CreditImportInputRow[]): Promise<{ rows: CreditImportPreviewRow[]; valid: number; invalid: number }> {
+    return this.request('/admin/replacement-credits/import/preview', { method: 'POST', body: JSON.stringify({ rows }) });
+  }
+
+  async commitCreditImport(batchId: string, rows: CreditImportInputRow[]): Promise<{ updated: number; failed: number; results: Array<{ student_code: string; full_name?: string; change: number; balance: number; status: 'UPDATED' | 'NO_CHANGE' | 'FAILED' }> }> {
+    return this.request('/admin/replacement-credits/import/commit', { method: 'POST', body: JSON.stringify({ batch_id: batchId, rows }) });
   }
 
   async markDidNotJoin(studentId: string, reason: string): Promise<Student> {
