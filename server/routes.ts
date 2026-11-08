@@ -43,6 +43,7 @@ import { classEarnsReplacementCredit, resetClassReplacementCredits, createReplac
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 import { financeDetail, pauseCoverageForMonth, financeMonthStatus, financeOverview, financeStudentDetails, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
+import { applyPaymentDelete, applyPaymentEdit, paymentVersion } from './paymentCorrections.js';
 import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
 import { pauseOnDate, validatePauseDates, canManagePause } from './studentPauses.js';
@@ -261,7 +262,7 @@ router.post('/finance/students/:id/fees', authenticateUser, requireAdmin, async 
   const schedule = db.schedules.get(membership.schedule_id);
   const cls = db.classes.get(schedule?.class_id || membership.schedule_id);
   if (!cls) return res.status(400).json({ error: 'Class is unavailable.' });
-  if (month < academyMonth() && [...db.studentPayments.values()].some(p => p.student_id === student.id && p.allocations.some(a => a.month >= month))) return res.status(409).json({ error: 'Past billed periods with payments are locked. Use a current-period adjustment.' });
+  if (month < academyMonth() && [...db.studentPayments.values()].some(p => p.student_id === student.id && !p.deleted_at && p.allocations.some(a => a.month >= month))) return res.status(409).json({ error: 'Past billed periods with payments are locked. Use a current-period adjustment.' });
   const fee: StudentFee = { id: crypto.randomUUID(), student_id: student.id, membership_id: membership.id, class_id: cls.id, class_name: cls.name, coach_name: db.coaches.get(schedule?.coach_id || cls.default_coach_id || '')?.name || 'Coach', billing_mode: cls.class_type === 'GROUP' ? 'MONTHLY' : 'PER_SESSION', amount_cents: amount, effective_month: month, created_by_user_id: req.user!.id, created_by_name: req.user!.name, created_at: new Date().toISOString() };
   const previous = [...db.studentFees.values()].filter(f => f.membership_id === membership.id && f.effective_month >= FINANCE_START_MONTH && f.effective_month <= month).sort((a, b) => a.effective_month.localeCompare(b.effective_month) || a.created_at.localeCompare(b.created_at)).at(-1);
   try {
@@ -360,6 +361,44 @@ router.post('/finance/students/:id/payments', authenticateUser, requireAdmin, as
     res.status(created === payment ? 201 : 200).json(created);
   } catch { res.status(503).json({ error: 'Payment could not be saved. Retry with the same form.' }); }
 });
+
+/** Edit or soft-delete a recorded payment. Old values stay in the payment's history; any admin may do it. */
+const correctPayment = (action: 'EDIT' | 'DELETE') => async (req: AuthenticatedRequest, res: Response) => {
+  const current = db.studentPayments.get(req.params.paymentId);
+  if (!current || current.student_id !== req.params.id) return res.status(404).json({ error: 'Payment not found.' });
+  if (req.body.expected_version !== paymentVersion(current)) return res.status(409).json({ error: 'This payment was changed by someone else. Reload and try again.' });
+  const actor = { id: req.user!.id, name: req.user!.name };
+  const now = new Date().toISOString();
+  const result = action === 'EDIT' ? applyPaymentEdit(current, req.body, actor, now) : applyPaymentDelete(current, req.body, actor, now);
+  if (result.ok === false) return res.status(result.status).json({ error: result.error });
+  if (result.payment === current) return res.json(current);
+  const updated = result.payment;
+  const student = db.students.get(current.student_id);
+  const activity = activityEntry(req.user!, action === 'EDIT' ? 'PAYMENT_EDITED' : 'PAYMENT_DELETED', 'studentPayment', current.id, {
+    summary: `${student?.full_name || current.student_id} · RM${(current.amount_cents / 100).toFixed(2)} paid ${current.payment_date}`,
+    previous_values: updated.history!.at(-1)!.before,
+    new_values: action === 'EDIT' ? { amount_cents: updated.amount_cents, payment_date: updated.payment_date, method: updated.method, allocations: updated.allocations } : { deleted: true },
+    notes: updated.history!.at(-1)!.reason });
+  try {
+    await getFirestoreDb().runTransaction(async tx => {
+      const ref = getFirestoreDb().collection('studentPayments').doc(current.id);
+      const stored = await tx.get(ref);
+      if (!stored.exists || paymentVersion(stored.data() as StudentPayment) !== paymentVersion(current)) throw new Error('STALE_PAYMENT');
+      tx.set(ref, removeUndefinedValues(updated) as FirebaseFirestore.DocumentData);
+      tx.create(getFirestoreDb().collection('activityLogs').doc(activity.id), removeUndefinedValues(activity) as FirebaseFirestore.DocumentData);
+    });
+    db.studentPayments.set(current.id, updated);
+    db.activityLogs.unshift(activity);
+    await publishFirestoreRevision(); db.saveToDisk();
+    return res.json(updated);
+  } catch (error) {
+    const stale = String(error).includes('STALE_PAYMENT');
+    if (!stale) console.error('Payment correction failed', current.id, error);
+    return res.status(stale ? 409 : 503).json({ error: stale ? 'This payment was changed by someone else. Reload and try again.' : 'Payment change could not be saved. Try again.' });
+  }
+};
+router.put('/finance/students/:id/payments/:paymentId', authenticateUser, requireAdmin, correctPayment('EDIT'));
+router.delete('/finance/students/:id/payments/:paymentId', authenticateUser, requireAdmin, correctPayment('DELETE'));
 
 router.post('/finance/students/:id/adjustments', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
   const id = String(req.body.idempotency_key || '');

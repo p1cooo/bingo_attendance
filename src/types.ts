@@ -19,6 +19,16 @@ export interface StudentPayment {
   reference?: string; notes?: string; allocations: PaymentAllocation[];
   recorded_by_user_id: string; created_at: string;
   recorded_by_name?: string;
+  /** Set on every edit/delete; used to detect two admins changing the same payment. */
+  updated_at?: string;
+  /** Soft delete: the payment stays for audit but no longer counts toward balances. */
+  deleted_at?: string; deleted_by_name?: string; delete_reason?: string;
+  history?: PaymentHistoryEntry[];
+}
+export type PaymentEditableFields = Pick<StudentPayment, 'amount_cents' | 'payment_date' | 'method' | 'reference' | 'notes' | 'allocations'>;
+export interface PaymentHistoryEntry {
+  action: 'EDIT' | 'DELETE'; at: string; by_user_id: string; by_name?: string; reason: string;
+  before: PaymentEditableFields;
 }
 /** Admin decision for a group class joined or left partway through a month. Append-only; the latest record wins. */
 export interface MembershipBillingReview {

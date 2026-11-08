@@ -166,7 +166,10 @@ export function financeDetail(studentId: string, through = academyMonth()) {
   const memberships = [...db.memberships.values()].filter(m => m.student_id === studentId);
   // October (pre-Finance) fee versions are not carried forward.
   const fees = [...db.studentFees.values()].filter(f => f.student_id === studentId && f.effective_month >= FINANCE_START_MONTH).sort((a, b) => a.effective_month.localeCompare(b.effective_month) || a.created_at.localeCompare(b.created_at));
-  const payments = [...db.studentPayments.values()].filter(p => p.student_id === studentId).sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at));
+  // Deleted payments are kept for audit but never count toward balances, totals or "last payment".
+  const allPayments = [...db.studentPayments.values()].filter(p => p.student_id === studentId);
+  const deleted_payments = allPayments.filter(p => p.deleted_at).sort((a, b) => b.deleted_at!.localeCompare(a.deleted_at!));
+  const payments = allPayments.filter(p => !p.deleted_at).sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at));
   const adjustments = [...db.studentAdjustments.values()].filter(a => a.student_id === studentId).sort((a, b) => b.created_at.localeCompare(a.created_at));
   const reviews = [...db.membershipBillingReviews.values()].filter(r => r.student_id === studentId).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const startDate = financeStartDate();
@@ -262,7 +265,7 @@ export function financeDetail(studentId: string, through = academyMonth()) {
     if (item.outstanding_cents > 0) break;
     paid_until = item.month;
   }
-  return { student, non_billable, fees, payments, adjustments, partial_month_reviews: reviews.filter(r => !r.membership_id.startsWith('trial:')), months, paid_until, last_payment: payments[0]?.payment_date || null,
+  return { student, non_billable, fees, payments, deleted_payments, adjustments,partial_month_reviews: reviews.filter(r => !r.membership_id.startsWith('trial:')), months, paid_until, last_payment: payments[0]?.payment_date || null,
     outstanding_cents: months.reduce((sum, item) => sum + item.outstanding_cents, 0),
     pending_finance_review: months.some(item => item.status === 'Pending Finance Review'),
     current_charges_cents: months.find(item => item.month === academyMonth())?.charges_cents || 0 };
