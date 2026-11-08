@@ -37,6 +37,7 @@ class ApiClient {
   private token: string | null = null;
 
   getFinanceStudents(): Promise<any> { return this.request('/finance/students'); }
+  getFinanceOverview(month: string): Promise<any> { return this.request(`/finance/overview?month=${encodeURIComponent(month)}`); }
   getFinanceStudent(id: string): Promise<any> { return this.request(`/finance/students/${id}`); }
   saveStudentFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/fees`, { method: 'POST', body: JSON.stringify(data) }); }
   getClassFees(): Promise<any> { return this.request('/finance/class-fees'); }

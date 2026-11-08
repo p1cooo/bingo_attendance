@@ -42,7 +42,7 @@ import { planStudentMemberships } from './studentMemberships.js';
 import { classEarnsReplacementCredit, resetClassReplacementCredits, createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
-import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
+import { financeDetail, financeMonthStatus, financeOverview, financeStudentDetails, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
 import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
 import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } from './studentPauses.js';
@@ -152,11 +152,18 @@ router.post('/student-pauses/:id/billing-review', authenticateUser, requireAdmin
 
 router.get('/finance/students', authenticateUser, requireAdmin, (_req, res) => {
   // Unregistered (walk-in) students appear only when they have trial sessions to bill.
-  const students = [...db.students.values()].map(s => ({ s, detail: financeDetail(s.id)! }))
-    .filter(({ s, detail }) => !s.is_unregistered || detail.months.length > 0).map(({ s, detail }) => {
-    return { student: s, non_billable: detail.non_billable, outstanding_cents: detail.outstanding_cents, current_charges_cents: detail.current_charges_cents, pending_finance_review: detail.pending_finance_review, paid_until: detail.paid_until, last_payment: detail.last_payment };
-  });
-  res.json({ students });
+  const month = academyMonth();
+  const students = financeStudentDetails().map(detail => ({ student: detail.student, non_billable: detail.non_billable, outstanding_cents: detail.outstanding_cents,
+    current_charges_cents: detail.current_charges_cents, pending_finance_review: detail.pending_finance_review, paid_until: detail.paid_until,
+    last_payment: detail.last_payment, month_status: financeMonthStatus(detail, month) }));
+  res.json({ students, month });
+});
+
+router.get('/finance/overview', authenticateUser, requireAdmin, (req, res) => {
+  const current = academyMonth();
+  const month = req.query.month === undefined ? current : req.query.month;
+  if (!validMonth(month) || month < FINANCE_START_MONTH || month > current) return res.status(400).json({ error: `Choose a month from ${FINANCE_START_MONTH} to ${current}.` });
+  res.json(financeOverview(month));
 });
 
 router.get('/finance/students/:id', authenticateUser, requireAdmin, (req, res) => {

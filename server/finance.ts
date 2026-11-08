@@ -235,3 +235,94 @@ export function financeDetail(studentId: string, through = academyMonth()) {
     pending_finance_review: months.some(item => item.status === 'Pending Finance Review'),
     current_charges_cents: months.find(item => item.month === academyMonth())?.charges_cents || 0 };
 }
+
+export type FinanceMonthStatus = 'PAID' | 'PARTLY_PAID' | 'UNPAID' | 'CREDIT' | 'NEEDS_REVIEW' | 'NOT_BILLED_YET' | 'NONE';
+type Detail = NonNullable<ReturnType<typeof financeDetail>>;
+
+/** True when the student has a class membership that runs during the month and is not paused. */
+function activeMembershipsIn(studentId: string, month: string): StudentClassMembership[] {
+  const first = `${month}-01`, last = monthEnd(month);
+  return [...db.memberships.values()].filter(m => m.student_id === studentId && m.joined_date <= last &&
+    (!m.ended_date || m.ended_date >= first) && !(m.status === 'PAUSED' && month >= academyMonth()));
+}
+const hasActiveMembershipIn = (studentId: string, month: string) => activeMembershipsIn(studentId, month).length > 0;
+
+/**
+ * One plain status per student for a month, used by the Finance overview and
+ * the Student payments filter. Credit means the student's total balance is
+ * below zero (paid ahead) and nothing is owed for this month.
+ */
+export function financeMonthStatus(detail: Detail, month: string): FinanceMonthStatus {
+  if (detail.non_billable) return 'NONE';
+  const item = detail.months.find(m => m.month === month);
+  if (item?.lines.some(line => line.pending_finance_review)) return 'NEEDS_REVIEW';
+  if (item && item.charges_cents > 0) {
+    if (item.outstanding_cents <= 0) return detail.outstanding_cents < 0 ? 'CREDIT' : 'PAID';
+    return item.paid_cents || item.adjustments_cents ? 'PARTLY_PAID' : 'UNPAID';
+  }
+  if (detail.outstanding_cents < 0) return 'CREDIT';
+  if (detail.student.status === 'ACTIVE' && !detail.student.is_unregistered && hasActiveMembershipIn(detail.student.id, month)) return 'NOT_BILLED_YET';
+  return 'NONE';
+}
+
+/** Students shown in Finance: walk-ins only when they have a trial to bill. */
+export function financeStudentDetails(): Detail[] {
+  return [...db.students.values()].map(s => financeDetail(s.id)!).filter(d => d && (!d.student.is_unregistered || d.months.length > 0));
+}
+
+/** Month dashboard for Finance → Overview. Amounts in cents. */
+export function financeOverview(month: string, details: Detail[] = financeStudentDetails()) {
+  const status_counts: Record<Exclude<FinanceMonthStatus, 'NONE'>, number> = { PAID: 0, PARTLY_PAID: 0, UNPAID: 0, CREDIT: 0, NEEDS_REVIEW: 0, NOT_BILLED_YET: 0 };
+  const ageing = { this_month_only: { students: 0, cents: 0 }, one_behind: { students: 0, cents: 0 }, two_plus: { students: 0, cents: 0 } };
+  const to_do = { partial_months: 0, trial_sessions: 0, other_reviews: 0, classes_without_roll_call: [] as string[] };
+  const byClass = new Map<string, number>();
+  const awaiting = new Set<string>();
+  let billed_cents = 0, billed_students = 0, month_outstanding_cents = 0, total_outstanding_cents = 0, collected_cents = 0, payments_count = 0;
+  const payments: { student_id: string; student_name: string; student_code: string; amount_cents: number; method: string; payment_date: string; created_at: string }[] = [];
+
+  for (const detail of details) {
+    for (const p of detail.payments) {
+      payments.push({ student_id: detail.student.id, student_name: detail.student.full_name, student_code: detail.student.student_id, amount_cents: p.amount_cents, method: p.method, payment_date: p.payment_date, created_at: p.created_at });
+      if (p.payment_date.slice(0, 7) === month) { collected_cents += p.amount_cents; payments_count++; }
+    }
+    const status = financeMonthStatus(detail, month);
+    if (status !== 'NONE') status_counts[status]++;
+    if (status === 'NOT_BILLED_YET') for (const m of activeMembershipsIn(detail.student.id, month)) {
+      const cls = db.classes.get(db.schedules.get(m.schedule_id)?.class_id || m.schedule_id);
+      if (cls && cls.class_type !== 'INDIVIDUAL' && !isNonBillableClass(cls)) awaiting.add(cls.name);
+    }
+    if (detail.non_billable) continue;
+    if (detail.outstanding_cents > 0) total_outstanding_cents += detail.outstanding_cents;
+    const item = detail.months.find(m => m.month === month);
+    if (item) {
+      if (item.charges_cents > 0) { billed_cents += item.charges_cents; billed_students++; }
+      if (item.outstanding_cents > 0) {
+        month_outstanding_cents += item.outstanding_cents;
+        const charged = item.lines.filter(line => line.amount_cents > 0);
+        const total = charged.reduce((n, line) => n + line.amount_cents, 0);
+        for (const line of charged) byClass.set(line.class_name, (byClass.get(line.class_name) || 0) + Math.round(item.outstanding_cents * line.amount_cents / total));
+      }
+      for (const line of item.lines) {
+        if (!line.pending_finance_review) continue;
+        if (line.trial) to_do.trial_sessions++;
+        else if (line.partial_month) to_do.partial_months++;
+        else to_do.other_reviews++;
+      }
+    }
+    // How late: unpaid billed months before the chosen month.
+    const owing = detail.months.filter(m => m.month <= month && m.charges_cents > 0 && m.outstanding_cents > 0);
+    if (!owing.length) continue;
+    const earlier = owing.filter(m => m.month < month).length;
+    const cents = owing.reduce((n, m) => n + m.outstanding_cents, 0);
+    const bucket = earlier === 0 ? ageing.this_month_only : earlier === 1 ? ageing.one_behind : ageing.two_plus;
+    bucket.students++; bucket.cents += cents;
+  }
+  to_do.classes_without_roll_call = [...awaiting].sort();
+  return {
+    month, billed_cents, billed_students, collected_cents, payments_count,
+    still_to_collect_cents: month_outstanding_cents, total_outstanding_cents,
+    status_counts, ageing, to_do,
+    by_class: [...byClass].map(([class_name, cents]) => ({ class_name, cents })).sort((a, b) => b.cents - a.cents).slice(0, 5),
+    recent_payments: payments.sort((a, b) => b.payment_date.localeCompare(a.payment_date) || b.created_at.localeCompare(a.created_at)).slice(0, 8),
+  };
+}
