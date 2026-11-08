@@ -42,11 +42,11 @@ import { planStudentMemberships } from './studentMemberships.js';
 import { createReplacementCredit, persistAttendanceWithReplacementReconciliation, replacementCreditBalance, ReplacementCreditError, PauseAttendanceError, AttendanceConflictError, attendanceRecordId } from './replacementCredits.js';
 import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
-import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey } from './finance.js';
+import { financeDetail, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
 import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
 import { pauseOnDate, pauseMonthCoverage, validatePauseDates, canManagePause } from './studentPauses.js';
-import type { StudentFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
+import type { StudentFee, ClassFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
 import type { StudentPause, PauseReason } from '../src/types.js';
 import { commitPauseDeclaration, commitPauseBillingReview } from './pausePersistence.js';
 import { attendanceExpectedOn, replacementBookingEnabled } from './attendanceGoLive.js';
@@ -165,8 +165,68 @@ router.get('/finance/students/:id', authenticateUser, requireAdmin, (req, res) =
   res.json({ ...detail, memberships: [...db.memberships.values()].filter(m => m.student_id === req.params.id).map(m => {
     const schedule = db.schedules.get(m.schedule_id);
     const cls = db.classes.get(schedule?.class_id || m.schedule_id);
-    return { ...m, class_name: cls?.name || 'Class', class_type: cls?.class_type || 'GROUP', coach_name: db.coaches.get(schedule?.coach_id || cls?.default_coach_id || '')?.name || 'Coach' };
+    const classFee = cls ? classFeeFor(cls.id, academyMonth()) : undefined;
+    return { ...m, class_name: cls?.name || 'Class', class_type: cls?.class_type || 'GROUP', coach_name: db.coaches.get(schedule?.coach_id || cls?.default_coach_id || '')?.name || 'Coach',
+      class_fee_cents: classFee ? classFee.amount_cents : null };
   }) });
+});
+
+// Class fees: one fee for every student in a class from a month on. A
+// student's own override still wins. Past months change too (owner decision
+// 2026-11-08): an overpaid month becomes credit carried forward.
+const classIdOfMembership = (m: { schedule_id: string }) => db.schedules.get(m.schedule_id)?.class_id || m.schedule_id;
+function classFeeAffected(classId: string, month: string) {
+  const members = [...db.memberships.values()].filter(m => classIdOfMembership(m) === classId && m.status !== 'ENDED' && !db.students.get(m.student_id)?.is_unregistered);
+  const overridden = members.filter(m => [...db.studentFees.values()].some(f => f.membership_id === m.id && f.effective_month >= FINANCE_START_MONTH));
+  return { students: members.length, own_fee: overridden.map(m => ({ student_id: db.students.get(m.student_id)?.student_id || m.student_id, full_name: db.students.get(m.student_id)?.full_name || 'Student' })) };
+}
+
+router.get('/finance/class-fees', authenticateUser, requireAdmin, (_req, res) => {
+  const month = academyMonth();
+  const classes = [...db.classes.values()].filter(c => !isNonBillableClass(c)).map(c => {
+    const history = classFeeHistory(c.id);
+    const current = classFeeFor(c.id, month);
+    const upcoming = history.filter(f => f.effective_month > month);
+    const type = c.class_type === 'INDIVIDUAL' ? 'INDIVIDUAL' : 'GROUP';
+    return { class_id: c.id, class_name: c.name, class_type: type, is_active: c.is_active !== false,
+      coach_name: db.coaches.get(c.default_coach_id || '')?.name || '',
+      billing_mode: DEFAULT_FEES[type].billing_mode, default_cents: DEFAULT_FEES[type].amount_cents,
+      current_cents: current ? current.amount_cents : DEFAULT_FEES[type].amount_cents, source: current ? 'CLASS' : 'DEFAULT',
+      upcoming: upcoming.map(f => ({ amount_cents: f.amount_cents, effective_month: f.effective_month })),
+      history: [...history].reverse(), ...classFeeAffected(c.id, month) };
+  }).sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.class_name.localeCompare(b.class_name));
+  res.json({ month, classes });
+});
+
+router.post('/finance/class-fees/:classId', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {
+  const cls = db.classes.get(req.params.classId);
+  const amount = nonNegativeCents(req.body.amount_cents);
+  const month = req.body.effective_month;
+  const notes = String(req.body.notes || '').trim().slice(0, 500);
+  const id = String(req.body.idempotency_key || '');
+  if (!cls || isNonBillableClass(cls)) return res.status(404).json({ error: 'Class not found.' });
+  if (amount === null || !validMonth(month) || !/^[a-zA-Z0-9-]{8,100}$/.test(id)) return res.status(400).json({ error: 'Enter a fee (RM0 or more) and a start month.' });
+  if (month < FINANCE_START_MONTH) return res.status(400).json({ error: 'Finance starts from November 2026. Choose November 2026 or later.' });
+  const type = cls.class_type === 'INDIVIDUAL' ? 'INDIVIDUAL' : 'GROUP';
+  const fee: ClassFee = { id, class_id: cls.id, class_name: cls.name, billing_mode: DEFAULT_FEES[type].billing_mode, amount_cents: amount, effective_month: month,
+    created_by_user_id: req.user!.id, created_by_name: req.user!.name, created_at: new Date().toISOString(), ...(notes ? { notes } : {}) };
+  const previous = classFeeFor(cls.id, month);
+  try {
+    const ref = getFirestoreDb().collection('classFees').doc(id);
+    const created = await getFirestoreDb().runTransaction(async tx => {
+      const existing = await tx.get(ref);
+      if (existing.exists) return existing.data() as ClassFee;
+      tx.create(ref, fee);
+      return fee;
+    });
+    if (created.class_id !== fee.class_id || created.amount_cents !== fee.amount_cents || created.effective_month !== fee.effective_month) return res.status(409).json({ error: 'Request key was already used for a different fee.' });
+    db.classFees.set(id, created);
+    if (created === fee) await recordActivity(req.user!, 'CLASS_FEE_SET', 'class', cls.id, { classId: cls.id, summary: cls.name,
+      previous_values: previous ? { amount_cents: previous.amount_cents, effective_month: previous.effective_month } : { amount_cents: DEFAULT_FEES[type].amount_cents, source: 'DEFAULT' },
+      new_values: { amount_cents: amount, billing_mode: fee.billing_mode, effective_month: month, ...(notes ? { notes } : {}) } }).catch(console.error);
+    await publishFirestoreRevision(); db.saveToDisk();
+    res.status(created === fee ? 201 : 200).json({ fee: created, ...classFeeAffected(cls.id, month) });
+  } catch { res.status(503).json({ error: 'Class fee could not be saved.' }); }
 });
 
 router.post('/finance/students/:id/fees', authenticateUser, requireAdmin, async (req: AuthenticatedRequest, res) => {

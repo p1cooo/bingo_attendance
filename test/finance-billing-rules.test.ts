@@ -3,7 +3,7 @@ import test from 'node:test';
 import { db } from '../server/db.js';
 import { financeDetail, isNonBillableStudent, chargesPerLesson, DEFAULT_FEES, FINANCE_START_MONTH } from '../server/finance.js';
 import { replacementCreditImpact } from '../server/replacementCredits.js';
-import type { AcademyClass, AttendanceRecord, AttendanceStatus, AttendanceType, ClassSchedule, ClassSession, Student, StudentClassMembership, StudentFee, StudentPayment } from '../src/types.js';
+import type { AcademyClass, AttendanceRecord, AttendanceStatus, AttendanceType, ClassSchedule, ClassSession, Student, StudentClassMembership, StudentFee, StudentPayment, ClassFee } from '../src/types.js';
 
 const maps = () => [db.students, db.classes, db.schedules, db.memberships, db.sessions, db.attendance, db.studentFees, db.studentPayments, db.studentAdjustments, db.studentPauses, db.membershipBillingReviews] as const;
 function isolated(fn: () => void) {
@@ -193,4 +193,63 @@ test('a group membership that starts or ends mid-month and misses a class needs 
     addStudent('gone'); join('mg', 'gone', 'group', '2026-09-01', '2026-11-05');
     assert.equal(financeDetail('gone', '2026-11')!.months.length, 0);
   });
+});
+
+test('class fees: replace the default, lose to a student override, latest record wins, past paid months become credit', () => {
+  const savedClassFees = new Map(db.classFees);
+  try {
+    isolated(() => {
+      db.classFees.clear();
+      const classFee = (id: string, classId: string, month: string, amount: number, at = `${month}-01T00:00:00Z`): ClassFee =>
+        ({ id, class_id: classId, class_name: classId, billing_mode: 'MONTHLY', amount_cents: amount, effective_month: month, created_by_user_id: 'admin', created_at: at });
+      addClass('kepong', 'GROUP'); addStudent('a'); addStudent('b');
+      join('ma', 'a', 'kepong'); join('mb', 'b', 'kepong');
+      ['2026-11-07', '2026-12-05', '2027-01-02'].forEach((d, i) => { session(`k${i}`, 'kepong', d); mark(`k${i}`, 'a', 'PRESENT'); mark(`k${i}`, 'b', 'PRESENT'); });
+
+      // Class fee from December leaves November at the default.
+      db.classFees.set('dec', classFee('dec', 'kepong', '2026-12', 10000));
+      let detail = financeDetail('a', '2027-01')!;
+      assert.equal(detail.months.find(m => m.month === '2026-11')!.charges_cents, 24000);
+      assert.equal(detail.months.find(m => m.month === '2026-12')!.charges_cents, 10000);
+      assert.equal(detail.months.find(m => m.month === '2026-12')!.lines[0].fee_source, 'CLASS');
+
+      // A newer record from January wins from January on.
+      db.classFees.set('jan', classFee('jan', 'kepong', '2027-01', 12000));
+      detail = financeDetail('a', '2027-01')!;
+      assert.equal(detail.months.find(m => m.month === '2027-01')!.charges_cents, 12000);
+      assert.equal(detail.months.find(m => m.month === '2026-12')!.charges_cents, 10000);
+
+      // A student's own fee still beats the class fee.
+      db.studentFees.set('own', { id: 'own', student_id: 'b', membership_id: 'mb', class_id: 'kepong', class_name: 'kepong', coach_name: 'c', billing_mode: 'MONTHLY', amount_cents: 5000, effective_month: '2026-11', created_by_user_id: 'admin', created_at: '2026-11-01T00:00:00Z' });
+      const own = financeDetail('b', '2026-12')!.months.find(m => m.month === '2026-12')!.lines[0];
+      assert.equal(own.amount_cents, 5000);
+      assert.equal(own.fee_source, 'OVERRIDE');
+
+      // November paid at RM240, then the class is set to RM100 from November: RM140 credit carries forward.
+      const payment: StudentPayment = { id: 'p1', student_id: 'a', payment_date: '2026-11-07', amount_cents: 24000, allocations: [{ month: '2026-11', amount_cents: 24000 }], method: 'Cash', source: 'MANUAL', recorded_by_user_id: 'admin', created_at: '2026-11-07T00:00:00Z' };
+      db.studentPayments.set('p1', payment);
+      db.classFees.clear();
+      db.classFees.set('nov', classFee('nov', 'kepong', '2026-11', 10000));
+      detail = financeDetail('a', '2026-12')!;
+      assert.equal(detail.months.find(m => m.month === '2026-11')!.outstanding_cents, -14000);
+      assert.equal(detail.outstanding_cents, -14000 + 10000); // December RM100 is covered by the credit
+    });
+  } finally { db.classFees = savedClassFees; }
+});
+
+test('class fee for a per-lesson class is per attended lesson; test classes stay unbilled', () => {
+  const savedClassFees = new Map(db.classFees);
+  try {
+    isolated(() => {
+      db.classFees.clear();
+      addStudent('p'); addClass('ind', 'INDIVIDUAL', 1); join('mp', 'p', 'ind');
+      ['2026-11-02', '2026-11-09', '2026-11-16'].forEach((d, i) => { session(`p${i}`, 'ind', d); mark(`p${i}`, 'p', i < 2 ? 'PRESENT' : 'ABSENT'); });
+      db.classFees.set('ind', { id: 'ind', class_id: 'ind', class_name: 'ind', billing_mode: 'PER_SESSION', amount_cents: 6000, effective_month: '2026-11', created_by_user_id: 'admin', created_at: '2026-11-01T00:00:00Z' });
+      assert.equal(nov('p')!.charges_cents, 12000);
+
+      addStudent('t'); addClass('testing', 'GROUP'); join('mt', 't', 'testing'); session('ts', 'testing', '2026-11-07'); mark('ts', 't', 'PRESENT');
+      db.classFees.set('t', { id: 't', class_id: 'testing', class_name: 'testing', billing_mode: 'MONTHLY', amount_cents: 10000, effective_month: '2026-11', created_by_user_id: 'admin', created_at: '2026-11-01T00:00:00Z' });
+      assert.equal(financeDetail('t', '2026-11')!.outstanding_cents, 0);
+    });
+  } finally { db.classFees = savedClassFees; }
 });

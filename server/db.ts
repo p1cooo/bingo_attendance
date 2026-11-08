@@ -19,7 +19,7 @@ import {
   ReplacementAdvanceCommitment,
   SessionStatus,
   SessionType,
-  StudentFee, StudentPayment, StudentAdjustment,
+  StudentFee, ClassFee, StudentPayment, StudentAdjustment,
   StudentPause,
   MembershipBillingReview,
 } from '../src/types.js';
@@ -59,6 +59,7 @@ class DatabaseStore {
   replacementCredits: Map<string, ReplacementCredit> = new Map();
   replacementAdvanceCommitments: Map<string, ReplacementAdvanceCommitment> = new Map();
   studentFees: Map<string, StudentFee> = new Map();
+  classFees: Map<string, ClassFee> = new Map();
   studentPayments: Map<string, StudentPayment> = new Map();
   studentAdjustments: Map<string, StudentAdjustment> = new Map();
   membershipBillingReviews: Map<string, MembershipBillingReview> = new Map();
@@ -86,6 +87,7 @@ class DatabaseStore {
     this.replacementCredits.clear();
     this.replacementAdvanceCommitments.clear();
     this.studentFees.clear();
+    this.classFees.clear();
     this.studentPayments.clear();
     this.studentAdjustments.clear();
     this.membershipBillingReviews.clear();
@@ -417,6 +419,7 @@ class DatabaseStore {
         replacementCredits: Array.from(this.replacementCredits.entries()),
         replacementAdvanceCommitments: Array.from(this.replacementAdvanceCommitments.entries()),
         studentFees: Array.from(this.studentFees.entries()),
+        classFees: Array.from(this.classFees.entries()),
         studentPayments: Array.from(this.studentPayments.entries()),
         studentAdjustments: Array.from(this.studentAdjustments.entries()),
         membershipBillingReviews: Array.from(this.membershipBillingReviews.entries()),
@@ -463,6 +466,7 @@ class DatabaseStore {
       if (state.replacementCredits) this.replacementCredits = new Map(state.replacementCredits);
       if (state.replacementAdvanceCommitments) this.replacementAdvanceCommitments = new Map(state.replacementAdvanceCommitments);
       if (state.studentFees) this.studentFees = new Map(state.studentFees);
+      if (state.classFees) this.classFees = new Map(state.classFees);
       if (state.studentPayments) this.studentPayments = new Map(state.studentPayments);
       if (state.studentAdjustments) this.studentAdjustments = new Map(state.studentAdjustments);
       if (state.membershipBillingReviews) this.membershipBillingReviews = new Map(state.membershipBillingReviews);

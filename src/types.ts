@@ -6,6 +6,12 @@ export interface StudentFee {
   amount_cents: number; effective_month: string; created_by_user_id: string; created_at: string;
   created_by_name?: string;
 }
+/** Fee for every student in one class from a month on. Append-only; the latest record at or before a month wins. A student's own override still beats it. */
+export interface ClassFee {
+  id: string; class_id: string; class_name: string; billing_mode: 'MONTHLY' | 'PER_SESSION';
+  amount_cents: number; effective_month: string; created_by_user_id: string; created_at: string;
+  created_by_name?: string; notes?: string;
+}
 export interface PaymentAllocation { month: string; amount_cents: number; }
 export interface StudentPayment {
   id: string; student_id: string; amount_cents: number; payment_date: string;

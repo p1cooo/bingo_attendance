@@ -32,6 +32,8 @@ class ApiClient {
   getFinanceStudents(): Promise<any> { return this.request('/finance/students'); }
   getFinanceStudent(id: string): Promise<any> { return this.request(`/finance/students/${id}`); }
   saveStudentFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/fees`, { method: 'POST', body: JSON.stringify(data) }); }
+  getClassFees(): Promise<any> { return this.request('/finance/class-fees'); }
+  saveClassFee(classId: string, data: { idempotency_key: string; amount_cents: number; effective_month: string; notes?: string }): Promise<any> { return this.request(`/finance/class-fees/${classId}`, { method: 'POST', body: JSON.stringify(data) }); }
   recordStudentPayment(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }); }
   setPartialMonthFee(id: string, data: unknown): Promise<any> { return this.request(`/finance/students/${id}/partial-month`, { method: 'POST', body: JSON.stringify(data) }); }
   setTrialFee(id: string, data: { idempotency_key: string; attendance_id: string; amount_cents: number; reason: string }): Promise<any> { return this.request(`/finance/students/${id}/trial-fee`, { method: 'POST', body: JSON.stringify(data) }); }

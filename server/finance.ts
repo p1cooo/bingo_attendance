@@ -2,7 +2,7 @@ import { db } from './db.js';
 import { academyMonth } from './academyDate.js';
 import { pauseMonthCoverage } from './studentPauses.js';
 import { attendanceExpectedOn } from './attendanceGoLive.js';
-import type { AttendanceRecord, ClassType, Student, StudentClassMembership } from '../src/types.js';
+import type { AttendanceRecord, ClassFee, ClassType, Student, StudentClassMembership } from '../src/types.js';
 
 export const validMonth = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 export const validDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
@@ -29,7 +29,17 @@ export const DEFAULT_FEES: Record<ClassType, { billing_mode: 'MONTHLY' | 'PER_SE
   INDIVIDUAL: { billing_mode: 'PER_SESSION', amount_cents: 8000 },
 };
 
-const normaliseName = (value: unknown) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+/** All class fee records for a class, oldest first (same order rule as student overrides). */
+export function classFeeHistory(classId: string): ClassFee[] {
+  return [...db.classFees.values()].filter(f => f.class_id === classId && f.effective_month >= FINANCE_START_MONTH)
+    .sort((a, b) => a.effective_month.localeCompare(b.effective_month) || a.created_at.localeCompare(b.created_at));
+}
+/** The class fee in force for a month: the latest record at or before that month, if any. */
+export function classFeeFor(classId: string, month: string): ClassFee | undefined {
+  return classFeeHistory(classId).filter(f => f.effective_month <= month).at(-1);
+}
+
+const normaliseName =(value: unknown) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 const TEST_STUDENT_NAMES = new Set(['testing', 'testing 123']);
 const TEST_STUDENT_NAME_PREFIXES = ['zz test'];
 const TEST_STUDENT_IDS = new Set(['STU-9999', 'STU-9998', 'STU-9997']);
@@ -111,7 +121,7 @@ type FinanceLine = {
   membership_id: string; class_name: string; coach_name: string; mode: string; unit_cents: number; dates: string[]; amount_cents: number;
   /** Trial (walk-in) session: the admin sets the amount. */
   trial?: { attendance_id: string; date: string; decision?: { amount_cents: number; reason: string; by: string; at: string } };
-  fee_source: 'DEFAULT' | 'OVERRIDE';
+  fee_source: 'DEFAULT' | 'CLASS' | 'OVERRIDE';
   /** Group class with no roll call yet this month: not charged. */
   awaiting_first_roll_call?: boolean;
   pending_finance_review?: boolean; pre_go_live_dates?: string[];
@@ -161,7 +171,11 @@ export function financeDetail(studentId: string, through = academyMonth()) {
       if (isNonBillableClass(cls)) continue;
       const override = fees.filter(f => f.membership_id === membership.id && f.effective_month <= month).at(-1);
       const classType: ClassType = cls?.class_type === 'INDIVIDUAL' ? 'INDIVIDUAL' : 'GROUP';
-      const applicable = override ? { billing_mode: override.billing_mode, amount_cents: override.amount_cents } : DEFAULT_FEES[classType];
+      // Priority: the student's own override, then the class fee, then the default.
+      const classFee = override || !cls ? undefined : classFeeFor(cls.id, month);
+      const applicable = override ? { billing_mode: override.billing_mode, amount_cents: override.amount_cents }
+        : classFee ? { billing_mode: DEFAULT_FEES[classType].billing_mode, amount_cents: classFee.amount_cents } : DEFAULT_FEES[classType];
+      const feeSource: FinanceLine['fee_source'] = override ? 'OVERRIDE' : classFee ? 'CLASS' : 'DEFAULT';
       const classSessions = sessions.filter(s => s.session_date >= first && s.session_date <= last && (s.schedule_id === membership.schedule_id || s.class_id === (schedule?.class_id || membership.schedule_id)) && !nonBillable.has(s.status) && !nonBillable.has(s.session_type || ''));
       const related = classSessions.filter(s => inMembership(membership, s.session_date));
       const dates = related.map(s => s.session_date).sort();
@@ -201,7 +215,7 @@ export function financeDetail(studentId: string, through = academyMonth()) {
       else if (pauseReview) amount_cents = pauseReview.amount_cents;
       else if (coverage === 'PARTIAL') { amount_cents = 0; pending_finance_review = true; }
       else { amount_cents = applicable.amount_cents * quantity; pending_finance_review = preGoLiveDates.length > 0; }
-      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review || partial) lines.push({ membership_id: membership.id, class_name: override?.class_name || cls?.name || 'Class', coach_name: override?.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, fee_source: override ? 'OVERRIDE' : 'DEFAULT', dates: applicable.billing_mode === 'MONTHLY' ? dates : charged.map(s => s.session_date).sort(), amount_cents, pending_finance_review, pre_go_live_dates: preGoLiveDates, partial_month: partial, awaiting_first_roll_call: awaitingFirstRollCall && coverage !== 'FULL' && amount_cents === 0 && !pending_finance_review });
+      if (amount_cents || dates.length || coverage !== 'NONE' || pending_finance_review || partial) lines.push({ membership_id: membership.id, class_name: override?.class_name || cls?.name || 'Class', coach_name: override?.coach_name || db.coaches.get(schedule?.coach_id || '')?.name || 'Coach', mode: applicable.billing_mode, unit_cents: applicable.amount_cents, fee_source: feeSource, dates: applicable.billing_mode === 'MONTHLY' ? dates : charged.map(s => s.session_date).sort(), amount_cents, pending_finance_review, pre_go_live_dates: preGoLiveDates, partial_month: partial, awaiting_first_roll_call: awaitingFirstRollCall && coverage !== 'FULL' && amount_cents === 0 && !pending_finance_review });
     }
     const charges_cents = lines.reduce((sum, line) => sum + line.amount_cents, 0);
     const paid_cents = payments.reduce((sum, payment) => sum + payment.allocations.filter(a => a.month === month).reduce((n, a) => n + a.amount_cents, 0), 0);
