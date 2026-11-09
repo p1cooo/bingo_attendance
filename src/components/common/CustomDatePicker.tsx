@@ -20,6 +20,12 @@ interface CustomDatePickerProps {
   className?: string;
   buttonClassName?: string;
   compact?: boolean;
+  /** Days after this ISO date can't be picked (e.g. no future payments). */
+  maxDate?: string;
+  /** Show only a calendar icon as the trigger (for use beside a typed date box). */
+  iconOnly?: boolean;
+  /** Which edge the calendar lines up with. Default: right on phones, left from sm up. */
+  popoverAlign?: 'auto' | 'right';
 }
 
 export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
@@ -33,6 +39,9 @@ export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
   className = '',
   buttonClassName = '',
   compact = false,
+  maxDate,
+  iconOnly = false,
+  popoverAlign = 'auto',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -185,6 +194,18 @@ export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
       )}
 
       {/* Trigger Button */}
+      {iconOnly ? (
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          aria-label="Open calendar"
+          aria-expanded={isOpen}
+          title="Pick from calendar"
+          className={`flex h-7 w-7 items-center justify-center rounded-lg text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/50 transition cursor-pointer ${buttonClassName}`}
+        >
+          <CalendarIcon className="w-4 h-4" />
+        </button>
+      ) : (
       <button
         type="button"
         id="custom-date-picker-trigger"
@@ -203,12 +224,13 @@ export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
           </span>
         )}
       </button>
+      )}
 
       {/* Calendar Popover */}
       {isOpen && (
         <div
           id="custom-date-picker-popover"
-          className="absolute z-50 mt-2 w-80 p-4 rounded-3xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 shadow-[6px_6px_0px_0px_rgba(15,23,42,1)] dark:shadow-[6px_6px_0px_0px_rgba(255,255,255,0.1)] right-0 sm:left-0 sm:right-auto animate-in fade-in zoom-in-95 duration-150"
+          className={`absolute z-50 mt-2 ${popoverAlign === 'right' ? 'w-[min(20rem,calc(100vw-6rem))] p-3' : 'w-80 p-4'} rounded-3xl bg-white dark:bg-neutral-900 border-2 border-slate-900 dark:border-neutral-700 shadow-[6px_6px_0px_0px_rgba(15,23,42,1)] dark:shadow-[6px_6px_0px_0px_rgba(255,255,255,0.1)] ${popoverAlign === 'right' ? 'right-0' : 'right-0 sm:left-0 sm:right-auto'} animate-in fade-in zoom-in-95 duration-150`}
         >
           {/* Header Navigation */}
           <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100 dark:border-neutral-800">
@@ -259,20 +281,24 @@ export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
               const isSelected = item.dateStr === selectedDateStr;
               const isToday = item.dateStr === todayStr;
               const hasSession = sessionDates.includes(item.dateStr);
+              const isDisabled = Boolean(maxDate && item.dateStr > maxDate);
 
               return (
                 <button
                   key={`${item.dateStr}-${idx}`}
                   type="button"
+                  disabled={isDisabled}
                   onClick={() => handleSelectDate(item.day, item.month, item.year)}
-                  className={`h-8 rounded-xl text-xs font-bold flex flex-col items-center justify-center relative transition-all cursor-pointer ${
-                    isSelected
+                  className={`h-8 rounded-xl text-xs font-bold flex flex-col items-center justify-center relative transition-all ${
+                    isDisabled
+                      ? 'text-slate-300 dark:text-neutral-700 line-through cursor-not-allowed'
+                      : isSelected
                       ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-black shadow-[2px_2px_0px_0px_rgba(15,23,42,1)] scale-105 z-10'
                       : isToday
                       ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-black border border-indigo-400 dark:border-indigo-600'
                       : item.isCurrentMonth
-                      ? 'text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-neutral-800'
-                      : 'text-slate-300 dark:text-neutral-600 hover:bg-slate-50 dark:hover:bg-neutral-800/40'
+                      ? 'text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-neutral-800 cursor-pointer'
+                      : 'text-slate-300 dark:text-neutral-600 hover:bg-slate-50 dark:hover:bg-neutral-800/40 cursor-pointer'
                   }`}
                 >
                   <span>{item.day}</span>
