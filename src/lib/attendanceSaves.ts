@@ -14,19 +14,29 @@ export type AttendanceSaveSnapshot = {
   pending: number;
   saved: number;
   failedNames: string[];
+  failures: AttendanceSaveFailure[];
 };
+
+export type AttendanceSaveFailure = { name: string; reason: string };
+type FailedMark = Mark & { reason: string };
+
+const FALLBACK_FAILURE_REASON = 'Could not save. Please try again.';
+
+/** The server sends a plain reason (e.g. "Roll call is closed"); keep it so the coach knows what to do. */
+export const saveFailureReason = (error: unknown): string =>
+  error instanceof Error && error.message.trim() ? error.message.trim() : FALLBACK_FAILURE_REASON;
 
 export const shouldWarnOnUnload = (snapshot: AttendanceSaveSnapshot) => snapshot.pending > 0;
 
 /** Lives outside roll-call components, so navigating in the app cannot cancel a write. */
 export class AttendanceSaves {
   private pending = new Map<string, Mark>();
-  private failed = new Map<string, Mark>();
+  private failed = new Map<string, FailedMark>();
   private records = new Map<string, AttendanceRecord>();
   private listeners = new Set<() => void>();
   private saved = 0;
   private warningAttached = false;
-  private snapshot: AttendanceSaveSnapshot = { pending: 0, saved: 0, failedNames: [] };
+  private snapshot: AttendanceSaveSnapshot = { pending: 0, saved: 0, failedNames: [], failures: [] };
   private warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
 
   subscribe = (listener: () => void) => {
@@ -37,10 +47,12 @@ export class AttendanceSaves {
 
   private key(sessionId: string, studentId: string) { return `${sessionId}:${studentId}`; }
   private changed() {
+    const failed = [...this.failed.values()];
     this.snapshot = {
       pending: this.pending.size,
       saved: this.saved,
-      failedNames: [...this.failed.values()].map((mark) => mark.studentName),
+      failedNames: failed.map((mark) => mark.studentName),
+      failures: failed.map((mark) => ({ name: mark.studentName, reason: mark.reason })),
     };
     if (typeof window !== 'undefined') {
       if (shouldWarnOnUnload(this.snapshot) && !this.warningAttached) {
@@ -83,9 +95,9 @@ export class AttendanceSaves {
     void mark.save().then(({ attendance_record }) => {
       this.records.set(key, { ...attendance_record, student: attendance_record.student || mark.optimisticRecord.student });
       this.saved++;
-    }).catch(() => {
+    }).catch((error: unknown) => {
       this.records.delete(key);
-      this.failed.set(key, mark);
+      this.failed.set(key, { ...mark, reason: saveFailureReason(error) });
     }).finally(() => {
       this.pending.delete(key);
       this.changed();
@@ -94,7 +106,14 @@ export class AttendanceSaves {
   }
 
   retryFailed() {
-    for (const mark of [...this.failed.values()]) this.submit(mark);
+    for (const { reason: _reason, ...mark } of [...this.failed.values()]) this.submit(mark);
+  }
+
+  /** Hide failed marks from the status bar. The row is already back to unmarked, so the coach can tap it again. */
+  dismissFailed() {
+    if (this.failed.size === 0) return;
+    this.failed.clear();
+    this.changed();
   }
 }
 

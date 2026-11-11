@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AttendanceSaves, shouldWarnOnUnload } from '../src/lib/attendanceSaves.js';
+import { AttendanceSaves, saveFailureReason, shouldWarnOnUnload } from '../src/lib/attendanceSaves.js';
 import type { AttendanceRecord, ClassSession } from '../src/types.js';
 
 const record = (studentId: string): AttendanceRecord => ({
@@ -22,7 +22,7 @@ test('one optimistic mark stays pending through navigation and completes globall
   const fetched = { id: 'session-1', attendance_records: [] } as unknown as ClassSession;
   assert.equal(saves.overlay(fetched).attendance_records?.[0].status, 'PRESENT');
   finish({ attendance_record: record('a') }); await tick();
-  assert.deepEqual(saves.getSnapshot(), { pending: 0, saved: 1, failedNames: [] });
+  assert.deepEqual(saves.getSnapshot(), { pending: 0, saved: 1, failedNames: [], failures: [] });
   assert.equal(shouldWarnOnUnload(saves.getSnapshot()), false);
   assert.equal(saves.overlay({ ...fetched, attendance_records: [{ ...record('a'), status: 'ABSENT', marked_at: '2026-09-30T00:00:00Z' }] }).attendance_records?.[0].status, 'ABSENT');
 });
@@ -43,14 +43,14 @@ test('14 rapid marks use one aggregate state; one failure retries without resend
   assert.equal(saves.getSnapshot().pending, 14);
   for (let i = 0; i < 13; i++) complete[i]({ attendance_record: record(`student-${i}`) });
   reject[13](new Error('Firestore unavailable')); await tick();
-  assert.deepEqual(saves.getSnapshot(), { pending: 0, saved: 13, failedNames: ['Student 13'] });
+  assert.deepEqual(saves.getSnapshot(), { pending: 0, saved: 13, failedNames: ['Student 13'], failures: [{ name: 'Student 13', reason: 'Firestore unavailable' }] });
   assert.equal(saves.overlay({ id: 'session-1', attendance_records: [] } as unknown as ClassSession).attendance_records?.length, 13);
   assert.equal(shouldWarnOnUnload(saves.getSnapshot()), false);
   saves.retryFailed();
   assert.equal(saves.getSnapshot().pending, 1);
   assert.deepEqual(calls, [...Array(13).fill(1), 2]);
   complete[13]({ attendance_record: record('student-13') }); await tick();
-  assert.deepEqual(saves.getSnapshot(), { pending: 0, saved: 14, failedNames: [] });
+  assert.deepEqual(saves.getSnapshot(), { pending: 0, saved: 14, failedNames: [], failures: [] });
 });
 
 test('unload warning is attached only while a real write is pending', async () => {
@@ -70,4 +70,26 @@ test('unload warning is attached only while a real write is pending', async () =
     finish({ attendance_record: record('a') }); await tick();
     assert.deepEqual(events, ['add:beforeunload', 'remove:beforeunload']);
   } finally { (globalThis as any).window = priorWindow; }
+});
+
+test('a failed mark keeps the server reason and can be dismissed so the coach can tap again', async () => {
+  const saves = new AttendanceSaves();
+  let calls = 0;
+  const mark = { sessionId: 'session-1', studentId: 'liam', studentName: 'Liam', optimisticRecord: record('liam'),
+    save: () => { calls++; return Promise.reject(new Error('Attendance is not required for a paused student.')); } };
+  saves.submit(mark); await tick();
+  assert.deepEqual(saves.getSnapshot().failures, [{ name: 'Liam', reason: 'Attendance is not required for a paused student.' }]);
+  // The row goes back to unmarked straight away.
+  assert.equal(saves.overlay({ id: 'session-1', attendance_records: [] } as unknown as ClassSession).attendance_records?.length, 0);
+  saves.dismissFailed();
+  assert.deepEqual(saves.getSnapshot(), { pending: 0, saved: 0, failedNames: [], failures: [] });
+  assert.equal(saves.submit(mark), true);
+  await tick();
+  assert.equal(calls, 2);
+});
+
+test('an error without a message gets a plain fallback reason', () => {
+  assert.equal(saveFailureReason(undefined), 'Could not save. Please try again.');
+  assert.equal(saveFailureReason(new Error('  ')), 'Could not save. Please try again.');
+  assert.equal(saveFailureReason(new Error('Roll call is closed for this occurrence.')), 'Roll call is closed for this occurrence.');
 });
