@@ -44,7 +44,7 @@ import { attendanceTiming } from './attendanceTiming.js';
 import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js';
 import { financeDetail, pauseCoverageForMonth, financeMonthStatus, financeOverview, financeStudentDetails, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
 import { applyPaymentDelete, applyPaymentEdit, paymentVersion } from './paymentCorrections.js';
-import { planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
+import { parseClassStartDate, planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
 import { pauseOnDate, validatePauseDates, canManagePause } from './studentPauses.js';
 import type { StudentFee, ClassFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
@@ -1451,11 +1451,14 @@ router.post('/students', authenticateUser, requireCoachOrAdmin, async (req: Auth
     parent_telegram,
     parent_relation,
     schedule_ids,
+    class_start_date,
   } = req.body;
 
   if (!full_name) {
     return res.status(400).json({ error: 'Student full name is required' });
   }
+  const startDate = parseClassStartDate(class_start_date, academyToday());
+  if ('error' in startDate) return res.status(400).json({ error: startDate.error });
   const user = req.user!;
   if (schedule_ids !== undefined && (!Array.isArray(schedule_ids) || schedule_ids.some((scheduleId) =>
     typeof scheduleId !== 'string' || !db.schedules.has(scheduleId) || !db.schedules.get(scheduleId)?.is_active || !canManageClass(user, db.schedules.get(scheduleId)!.class_id)))) {
@@ -1514,7 +1517,7 @@ router.post('/students', authenticateUser, requireCoachOrAdmin, async (req: Auth
           id: memId,
           student_id: stuId,
           schedule_id: schedId,
-        joined_date: academyToday(),
+          joined_date: startDate.date,
           status: 'ACTIVE' as const,
         };
         db.memberships.set(memId, membership);
@@ -1549,6 +1552,8 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
   if (!Array.isArray(students) || students.length === 0) {
     return res.status(400).json({ error: 'Array of students is required.' });
   }
+  const bulkStartDate = parseClassStartDate(req.body.class_start_date, academyToday());
+  if ('error' in bulkStartDate) return res.status(400).json({ error: bulkStartDate.error });
 
   const created: any[] = [];
   const errors: { row: number; full_name?: string; feedback: string }[] = [];
@@ -1656,7 +1661,7 @@ router.post('/students/bulk', authenticateUser, requireAdmin, async (req: Authen
         id: memId,
         student_id: stuId,
         schedule_id: schedId,
-        joined_date: academyToday(),
+        joined_date: bulkStartDate.date,
         status: 'ACTIVE' as const,
       };
       db.memberships.set(memId, membership);
@@ -1763,7 +1768,9 @@ router.put('/students/:id', authenticateUser, requireCoachOrAdmin, async (req: A
   if (Array.isArray(schedule_ids)) {
     const manageable = new Set(Array.from(db.schedules.values()).filter((schedule) =>
       schedule.is_active && canManageClass(user, schedule.class_id)).map((schedule) => schedule.id));
-    Object.assign(membershipChanges, planStudentMemberships(id, schedule_ids, Array.from(db.memberships.values()), manageable, academyToday()));
+    const startDate = parseClassStartDate(req.body.class_start_date, academyToday());
+    if ('error' in startDate) return res.status(400).json({ error: startDate.error });
+    Object.assign(membershipChanges, planStudentMemberships(id, schedule_ids, Array.from(db.memberships.values()), manageable, academyToday(), startDate.date));
   }
   try {
     const writes: Array<[string, string, unknown]> = [['students', id, updatedStudent]];
@@ -2146,6 +2153,8 @@ router.post('/students/bulk-assign-schedule', authenticateUser, requireAdmin, as
   }
   if (student_ids.length > 500) return res.status(400).json({ error: 'A bulk action is limited to 500 students.' });
   if (!db.schedules.has(schedule_id)) return res.status(404).json({ error: 'Class schedule not found.' });
+  const startDate = parseClassStartDate(req.body.class_start_date, academyToday());
+  if ('error' in startDate) return res.status(400).json({ error: startDate.error });
 
   const uniqueStudentIds = [...new Set(student_ids)].filter((studentId): studentId is string => typeof studentId === 'string' && db.students.has(studentId));
   if (uniqueStudentIds.length === 0) return res.status(400).json({ error: 'None of the selected students still exist.' });
@@ -2154,7 +2163,7 @@ router.post('/students/bulk-assign-schedule', authenticateUser, requireAdmin, as
   uniqueStudentIds.forEach((studentId) => {
     const exists = Array.from(db.memberships.values()).some((membership) => membership.student_id === studentId && membership.schedule_id === schedule_id && membership.status === 'ACTIVE');
     if (exists) { alreadyEnrolled += 1; return; }
-    const membership = { id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, student_id: studentId, schedule_id, joined_date: academyToday(), status: 'ACTIVE' as const };
+    const membership = { id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, student_id: studentId, schedule_id, joined_date: startDate.date, status: 'ACTIVE' as const };
     db.memberships.set(membership.id, membership);
     writes.push(['memberships', membership.id, membership]);
   });
@@ -2236,6 +2245,8 @@ router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: Au
 
   if (!canManageClass(req.user!, id)) return res.status(403).json({ error: 'Forbidden' });
   if (req.user!.role === 'COACH' && ['default_coach_id', 'coach_id', 'student_ids', 'is_active'].some((field) => req.body[field] !== undefined)) return res.status(403).json({ error: 'Use class assignment to change students; coach and status changes require Admin.' });
+  const rosterStartDate = parseClassStartDate(req.body.class_start_date, academyToday());
+  if ('error' in rosterStartDate) return res.status(400).json({ error: rosterStartDate.error });
 
   const {
     name,
@@ -2327,7 +2338,7 @@ router.put('/classes/:id', authenticateUser, requireCoachOrAdmin, async (req: Au
           id: memId,
           student_id: stuId,
           schedule_id: id,
-          joined_date: new Date().toISOString().split('T')[0],
+          joined_date: rosterStartDate.date,
           status: 'ACTIVE' as const,
         };
         db.memberships.set(memId, membership);
@@ -2510,6 +2521,8 @@ router.post('/schedules/:id/students', authenticateUser, requireCoachOrAdmin, as
   }
   const user = req.user!;
   if (!canManageSchedule(user, id) || !db.classes.get(db.schedules.get(id)!.class_id)?.is_active) return res.status(403).json({ error: 'Forbidden: you do not manage this class.' });
+  const startDate = parseClassStartDate(req.body.start_date, academyToday());
+  if ('error' in startDate) return res.status(400).json({ error: startDate.error });
 
   // Check if already enrolled
   const existing = Array.from(db.memberships.values()).find(
@@ -2524,7 +2537,7 @@ router.post('/schedules/:id/students', authenticateUser, requireCoachOrAdmin, as
       id: memId,
       student_id,
       schedule_id: id,
-      joined_date: academyToday(),
+      joined_date: startDate.date,
       status: 'ACTIVE',
     } as const;
     db.memberships.set(memId, membership);
@@ -2564,8 +2577,11 @@ const membershipClassContext = (user: User, scheduleId: string) => {
 router.post('/schedules/:id/memberships', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const context = membershipClassContext(req.user!, req.params.id);
   if ('error' in context) return res.status(context.error).json({ error: context.error === 404 ? 'Class not found.' : 'Forbidden: you do not manage this class.' });
-  const effectiveDate = req.body.effective_date;
-  if (!validDate(effectiveDate) || effectiveDate < academyToday()) return res.status(400).json({ error: 'Choose today or a future effective date.' });
+  // A past date lets a coach catching up an old roll call add a student who really attended it.
+  const parsedStart = parseClassStartDate(req.body.effective_date, academyToday(), { allowFuture: true });
+  if ('error' in parsedStart) return res.status(400).json({ error: parsedStart.error });
+  if (req.body.effective_date === undefined || req.body.effective_date === '') return res.status(400).json({ error: 'Choose the date the student starts in this class.' });
+  const effectiveDate = parsedStart.date;
   const ids = Array.isArray(req.body.student_ids) ? [...new Set(req.body.student_ids)].filter((x): x is string => typeof x === 'string') : [];
   if (!ids.length || ids.length > 50) return res.status(400).json({ error: 'Select between 1 and 50 students.' });
   const invalid = ids.filter(id => { const s = db.students.get(id); return !s || s.status !== 'ACTIVE' || s.is_unregistered; });
@@ -2739,19 +2755,10 @@ router.get('/sessions/:id', authenticateUser, (req: AuthenticatedRequest, res: R
     }
   }
 
-  // Also include list of all enrolled students in the schedule so coach/admin sees everyone
-  const enrolledMemberships = Array.from(db.memberships.values()).filter(
-    (m) => (m.schedule_id === session.schedule_id || m.schedule_id === session.class_id) && m.status === 'ACTIVE'
-  );
-
-  const enrolledStudents = enrolledMemberships
-    .map((m) => db.getPopulatedStudent(m.student_id))
-    .filter((s): s is NonNullable<typeof s> => s !== null);
-
-  return res.json({
-    ...session,
-    enrolled_students: enrolledStudents,
-  });
+  // enrolled_students comes from getPopulatedSession: only students who had joined
+  // (and not yet left) by this lesson date. Roll call accepts exactly this list, so
+  // the screen never shows a student whose tick would be refused.
+  return res.json(session);
 });
 
 router.post('/sessions', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
@@ -3479,6 +3486,8 @@ router.post('/students/:id/convert-registered', authenticateUser, requireCoachOr
   if (!full_name || !String(full_name).trim()) {
     return res.status(400).json({ error: 'Full Name is required' });
   }
+  const registrationStartDate = parseClassStartDate(req.body.class_start_date, academyToday());
+  if ('error' in registrationStartDate) return res.status(400).json({ error: registrationStartDate.error });
   let formalStudentCode: string;
   try { formalStudentCode = await reserveStudentCode(student_id, await occupiedStudentCodes()); }
   catch (error: any) { return res.status(400).json({ error: error.message || 'Formal Student ID is invalid or already in use.' }); }
@@ -3532,7 +3541,7 @@ router.post('/students/:id/convert-registered', authenticateUser, requireCoachOr
       const enrolled = Array.from(db.memberships.values()).some((membership) => membership.student_id === id && membership.schedule_id === schedId && membership.status === 'ACTIVE');
       if (enrolled) continue;
       const memId = 'm-' + crypto.randomUUID();
-      db.memberships.set(memId, { id: memId, student_id: id, schedule_id: schedId, joined_date: academyToday(), status: 'ACTIVE' });
+      db.memberships.set(memId, { id: memId, student_id: id, schedule_id: schedId, joined_date: registrationStartDate.date, status: 'ACTIVE' });
       addedMembershipIds.push(memId);
     }
   }

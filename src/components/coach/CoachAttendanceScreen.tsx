@@ -7,6 +7,7 @@ import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js
 import { attendanceSaves } from '../../lib/attendanceSaves.js';
 import { coachAttendanceCounts } from '../../lib/coachAttendanceCounts.js';
 import { useAttendanceSaves } from '../common/AttendanceSaveStatus.js';
+import { ClassStartDateField } from '../student/ClassStartDateField.js';
 import { ClassSession, Student, StudentPause, AttendanceRecord, AttendanceStatus, Coach } from '../../types.js';
 import {
   ArrowLeft,
@@ -208,7 +209,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
 
   const openAddStudent = async () => {
     if (!serverSession) return;
-    setIsAddStudentOpen(true); setAddSearch(''); setAddSelected([]); setAddConflicts(null); setAddDate(getTodayDateString());
+    // Catching up an old roll call: start from that lesson so the student can be ticked on it.
+    const today = getTodayDateString();
+    setIsAddStudentOpen(true); setAddSearch(''); setAddSelected([]); setAddConflicts(null);
+    setAddDate(serverSession.session_date < today ? serverSession.session_date : today);
     // Walk-in (UNREG) records cannot join a recurring class until an admin registers them.
     try { setAddCandidates((await api.searchClassStudents(serverSession.class_id, '')).filter(c => !c.student_id.toUpperCase().startsWith('UNREG-'))); }
     catch (error: any) { showToast(error.message || 'Could not load students', 'error'); }
@@ -216,7 +220,6 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
 
   const submitAddStudents = async (addAnyway: boolean) => {
     if (!serverSession || !addSelected.length) return;
-    if (addDate < getTodayDateString()) { showToast('Effective date must be today or later.', 'error'); return; }
     setAddBusy(true);
     try {
       const result = await api.addClassMemberships(serverSession.schedule_id, addSelected, addDate, addAnyway);
@@ -907,9 +910,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
               ))}
               {!addCandidates.length && <p className="p-2 text-xs text-slate-500">No students available to add.</p>}
             </div>
-            <label className="block text-xs font-bold">Effective date (today or later)
-              <input type="date" required min={getTodayDateString()} value={addDate} onChange={e => setAddDate(e.target.value)} className="mt-1 w-full rounded-xl border-2 border-slate-900 p-2 dark:border-neutral-700 dark:bg-neutral-800" />
-            </label>
+            <ClassStartDateField label="Starts in this class from" value={addDate} onChange={setAddDate} allowFuture />
             <button type="submit" disabled={addBusy || !addSelected.length} className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-50 dark:bg-white dark:text-slate-900">{addBusy ? 'Adding…' : `Add ${addSelected.length} Student${addSelected.length === 1 ? '' : 's'}`}</button>
           </form>
         )}

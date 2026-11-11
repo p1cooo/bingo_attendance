@@ -277,7 +277,7 @@ class ApiClient {
     });
   }
 
-  async bulkCreateStudents(students: any[]): Promise<{
+  async bulkCreateStudents(students: any[], classStartDate?: string): Promise<{
     success: boolean;
     message: string;
     importedCount: number;
@@ -287,7 +287,7 @@ class ApiClient {
   }> {
     return this.request('/students/bulk', {
       method: 'POST',
-      body: JSON.stringify({ students }),
+      body: JSON.stringify({ students, class_start_date: classStartDate }),
     });
   }
 
@@ -308,8 +308,8 @@ class ApiClient {
     });
   }
 
-  async bulkAssignStudentsToSchedule(studentIds: string[], scheduleId: string): Promise<{ success: boolean; assigned_count: number; already_enrolled: number }> {
-    return this.request('/students/bulk-assign-schedule', { method: 'POST', body: JSON.stringify({ student_ids: studentIds, schedule_id: scheduleId }) });
+  async bulkAssignStudentsToSchedule(studentIds: string[], scheduleId: string, classStartDate?: string): Promise<{ success: boolean; assigned_count: number; already_enrolled: number }> {
+    return this.request('/students/bulk-assign-schedule', { method: 'POST', body: JSON.stringify({ student_ids: studentIds, schedule_id: scheduleId, class_start_date: classStartDate }) });
   }
 
   async bulkDeleteStudents(studentIds: string[]): Promise<{ success: boolean; deleted_count: number; bingo_space_accounts?: string[] }> {
@@ -358,8 +358,8 @@ class ApiClient {
     return this.request(`/schedules/${scheduleId}/students/${studentId}/end`, { method: 'POST', body: JSON.stringify({ effective_date: effectiveDate }) });
   }
 
-  async addStudentToClass(classId: string, studentId: string, addAnyway = false): Promise<unknown> {
-    return this.request(`/schedules/${classId}/students`, { method: 'POST', body: JSON.stringify({ student_id: studentId, add_anyway: addAnyway }) });
+  async addStudentToClass(classId: string, studentId: string, addAnyway = false, startDate?: string): Promise<unknown> {
+    return this.request(`/schedules/${classId}/students`, { method: 'POST', body: JSON.stringify({ student_id: studentId, add_anyway: addAnyway, start_date: startDate }) });
   }
 
   async bulkCreateClasses(classes: any[]): Promise<{
@@ -382,10 +382,10 @@ class ApiClient {
     });
   }
 
-  async updateClassRoster(id: string, studentIds: string[]): Promise<AcademyClass> {
+  async updateClassRoster(id: string, studentIds: string[], classStartDate?: string): Promise<AcademyClass> {
     return this.request(`/classes/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ student_ids: studentIds }),
+      body: JSON.stringify({ student_ids: studentIds, class_start_date: classStartDate }),
     });
   }
 
@@ -602,6 +602,7 @@ class ApiClient {
       parent_email?: string;
       parent_relation?: string;
       schedule_ids?: string[];
+      class_start_date?: string;
     }
   ): Promise<Student> {
     return this.request(`/students/${studentId}/convert-registered`, {

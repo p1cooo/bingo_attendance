@@ -30,6 +30,8 @@ import {
 } from 'lucide-react';
 import { BulkAddClassesModal } from './BulkAddClassesModal.js';
 import { ClassReplacementSwitch } from '../common/ClassReplacementSwitch.js';
+import { ClassStartDateField } from '../student/ClassStartDateField.js';
+import { getTodayDateString } from '../../lib/dateUtils.js';
 
 const DAYS_OF_WEEK = [
   { value: 1, label: 'Monday' },
@@ -96,6 +98,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
 
   const [rosterStudentSearch, setRosterStudentSearch] = useState('');
   const [selectedRosterStudentIds, setSelectedRosterStudentIds] = useState<string[]>([]);
+  const [rosterStartDate, setRosterStartDate] = useState(getTodayDateString());
 
   const loadData = async () => {
     try {
@@ -180,6 +183,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
   const handleOpenRoster = (cls: AcademyClass) => {
     setRosterClass(cls);
     setSelectedRosterStudentIds(cls.enrolled_student_ids || []);
+    setRosterStartDate(getTodayDateString());
     setRosterStudentSearch('');
     setIsRosterModalOpen(true);
   };
@@ -215,7 +219,7 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
     if (!rosterClass) return;
     setIsSubmitting(true);
     try {
-      await api.updateClassRoster(rosterClass.id, selectedRosterStudentIds);
+      await api.updateClassRoster(rosterClass.id, selectedRosterStudentIds, rosterStartDate);
       showToast(`✓ Roster updated (${selectedRosterStudentIds.length} students enrolled)`, 'success');
       setIsRosterModalOpen(false);
       loadData();
@@ -858,6 +862,8 @@ export const ClassesAndSchedulesView: React.FC<ClassesAndSchedulesViewProps> = (
               <span>Selected Students: {selectedRosterStudentIds.length}</span>
               <span className="text-slate-400">Class Day: {DAY_NAMES[rosterClass.day_of_week ?? 6]}</span>
             </div>
+            {selectedRosterStudentIds.some((id) => !(rosterClass.enrolled_student_ids || []).includes(id)) &&
+              <ClassStartDateField label="Start date for newly added students" value={rosterStartDate} onChange={setRosterStartDate} />}
 
             {/* Student Search */}
             <div className="relative">

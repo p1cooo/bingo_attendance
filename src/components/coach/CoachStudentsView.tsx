@@ -8,6 +8,8 @@ import { BingoSpaceAccountSection } from '../student/BingoSpaceAccountSection.js
 import { CoachStudentRow, CreditFilter, LinkFilter, WEEK_DAYS, filterCoachStudents } from '../../lib/coachListFilters.js';
 import { ClassMembershipPicker } from '../student/ClassMembershipPicker.js';
 import { UnregisteredStudentsSection } from './UnregisteredStudentsSection.js';
+import { ClassStartDateField } from '../student/ClassStartDateField.js';
+import { getTodayDateString } from '../../lib/dateUtils.js';
 
 const emptyForm = { full_name: '', nick_name: '', school: '', parent_name: '', parent_phone: '', parent_email: '', parent_relation: 'Parent' };
 
@@ -24,6 +26,7 @@ export const CoachStudentsView: React.FC = () => {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [scheduleIds, setScheduleIds] = useState<string[]>([]);
+  const [classStartDate, setClassStartDate] = useState(getTodayDateString());
   const [busy, setBusy] = useState(false);
   const [undoCheck, setUndoCheck] = useState<StudentDeleteCheck | null>(null);
   const [undoOpen, setUndoOpen] = useState(false);
@@ -52,6 +55,8 @@ export const CoachStudentsView: React.FC = () => {
     } catch (error: any) { showToast(error.message || 'Could not load students', 'error'); }
   };
   useEffect(() => { load(); }, []);
+  // Editing: only newly ticked classes get a start date; existing ones keep theirs.
+  const addsNewClass = Boolean(selected) && scheduleIds.some((id) => !selected?.enrolled_schedules?.some((schedule) => schedule.schedule_id === id));
   const visible = useMemo(() => filterCoachStudents(students, { query, credit: creditFilter, link: linkFilter, days }), [students, query, creditFilter, linkFilter, days]);
   const resetFilters = () => { setQuery(''); setCreditFilter('ALL'); setLinkFilter('ALL'); setDays([]); };
   const toggleDay = (day: number) => setDays((current) => current.includes(day) ? current.filter((value) => value !== day) : [...current, day]);
@@ -65,6 +70,7 @@ export const CoachStudentsView: React.FC = () => {
         parent_email: student.parent?.email || '', parent_relation: student.parent_relation || 'Parent',
       });
       setEditing(edit);
+      setClassStartDate(getTodayDateString());
       setScheduleIds(student.enrolled_schedules?.map((schedule) => schedule.schedule_id)
         .filter((scheduleId) => schedules.some((schedule) => schedule.id === scheduleId)) || []);
     } catch (error: any) { showToast(error.message || 'Could not open student', 'error'); }
@@ -73,8 +79,8 @@ export const CoachStudentsView: React.FC = () => {
     event.preventDefault();
     setBusy(true);
     try {
-      if (selected) await api.updateStudent(selected.id, { ...form, schedule_ids: scheduleIds });
-      else await api.createStudent({ ...form, schedule_ids: scheduleIds });
+      if (selected) await api.updateStudent(selected.id, { ...form, schedule_ids: scheduleIds, ...(addsNewClass ? { class_start_date: classStartDate } : {}) });
+      else await api.createStudent({ ...form, schedule_ids: scheduleIds, class_start_date: classStartDate });
       setEditing(false); setSelected(null); setForm(emptyForm);
       await load();
       showToast('Student saved', 'success');
@@ -95,7 +101,7 @@ export const CoachStudentsView: React.FC = () => {
   return <main className="mx-auto max-w-6xl min-w-0 p-4 sm:p-5 text-slate-950">
     <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="text-2xl font-black tracking-tight">My Students</h2><p className="text-sm text-slate-500">Students in your normal classes.</p></div>
-      <button className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black" onClick={() => { setSelected(null); setForm(emptyForm); setScheduleIds([]); setEditing(true); }}>Add Student</button>
+      <button className="rounded-xl border-2 border-slate-900 bg-white px-3 py-2 text-xs font-black" onClick={() => { setSelected(null); setForm(emptyForm); setScheduleIds([]); setClassStartDate(getTodayDateString()); setEditing(true); }}>Add Student</button>
     </header>
     <UnregisteredStudentsSection onRegistered={load} schedules={schedules} />
     <input aria-label="Search student name or Attendance student ID" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or Attendance ID (STU-0001)" className="mb-3 w-full rounded-xl border-2 border-slate-900 bg-white p-3 text-sm" />
@@ -127,6 +133,7 @@ export const CoachStudentsView: React.FC = () => {
           <input required={key === 'full_name'} value={value} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" />
         </label>)}
         <ClassMembershipPicker schedules={schedules} selected={scheduleIds} onChange={setScheduleIds} />
+        {(!selected || addsNewClass) && <ClassStartDateField label={selected ? 'Start date in the newly ticked class' : 'Class start date'} value={classStartDate} onChange={setClassStartDate} />}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button disabled={busy || (!selected && !scheduleIds.length)} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">Save Student</button>
           {selected && <button type="button" onClick={openUndo} className="rounded-lg border-2 border-rose-600 px-3 py-2 text-xs font-black text-rose-700">Delete student (created by mistake)</button>}

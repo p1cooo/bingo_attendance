@@ -5,6 +5,8 @@ import type { ClassSchedule, Coach } from '../../types.js';
 import { Modal } from '../common/Modal.js';
 import { useToast } from '../common/Toast.js';
 import { ClassMembershipPicker } from '../student/ClassMembershipPicker.js';
+import { ClassStartDateField } from '../student/ClassStartDateField.js';
+import { getTodayDateString } from '../../lib/dateUtils.js';
 
 const emptyForm = { full_name: '', nick_name: '', school: '', parent_name: '', parent_phone: '' };
 const labels: Record<keyof typeof emptyForm, string> = {
@@ -30,6 +32,7 @@ export const UnregisteredStudentsSection: React.FC<{
   const [target, setTarget] = useState<UnregisteredStudentRow | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [scheduleIds, setScheduleIds] = useState<string[]>([]);
+  const [classStartDate, setClassStartDate] = useState(getTodayDateString());
   const [removing, setRemoving] = useState<UnregisteredStudentRow | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -51,7 +54,7 @@ export const UnregisteredStudentsSection: React.FC<{
   }, [rows, search, coachFilter]);
 
   const open = (row: UnregisteredStudentRow) => {
-    setTarget(row); setScheduleIds([]);
+    setTarget(row); setScheduleIds([]); setClassStartDate(getTodayDateString());
     setForm({ ...emptyForm, full_name: row.full_name, nick_name: row.nick_name || '', parent_phone: row.parent_phone || '' });
   };
 
@@ -70,6 +73,7 @@ export const UnregisteredStudentsSection: React.FC<{
         parent_name: form.parent_name.trim() || undefined,
         parent_phone: form.parent_phone.trim() || undefined,
         schedule_ids: target.class_active ? undefined : scheduleIds,
+        class_start_date: classStartDate,
       });
       const className = target.class_active ? target.class_name
         : pickable.filter((schedule) => scheduleIds.includes(schedule.id)).map((schedule) => schedule.class_item?.name || 'Class').join(', ');
@@ -148,6 +152,7 @@ export const UnregisteredStudentsSection: React.FC<{
             className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" />
         </label>)}
         {!target.class_active && <ClassMembershipPicker schedules={pickable} coaches={coaches} admin={admin} selected={scheduleIds} onChange={setScheduleIds} />}
+        <ClassStartDateField value={classStartDate} onChange={setClassStartDate} />
         <button disabled={busy || !form.full_name.trim() || (!target.class_active && !scheduleIds.length)} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">{busy ? 'Registering…' : 'Register student'}</button>
       </form>}
     </Modal>

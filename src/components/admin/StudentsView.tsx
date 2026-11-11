@@ -8,6 +8,8 @@ import { Modal } from '../common/Modal.js';
 import { BingoSpaceAccountSection } from '../student/BingoSpaceAccountSection.js';
 import { CoachBadge } from '../common/CoachBadge.js';
 import { ClassMembershipPicker } from '../student/ClassMembershipPicker.js';
+import { ClassStartDateField } from '../student/ClassStartDateField.js';
+import { getTodayDateString } from '../../lib/dateUtils.js';
 import {
   Search,
   Plus,
@@ -84,6 +86,11 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     schedule_ids: [] as string[],
   });
 
+  // First lesson in newly chosen classes (new student, newly ticked class, or bulk assign).
+  const [classStartDate, setClassStartDate] = useState(getTodayDateString());
+  const addsNewClass = Boolean(editingStudent) && formData.schedule_ids.some((id) =>
+    !editingStudent?.enrolled_schedules?.some((schedule) => schedule.schedule_id === id));
+
   // Modal Class Schedule Filters
   const [modalDayFilter, setModalDayFilter] = useState('');
   const [modalCoachFilter, setModalCoachFilter] = useState('');
@@ -143,6 +150,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
       status: 'ACTIVE',
       schedule_ids: [],
     });
+    setClassStartDate(getTodayDateString());
     setModalDayFilter('');
     setModalCoachFilter('');
     setModalSearch('');
@@ -153,6 +161,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
   const handleOpenEdit = (student: Student) => {
     setProfileStudent(null);
     setEditingStudent(student);
+    setClassStartDate(getTodayDateString());
     setFormData({
       student_id: student.student_id,
       full_name: student.full_name,
@@ -197,10 +206,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     try {
       setIsSubmitting(true);
       if (editingStudent) {
-        await api.updateStudent(editingStudent.id, formData);
+        await api.updateStudent(editingStudent.id, { ...formData, ...(addsNewClass ? { class_start_date: classStartDate } : {}) });
         showToast('✓ Student updated successfully', 'success');
       } else {
-        await api.createStudent(formData);
+        await api.createStudent({ ...formData, class_start_date: classStartDate });
         showToast('✓ Student registered successfully', 'success');
       }
       setIsAddModalOpen(false);
@@ -242,7 +251,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     if (!bulkScheduleId) { showToast('Choose a class schedule first.', 'error'); return; }
     try {
       setIsSubmitting(true);
-      const result = await api.bulkAssignStudentsToSchedule(selectedStudentIds, bulkScheduleId);
+      const result = await api.bulkAssignStudentsToSchedule(selectedStudentIds, bulkScheduleId, classStartDate);
       showToast(`✓ ${result.assigned_count} student${result.assigned_count === 1 ? '' : 's'} assigned${result.already_enrolled ? `; ${result.already_enrolled} already enrolled` : ''}.`, 'success');
       setSelectedStudentIds([]);
       setIsBulkAssignOpen(false);
@@ -390,7 +399,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
         <div className="flex flex-col gap-3 rounded-2xl border-2 border-slate-900 bg-amber-50 p-3 shadow-[3px_3px_0px_0px_rgba(15,23,42,1)] sm:flex-row sm:items-center sm:justify-between dark:bg-amber-950/30">
           <span className="text-xs font-black text-slate-900 dark:text-white">{selectedStudentIds.length} student{selectedStudentIds.length === 1 ? '' : 's'} selected</span>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => setIsBulkAssignOpen(true)} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-1.5 text-xs font-black text-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">Assign to class</button>
+            <button type="button" onClick={() => { setClassStartDate(getTodayDateString()); setIsBulkAssignOpen(true); }} className="rounded-xl border-2 border-slate-900 bg-white px-3 py-1.5 text-xs font-black text-slate-900 shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">Assign to class</button>
             <button type="button" onClick={() => setIsBulkDeleteOpen(true)} className="rounded-xl border-2 border-slate-900 bg-rose-600 px-3 py-1.5 text-xs font-black text-white shadow-[2px_2px_0px_0px_rgba(15,23,42,1)]">Delete selected</button>
             <button type="button" onClick={() => setSelectedStudentIds([])} className="px-2 py-1.5 text-xs font-bold text-slate-600 underline dark:text-slate-300">Clear</button>
           </div>
@@ -548,6 +557,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
             <option value="">Choose a class schedule…</option>
             {schedules.filter((schedule) => schedule.status === 'ACTIVE').map((schedule) => <option key={schedule.id} value={schedule.id}>{scheduleLabel(schedule)}</option>)}
           </select>
+          <ClassStartDateField value={classStartDate} onChange={setClassStartDate} />
           <div className="flex justify-end gap-2"><button type="button" onClick={() => setIsBulkAssignOpen(false)} className="rounded-xl px-3 py-2 text-xs font-bold">Cancel</button><button type="button" disabled={isSubmitting || !bulkScheduleId} onClick={handleBulkAssign} className="rounded-xl border-2 border-slate-900 bg-slate-900 px-3 py-2 text-xs font-black text-white disabled:opacity-50">Assign students</button></div>
         </div>
       </Modal>
@@ -687,6 +697,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
 
           <ClassMembershipPicker schedules={schedules} coaches={coaches} admin selected={formData.schedule_ids}
             onChange={(schedule_ids) => setFormData((current) => ({ ...current, schedule_ids }))} />
+          {((!editingStudent && formData.schedule_ids.length > 0) || addsNewClass) &&
+            <ClassStartDateField value={classStartDate} onChange={setClassStartDate} />}
 
           <div className="flex items-center justify-end gap-2 pt-3">
             <button

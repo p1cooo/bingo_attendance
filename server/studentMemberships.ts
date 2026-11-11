@@ -7,6 +7,8 @@ export function planStudentMemberships(
   existing: StudentClassMembership[],
   manageable: Set<string>,
   today: string,
+  /** First day on the roster for newly ticked classes (removals still end today). */
+  startDate: string = today,
 ) {
   const desired = new Set(selected);
   const add: StudentClassMembership[] = [];
@@ -18,10 +20,12 @@ export function planStudentMemberships(
   }
   for (const scheduleId of desired) {
     if (!manageable.has(scheduleId)) continue;
-    add.push({ id: `m-${crypto.randomUUID()}`, student_id: studentId, schedule_id: scheduleId, joined_date: today, status: 'ACTIVE' });
+    add.push({ id: `m-${crypto.randomUUID()}`, student_id: studentId, schedule_id: scheduleId, joined_date: startDate, status: 'ACTIVE' });
   }
   return { add, end };
 }
+
+export { parseClassStartDate } from '../src/lib/classStartDate.js';
 
 const dayBefore = (date: string) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
 const inClass = (m: StudentClassMembership, scheduleId: string, classId: string) => m.schedule_id === scheduleId || m.schedule_id === classId;
