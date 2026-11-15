@@ -45,6 +45,7 @@ import { ReplacementAdvanceCommitment, ReplacementCredit } from '../src/types.js
 import { financeDetail, pauseCoverageForMonth, financeMonthStatus, financeOverview, financeStudentDetails, validMonth, validDate, cents, nonNegativeCents, validAllocations, FINANCE_START_MONTH, trialReviewKey, DEFAULT_FEES, classFeeFor, classFeeHistory, isNonBillableClass } from './finance.js';
 import { applyPaymentDelete, applyPaymentEdit, paymentVersion } from './paymentCorrections.js';
 import { parseClassStartDate, planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
+import { COACH_CORRECTION_DAYS, coachCorrectionBlocker } from '../src/lib/attendanceCorrection.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
 import { pauseOnDate, validatePauseDates, canManagePause } from './studentPauses.js';
 import type { StudentFee, ClassFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
@@ -2919,7 +2920,7 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
 }, authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const user = req.user!;
-  const { student_id, status, attendance_type, replacement_note, base_stars, lucky_tshirt_worn } = req.body;
+  const { student_id, status, attendance_type, replacement_note, base_stars, lucky_tshirt_worn, correction } = req.body;
 
   if (typeof student_id !== 'string' || !student_id || !status) {
     return res.status(400).json({ error: 'Student ID and attendance status are required' });
@@ -2982,7 +2983,13 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   }
   if (!existingRecord && attendance_type === 'REPLACEMENT') return res.status(409).json({ error: 'Add this student as a replacement before marking attendance.' });
   if (existingRecord && attendance_type && attendance_type !== existingRecord.attendance_type) return res.status(409).json({ error: 'Attendance type cannot be changed during roll call.' });
-  if (existingRecord && existingRecord.status !== 'BOOKED' && existingRecord.status !== status) {
+  const isCorrection = correction === true && Boolean(existingRecord) && existingRecord!.status !== 'BOOKED';
+  if (isCorrection) {
+    const blocker = coachCorrectionBlocker(existingRecord, session.session_date, todayStr);
+    if (blocker) return res.status(409).json({ error: blocker });
+    if (!['PRESENT', 'ABSENT'].includes(status)) return res.status(400).json({ error: 'A mark can only be changed to Present or Absent.' });
+  }
+  if (!isCorrection && existingRecord && existingRecord.status !== 'BOOKED' && existingRecord.status !== status) {
     return res.status(409).json({ error: 'Attendance is already recorded. Ask an admin to correct it.' });
   }
 
@@ -2999,8 +3006,10 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
       !existingRecord && attType !== 'REGULAR') {
     return res.status(400).json({ error: 'Invalid attendance type for this occurrence.' });
   }
-  const suppliedStars = base_stars === undefined || base_stars === '' ? undefined : Number(base_stars);
-  if (existingRecord && existingRecord.status !== 'BOOKED' &&
+  // A corrected Absent carries no stars, so an unsent award is dropped with it.
+  const suppliedStars = isCorrection && newStatus === 'ABSENT' ? 0
+    : base_stars === undefined || base_stars === '' ? undefined : Number(base_stars);
+  if (!isCorrection && existingRecord && existingRecord.status !== 'BOOKED' &&
       (suppliedStars !== undefined && suppliedStars !== existingRecord.base_stars ||
        lucky_tshirt_worn !== undefined && Boolean(lucky_tshirt_worn) !== Boolean(existingRecord.lucky_tshirt_worn))) {
     return res.status(409).json({ error: 'Attendance is already recorded. Ask an admin to correct it.' });
@@ -3035,9 +3044,10 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     marked_by_user_id: user.id,
     notification_status: 'SENT',
     ...(suppliedStars !== undefined ? { base_stars: suppliedStars } : {}),
-    ...(lucky_tshirt_worn !== undefined
-      ? { lucky_tshirt_worn: Boolean(lucky_tshirt_worn) }
-      : (!existingRecord ? { lucky_tshirt_worn: false } : {})),
+    ...(isCorrection && newStatus === 'ABSENT' ? { lucky_tshirt_worn: false }
+      : lucky_tshirt_worn !== undefined
+        ? { lucky_tshirt_worn: Boolean(lucky_tshirt_worn) }
+        : (!existingRecord ? { lucky_tshirt_worn: false } : {})),
   };
   const attendanceClass = db.classes.get(session.class_id);
   if (!attendanceClass) return res.status(409).json({ error: 'The session class is unavailable. Attendance was not changed.' });
@@ -3052,7 +3062,8 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
     changed_by_user_role: user.role,
     previous_status: prevStatus,
     new_status: newStatus,
-    reason: user.role === 'ADMIN' ? (req.body.audit_reason || 'Admin status update') : 'Roll-call marked by coach',
+    reason: isCorrection ? `Changed in roll call by ${user.role === 'COACH' ? 'coach' : 'admin'} (within ${COACH_CORRECTION_DAYS} days, no stars sent)`
+      : user.role === 'ADMIN' ? (req.body.audit_reason || 'Admin status update') : 'Roll-call marked by coach',
     timestamp: new Date().toISOString(),
   } : undefined;
   const persistStartedAt = performance.now();
@@ -3065,7 +3076,8 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
       expectedMarkedAt: existingRecord?.marked_at ?? null,
       pauseMembershipIds: classMemberships.map(m => m.id).filter(Boolean),
       sessionDate: session.session_date,
-      initialMarkOnly: true,
+      initialMarkOnly: !isCorrection,
+      clearPortalSync: isCorrection && newStatus === 'ABSENT',
       audit: auditEntry,
     });
     idempotentMark = Boolean(persisted.idempotent);

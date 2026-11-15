@@ -65,6 +65,8 @@ export interface AttendanceReconciliationInput {
   sessionDate?: string;
   /** Roll call marks a booking once; corrections use the audited admin route. */
   initialMarkOnly?: boolean;
+  /** A coach correction to Absent: forget an award that never reached Bingo Space. */
+  clearPortalSync?: boolean;
   /** A replacement booking may never overwrite an existing attendance row. */
   bookingOnly?: boolean;
   /** Saved in the same Firestore transaction as the attendance correction. */
@@ -142,7 +144,13 @@ export async function persistAttendanceWithReplacementReconciliation(
     const attendance = withoutUndefined({
       ...previous,
       ...input.attendance,
-      ...(previous ? {
+      ...(previous && input.clearPortalSync && previous.portal_sync_status !== 'SYNCED' ? {
+        portal_sync_status: undefined,
+        portal_transaction_id: undefined,
+        portal_awarded_stars: undefined,
+        portal_multiplier: undefined,
+        portal_sync_message: undefined,
+      } : previous ? {
         portal_sync_status: previous.portal_sync_status,
         portal_transaction_id: previous.portal_transaction_id,
         portal_awarded_stars: previous.portal_awarded_stars,

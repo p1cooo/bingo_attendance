@@ -499,6 +499,8 @@ class ApiClient {
       audit_reason?: string;
       base_stars?: number;
       lucky_tshirt_worn?: boolean;
+      /** Change a mark already saved (allowed within 7 days while no stars were sent). */
+      correction?: boolean;
     }
   ): Promise<{ success: boolean; attendance_record: AttendanceRecord; session: ClassSession }> {
     return this.request(`/sessions/${sessionId}/attendance`, {

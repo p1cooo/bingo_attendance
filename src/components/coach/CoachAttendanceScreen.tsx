@@ -6,6 +6,7 @@ import { getTodayDateString } from '../../lib/dateUtils.js';
 import { formatMalaysianPhone, isValidMalaysianMobile } from '../../lib/phone.js';
 import { attendanceSaves } from '../../lib/attendanceSaves.js';
 import { coachAttendanceCounts } from '../../lib/coachAttendanceCounts.js';
+import { coachCorrectionBlocker } from '../../lib/attendanceCorrection.js';
 import { useAttendanceSaves } from '../common/AttendanceSaveStatus.js';
 import { ClassStartDateField } from '../student/ClassStartDateField.js';
 import { ClassSession, Student, StudentPause, AttendanceRecord, AttendanceStatus, Coach } from '../../types.js';
@@ -54,6 +55,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [starsByStudent, setStarsByStudent] = useState<Record<string, string>>({});
+  const [correctingStudentId, setCorrectingStudentId] = useState<string | null>(null);
   const [tshirtByStudent, setTshirtByStudent] = useState<Record<string, boolean>>({});
   const [creatingPortalInviteFor, setCreatingPortalInviteFor] = useState<string | null>(null);
   const [editingOccurrence, setEditingOccurrence] = useState(false);
@@ -137,8 +139,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     attendanceType: 'REGULAR' | 'REPLACEMENT' = 'REGULAR',
     baseStars?: number,
     luckyTshirtWorn?: boolean,
+    correction = false,
   ) => {
     if (!session) return;
+    if (correction) setCorrectingStudentId(null);
     const priorRecord = session.attendance_records?.find((item) => item.student_id === studentId);
     const optimisticRecord: AttendanceRecord = {
       ...(priorRecord || {}),
@@ -160,6 +164,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
           attendance_type: attendanceType,
           ...(baseStars !== undefined ? { base_stars: baseStars } : {}),
           ...(luckyTshirtWorn !== undefined ? { lucky_tshirt_worn: luckyTshirtWorn } : {}),
+          ...(correction ? { correction: true } : {}),
       }),
     });
   };
@@ -666,7 +671,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             const canManageStudentPause = !!membershipId && !isReplacement && !isUnregistered && (isRegularCoach || user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN');
             const classPauses = actionPauses.filter(p => p.membership_id === membershipId).sort((a, b) => b.start_date.localeCompare(a.start_date));
             const status = record?.status;
-            const alreadyMarked = !!record && record.status !== 'BOOKED';
+            const correctionBlocker = coachCorrectionBlocker(record, session.session_date, todayStr);
+            const isCorrecting = correctingStudentId === student.id && !correctionBlocker;
+            // A saved mark stays locked unless the coach opened "Change" for this student.
+            const alreadyMarked = !!record && record.status !== 'BOOKED' && !isCorrecting;
             const isSaving = attendanceSaves.isPending(sessionId, student.id);
             const studentFullName = student?.full_name || 'Student';
             const studentId = student?.student_id || '';
@@ -785,6 +793,14 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           ⭐ Portal: +{record.portal_awarded_stars} ({record.base_stars} × {record.portal_multiplier}) — correct star mistakes manually in Bingo Space.
                         </p>
                       )}
+                      {record && record.status !== 'BOOKED' && !correctionBlocker && !isSaving && !pause && (
+                        isCorrecting
+                          ? <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <p className="text-[11px] font-bold text-sky-800 dark:text-sky-300">Tap the correct mark{status === 'ABSENT' ? ' (add stars first if Present)' : ''}.</p>
+                              <button type="button" onClick={() => setCorrectingStudentId(null)} className="rounded-lg px-2 py-1 text-[11px] font-black text-slate-600 underline dark:text-neutral-300">Cancel</button>
+                            </div>
+                          : <button type="button" onClick={() => setCorrectingStudentId(student.id)} className="mt-2 rounded-lg border border-slate-400 bg-white px-2.5 py-1 text-[11px] font-black text-slate-700 hover:bg-slate-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-200">Change attendance</button>
+                      )}
                     </div>
                   </div>
 
@@ -802,6 +818,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           isReplacement ? 'REPLACEMENT' : 'REGULAR',
                           parsedStars,
                           shirtWorn,
+                          isCorrecting,
                         )
                       }
                       className={`h-10 flex-1 sm:flex-none px-3 sm:px-4 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all border-2 border-slate-900 ${
@@ -823,7 +840,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                           student.id,
                           studentFullName,
                           'ABSENT',
-                          isReplacement ? 'REPLACEMENT' : 'REGULAR'
+                          isReplacement ? 'REPLACEMENT' : 'REGULAR',
+                          undefined,
+                          undefined,
+                          isCorrecting,
                         )
                       }
                       className={`h-10 flex-1 sm:flex-none px-3 sm:px-4 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all border-2 border-slate-900 ${
@@ -847,7 +867,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       step="0.5"
                       inputMode="decimal"
                       value={starsValue}
-                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || (status === 'ABSENT' && !isCorrecting) || record?.portal_sync_status === 'SYNCED'}
                       onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
                       placeholder="Stars"
                       aria-label={`Base stars for ${studentFullName}`}
@@ -855,7 +875,7 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                     />
                     <button
                       type="button"
-                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || status === 'ABSENT' || record?.portal_sync_status === 'SYNCED'}
+                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || (status === 'ABSENT' && !isCorrecting) || record?.portal_sync_status === 'SYNCED'}
                       onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
                       title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
                       aria-pressed={shirtWorn}
