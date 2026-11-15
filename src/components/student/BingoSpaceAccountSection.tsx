@@ -1,7 +1,27 @@
 import React, { useEffect, useState } from 'react';
+import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { FirebaseError } from 'firebase/app';
 import type { Student } from '../../types.js';
 import { api } from '../../lib/api.js';
+import { clientAuth } from '../../lib/firebase.js';
 import { useToast } from '../common/Toast.js';
+
+const REAUTH_REQUIRED = 'REAUTH_REQUIRED';
+
+/** Confirms the signed-in coach's own password so the next ID token carries a fresh auth_time. */
+async function confirmOwnPassword(password: string): Promise<void> {
+  const firebaseUser = clientAuth?.currentUser;
+  if (!firebaseUser?.email) throw new Error('Your sign-in session is unavailable. Sign out and sign in again.');
+  try {
+    await reauthenticateWithCredential(firebaseUser, EmailAuthProvider.credential(firebaseUser.email, password));
+    await firebaseUser.getIdToken(true);
+  } catch (error) {
+    const code = error instanceof FirebaseError ? error.code : '';
+    if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') throw new Error('That password is incorrect.');
+    if (code === 'auth/too-many-requests') throw new Error('Too many attempts. Please try again later.');
+    throw new Error('Could not confirm your password. Please try again.');
+  }
+}
 
 type Account = { linked: false } | { linked: true; student_name: string; bingo_space_id: string; attendance_student_id: string; username: string; password_status: 'RECOVERABLE' | 'UNRECOVERABLE' };
 
@@ -9,7 +29,8 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
   const { showToast } = useToast();
   const [account, setAccount] = useState<Account | null>(null);
   const [unavailable, setUnavailable] = useState(false);
-  const [mode, setMode] = useState<'username' | 'password' | null>(null);
+  const [mode, setMode] = useState<'username' | 'password' | 'confirm' | null>(null);
+  const [ownPassword, setOwnPassword] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -35,13 +56,29 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
     return () => { window.clearTimeout(timer); window.removeEventListener('blur', hide); };
   }, [revealedPassword]);
 
+  const revealPassword = async () => {
+    const result = await api.revealPortalPassword(student.id);
+    if (result.password_status === 'RECOVERABLE') setRevealedPassword(result.password);
+    else setAccount((current) => current?.linked ? { ...current, password_status: 'UNRECOVERABLE' } : current);
+  };
+
   const showPassword = async () => {
     if (revealedPassword !== null) { setRevealedPassword(null); return; }
     setBusy(true);
+    try { await revealPassword(); }
+    catch (error: any) {
+      if (error?.data?.code === REAUTH_REQUIRED) { setOwnPassword(''); setMode('confirm'); }
+      else showToast(error.message || 'Could not show password', 'error');
+    }
+    finally { setBusy(false); }
+  };
+
+  const confirmAndShowPassword = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true);
     try {
-      const result = await api.revealPortalPassword(student.id);
-      if (result.password_status === 'RECOVERABLE') setRevealedPassword(result.password);
-      else setAccount((current) => current?.linked ? { ...current, password_status: 'UNRECOVERABLE' } : current);
+      await confirmOwnPassword(ownPassword);
+      setOwnPassword(''); setMode(null);
+      await revealPassword();
     } catch (error: any) { showToast(error.message || 'Could not show password', 'error'); }
     finally { setBusy(false); }
   };
@@ -86,6 +123,11 @@ export function BingoSpaceAccountSection({ student }: { student: Student }) {
       <button type="button" onClick={() => { setUsername(account.username); setMode('username'); }} className="rounded-lg border border-slate-900 px-3 py-1.5 text-xs font-black dark:border-white">Change Username</button>
       <button type="button" onClick={() => setMode('password')} className="rounded-lg border border-slate-900 px-3 py-1.5 text-xs font-black dark:border-white">Change Password</button>
     </div>}
+    {mode === 'confirm' && <form onSubmit={confirmAndShowPassword} className="mt-3 space-y-2">
+      <p className="text-xs font-medium text-slate-600 dark:text-neutral-300">For security, confirm your own sign-in password to show this student's password.</p>
+      <label className="block text-xs font-bold">Your password<input type="password" autoComplete="current-password" required autoFocus value={ownPassword} onChange={(event) => setOwnPassword(event.target.value)} className="mt-1 w-full rounded-lg border p-2 text-slate-900" /></label>
+      <div className="flex gap-2"><button disabled={busy} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white">Confirm &amp; show</button><button type="button" onClick={() => { setOwnPassword(''); setMode(null); }} className="px-3 py-2 text-xs font-bold">Cancel</button></div>
+    </form>}
     {mode === 'username' && <form onSubmit={changeUsername} className="mt-3 space-y-2">
       <label className="block text-xs font-bold">New username<input required minLength={3} maxLength={80} pattern="[A-Za-z0-9_-]+" value={username} onChange={(event) => setUsername(event.target.value)} className="mt-1 w-full rounded-lg border p-2 text-slate-900" /></label>
       <div className="flex gap-2"><button disabled={busy} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white">Save username</button><button type="button" onClick={() => setMode(null)} className="px-3 py-2 text-xs font-bold">Cancel</button></div>

@@ -171,7 +171,9 @@ test('password reveal requires current scope and recent sign-in, then forwards o
       return { code, body };
     };
     assert.equal((await call('other', Date.now())).code, 403);
-    assert.equal((await call('own', Date.now() - 360_000)).code, 403);
+    const stale = await call('own', Date.now() - 360_000);
+    assert.equal(stale.code, 403);
+    assert.equal(stale.body.code, 'REAUTH_REQUIRED');
     assert.deepEqual(await call('own', Date.now()), { code: 200, body: { password_status: 'RECOVERABLE', password: 'SyntheticOnly456' } });
     assert.equal(bridgeCalls, 1);
   } finally {

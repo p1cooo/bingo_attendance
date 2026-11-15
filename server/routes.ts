@@ -3780,7 +3780,7 @@ router.post('/students/:id/portal-account/password-reveal', refreshCredentialSco
   if (!student) return res.status(404).json({ error: 'Student not found' });
   if (!canManageStudentCredentials(req.user!, student.id)) return res.status(403).json({ error: 'Forbidden' });
   if (!req.authTime || Date.now() - req.authTime > 5 * 60_000 || req.authTime > Date.now()) {
-    return res.status(403).json({ error: 'Sign in again to show the password.' });
+    return res.status(403).json({ error: 'Confirm your password to show the student password.', code: 'REAUTH_REQUIRED' });
   }
   try {
     const result = await managePortalAccount(student.student_id, 'password-reveal', req.user!, { actor_auth_time: String(Math.floor(req.authTime / 1000)) });
