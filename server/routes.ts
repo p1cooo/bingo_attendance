@@ -47,6 +47,7 @@ import { applyPaymentDelete, applyPaymentEdit, paymentVersion } from './paymentC
 import { parseClassStartDate, planMembershipAdd, planMembershipEnd } from './studentMemberships.js';
 import { COACH_CORRECTION_DAYS, coachCorrectionBlocker } from '../src/lib/attendanceCorrection.js';
 import { adminDeleteBlockers, coachUndoBlockers, deleteStudentEverywhere, findStudentCreator, studentRecords, type PortalStatus } from './studentDeletion.js';
+import { isWalkInStudent, starsBlockedReason } from './portalStarsGate.js';
 import { pauseOnDate, validatePauseDates, canManagePause } from './studentPauses.js';
 import type { StudentFee, ClassFee, StudentPayment, StudentAdjustment, MembershipBillingReview } from '../src/types.js';
 import type { StudentPause, PauseReason } from '../src/types.js';
@@ -2762,6 +2763,25 @@ router.get('/sessions/:id', authenticateUser, (req: AuthenticatedRequest, res: R
   return res.json(session);
 });
 
+// Bingo Space account status for everyone on the sheet, keyed by Attendance
+// student ID. Separate from GET /sessions/:id so a slow Space never delays roll call.
+router.get('/sessions/:id/portal-statuses', authenticateUser, requireCoachOrAdmin, async (req: AuthenticatedRequest, res: Response) => {
+  const session = db.getPopulatedSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!verifySessionAttendanceAccess(session.id, req.user!)) return res.status(403).json({ error: 'Forbidden' });
+  const students = new Map<string, Student>();
+  session.enrolled_students?.forEach((student) => student && students.set(student.id, student));
+  session.attendance_records?.forEach((record) => record.student && students.set(record.student.id, record.student));
+  const official = [...students.values()].filter((student) => !isWalkInStudent(student));
+  const byCode = await portalAccountStatuses(official.map((student) => student.student_id));
+  const statuses: Record<string, PortalStatus> = {};
+  students.forEach((student, studentId) => {
+    statuses[studentId] = isWalkInStudent(student) ? 'NOT_REGISTERED' : byCode[student.student_id] || 'UNKNOWN';
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({ statuses });
+});
+
 router.post('/sessions', authenticateUser, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
   const {
     schedule_id,
@@ -3019,6 +3039,13 @@ router.post('/sessions/:id/attendance', (_req, res, next) => {
   }
   if (newStatus === 'ABSENT' && suppliedStars && suppliedStars > 0) {
     return res.status(400).json({ error: 'Absent students cannot receive stars.' });
+  }
+  // New stars only for students with a Bingo Space account (owner rule 2026-11-21).
+  if (suppliedStars !== undefined && suppliedStars > 0 && suppliedStars !== existingRecord?.base_stars) {
+    const portalStatus = isWalkInStudent(studentForRoll) ? 'NOT_REGISTERED'
+      : (await portalAccountStatuses([studentForRoll.student_id]))[studentForRoll.student_id];
+    const blocked = starsBlockedReason(studentForRoll, portalStatus);
+    if (blocked) return res.status(409).json({ error: `${blocked} Clear the stars box, then tap Present.`, code: 'STARS_NEED_BINGO_SPACE' });
   }
   const portalAwardLocked = existingRecord?.portal_sync_status === 'SYNCED';
   if (portalAwardLocked && suppliedStars !== undefined && suppliedStars !== existingRecord.base_stars) {

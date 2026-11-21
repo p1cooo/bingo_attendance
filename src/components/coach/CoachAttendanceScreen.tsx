@@ -121,6 +121,23 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
     fetchSession();
   }, [sessionId]);
 
+  // Stars need a Bingo Space account. Loaded separately so a slow Space never
+  // delays roll call; until it answers (or if it can't), stars stay open and the
+  // server still checks on save.
+  const [portalStatuses, setPortalStatuses] = useState<Record<string, 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN'>>({});
+  const sheetStudentKey = [
+    ...(serverSession?.enrolled_students || []).map((stu) => stu?.id),
+    ...(serverSession?.attendance_records || []).map((rec) => rec?.student_id),
+  ].filter(Boolean).sort().join(',');
+  useEffect(() => {
+    if (!sheetStudentKey) return;
+    let active = true;
+    api.getSessionPortalStatuses(sessionId)
+      .then(({ statuses }) => { if (active) setPortalStatuses(statuses || {}); })
+      .catch(() => { if (active) setPortalStatuses({}); });
+    return () => { active = false; };
+  }, [sessionId, sheetStudentKey]);
+
   // Load all students for replacement search when modal opens
   useEffect(() => {
     if (isReplacementModalOpen && allStudents.length === 0) {
@@ -678,8 +695,10 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
             const isSaving = attendanceSaves.isPending(sessionId, student.id);
             const studentFullName = student?.full_name || 'Student';
             const studentId = student?.student_id || '';
-            const starsValue = starsByStudent[student.id] ?? (record?.base_stars?.toString() || '');
-            const shirtWorn = tshirtByStudent[student.id] ?? Boolean(record?.lucky_tshirt_worn);
+            // Saved stars stay visible; new stars need a Bingo Space account.
+            const starsLocked = !record?.base_stars && (isUnregistered || portalStatuses[student.id] === 'NOT_REGISTERED');
+            const starsValue = starsLocked ? '' : starsByStudent[student.id] ?? (record?.base_stars?.toString() || '');
+            const shirtWorn = !starsLocked && (tshirtByStudent[student.id] ?? Boolean(record?.lucky_tshirt_worn));
             const parsedStars = starsValue.trim() === '' ? undefined : Number(starsValue);
             const initials = studentFullName
               .trim()
@@ -771,6 +790,16 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold italic mt-1">
                           Note: {record.replacement_note}
                         </p>
+                      )}
+                      {starsLocked && !record?.portal_sync_status && status !== 'ABSENT' && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <p className="text-[11px] text-amber-700 dark:text-amber-300 font-bold">
+                            {isUnregistered
+                              ? 'Walk-in student: no stars yet. Note the stars and add them after they join Bingo Space.'
+                              : 'No Bingo Space account yet. Note the stars and add them after the student registers.'}
+                          </p>
+                          {!isUnregistered && <button type="button" onClick={() => handleCreatePortalInvite(student)} disabled={creatingPortalInviteFor === student.id} className="shrink-0 rounded-lg border border-amber-500 px-2 py-1 text-[10px] font-black text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-200 dark:hover:bg-amber-950/40">{creatingPortalInviteFor === student.id ? 'Creating…' : 'Copy registration link'}</button>}
+                        </div>
                       )}
                       {record?.portal_sync_status === 'NOT_LINKED' && (
                         <div className="mt-1 flex items-center gap-2">
@@ -867,15 +896,16 @@ export const CoachAttendanceScreen: React.FC<CoachAttendanceScreenProps> = ({
                       step="0.5"
                       inputMode="decimal"
                       value={starsValue}
-                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || (status === 'ABSENT' && !isCorrecting) || record?.portal_sync_status === 'SYNCED'}
+                      disabled={starsLocked || isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || (status === 'ABSENT' && !isCorrecting) || record?.portal_sync_status === 'SYNCED'}
                       onChange={(event) => setStarsByStudent((current) => ({ ...current, [student.id]: event.target.value }))}
-                      placeholder="Stars"
+                      placeholder={starsLocked ? '—' : 'Stars'}
+                      title={starsLocked ? 'Stars need a Bingo Space account' : undefined}
                       aria-label={`Base stars for ${studentFullName}`}
                       className="w-14 bg-transparent px-1 text-center text-xs font-black text-slate-900 outline-none placeholder:text-slate-400 dark:text-white disabled:opacity-50"
                     />
                     <button
                       type="button"
-                      disabled={isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || (status === 'ABSENT' && !isCorrecting) || record?.portal_sync_status === 'SYNCED'}
+                      disabled={starsLocked || isSaving || alreadyMarked || isCancelled || isOffDay || isFutureSession || !!pause || (status === 'ABSENT' && !isCorrecting) || record?.portal_sync_status === 'SYNCED'}
                       onClick={() => setTshirtByStudent((current) => ({ ...current, [student.id]: !shirtWorn }))}
                       title={shirtWorn ? 'Lucky T-shirt worn: +50%' : 'Lucky T-shirt not worn'}
                       aria-pressed={shirtWorn}

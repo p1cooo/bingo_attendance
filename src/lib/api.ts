@@ -474,6 +474,11 @@ class ApiClient {
     return this.request(`/sessions/${id}`);
   }
 
+  /** Bingo Space account status per student on the sheet (stars need an account). */
+  async getSessionPortalStatuses(id: string): Promise<{ statuses: Record<string, 'REGISTERED' | 'NOT_REGISTERED' | 'UNKNOWN'> }> {
+    return this.request(`/sessions/${id}/portal-statuses`);
+  }
+
   async createSession(data: any): Promise<ClassSession> {
     return this.request('/sessions', {
       method: 'POST',
